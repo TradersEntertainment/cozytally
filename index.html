@@ -283,7 +283,7 @@
         /* Sparkles */
         .sparkle {
             position: absolute;
-            font-size: 20px;
+            font-size: 35px;
             pointer-events: none;
             animation: float-up 1s ease-out forwards;
             color: #fff;
@@ -390,6 +390,47 @@
 
         #goal-input::placeholder {
             color: #e1bee7;
+        }
+
+        .center-cheer {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%) scale(0);
+            font-family: 'Chewy', cursive;
+            font-size: 4rem;
+            color: #ff4081;
+            text-shadow: 3px 3px 0 #fff, -1px -1px 0 #fff, 0 0 20px rgba(255, 64, 129, 0.5);
+            pointer-events: none;
+            z-index: 2000;
+            white-space: nowrap;
+            animation: cheer-pop 1.5s ease-out forwards;
+        }
+
+        @keyframes cheer-pop {
+            0% {
+                transform: translate(-50%, -50%) scale(0) rotate(-10deg);
+                opacity: 0;
+            }
+
+            20% {
+                transform: translate(-50%, -50%) scale(1.5) rotate(5deg);
+                opacity: 1;
+            }
+
+            40% {
+                transform: translate(-50%, -50%) scale(1) rotate(-5deg);
+            }
+
+            80% {
+                transform: translate(-50%, -50%) scale(1) rotate(0deg);
+                opacity: 1;
+            }
+
+            100% {
+                transform: translate(-50%, -50%) scale(1.2);
+                opacity: 0;
+            }
         }
     </style>
 </head>
@@ -697,6 +738,8 @@
                 const lastGroup = container.lastElementChild;
                 addMarkToGroup(lastGroup, remainder, true);
             }
+
+            showCheer();
 
             lastGroup = container.lastElementChild;
             lastGroup.scrollIntoView({ behavior: "smooth", block: "end", inline: "nearest" });
