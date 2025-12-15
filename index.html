@@ -161,6 +161,11 @@
             box-shadow: 0 4px 0 #f48fb1;
         }
 
+        .ctrl-group {
+            display: flex;
+            gap: 15px;
+        }
+
         #status-info {
             position: absolute;
             bottom: 30px;
@@ -409,8 +414,10 @@
 
     <!-- Controls Bar -->
     <div id="controls-bar">
-        <button id="reset-wall-btn" class="ctrl-btn">Clean Board</button>
-        <button id="undo-btn" class="ctrl-btn">Undo ↩️</button>
+        <div class="ctrl-group">
+            <button id="reset-wall-btn" class="ctrl-btn">Clean Board</button>
+            <button id="undo-btn" class="ctrl-btn">Undo ↩️</button>
+        </div>
         <div id="status-info"></div>
         <button id="next-quote-btn" class="ctrl-btn">New Note 📝</button>
     </div>
