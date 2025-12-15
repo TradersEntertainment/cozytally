@@ -1,0 +1,753 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Cozy Tally</title>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Chewy&family=Coming+Soon&display=swap');
+
+        :root {
+            --bg-color: #fce4ec;
+            --mark-color: #e91e63;
+            --mark-shadow: rgba(0, 0, 0, 0.1);
+            --mark-scale: 1;
+        }
+
+        * {
+            box-sizing: border-box;
+            user-select: none;
+            -webkit-tap-highlight-color: transparent;
+        }
+
+        body,
+        html {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            background-color: var(--bg-color);
+            background-image: url('bg.png');
+            background-size: cover;
+            background-position: center;
+            font-family: 'Coming Soon', cursive;
+            display: flex;
+            flex-direction: column;
+            color: #333;
+            transition: transform 0.05s linear;
+        }
+
+        /* Surface Area Definition - The Corkboard */
+        #surface-area {
+            position: absolute;
+            /* Default values, overridden by JS */
+            top: 20%;
+            left: 45%;
+            width: 45%;
+            height: 45%;
+            z-index: 10;
+            cursor: grab;
+            transition: box-shadow 0.2s;
+        }
+
+        #surface-area:active {
+            cursor: grabbing;
+        }
+
+        /* Visual hint for interaction */
+        #surface-area:hover {
+            box-shadow: 0 0 0 2px rgba(233, 30, 99, 0.3);
+            /* Subtle pink border */
+            background: rgba(255, 255, 255, 0.05);
+        }
+
+        /* Resize Handle */
+        .resize-handle {
+            position: absolute;
+            bottom: 0px;
+            right: 0px;
+            width: 20px;
+            height: 20px;
+            background: rgba(233, 30, 99, 0.5);
+            cursor: nwse-resize;
+            border-radius: 5px 0 5px 0;
+            z-index: 100;
+        }
+
+        .resize-handle:hover {
+            background: rgba(233, 30, 99, 0.9);
+        }
+
+        /* Quote Layer - Sticky Note Style */
+        #quote-container {
+            position: absolute;
+            bottom: -60%;
+            right: 10%;
+            width: 250px;
+            z-index: 20;
+            pointer-events: none;
+            transform: rotate(-3deg);
+        }
+
+        #wall-quote {
+            font-family: 'Coming Soon', cursive;
+            font-size: 1.2rem;
+            color: #333;
+            background: #fff9c4;
+            padding: 20px;
+            box-shadow: 2px 2px 5px rgba(0, 0, 0, 0.2);
+            text-align: center;
+            line-height: 1.4;
+            clip-path: polygon(0% 0%, 100% 0%, 100% 90%, 90% 100%, 0% 100%);
+        }
+
+        #wall-quote::after {
+            content: '';
+            position: absolute;
+            bottom: 0px;
+            right: 0px;
+            width: 20px;
+            height: 20px;
+            background: rgba(0, 0, 0, 0.1);
+            border-radius: 0 0 0 20px;
+        }
+
+        /* Controls Area */
+        #controls-bar {
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            width: 100%;
+            padding: 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            z-index: 60;
+            pointer-events: none;
+        }
+
+        #controls-bar>* {
+            pointer-events: auto;
+        }
+
+        .ctrl-btn {
+            background: #fff;
+            border: 2px solid #8e24aa;
+            color: #8e24aa;
+            padding: 10px 20px;
+            font-family: 'Chewy', cursive;
+            cursor: pointer;
+            font-size: 1.2rem;
+            border-radius: 30px;
+            box-shadow: 0 4px 0 #ce93d8;
+            transition: all 0.1s;
+        }
+
+        .ctrl-btn:hover {
+            transform: translateY(2px);
+            box-shadow: 0 2px 0 #ce93d8;
+        }
+
+        .ctrl-btn:active {
+            transform: translateY(4px);
+            box-shadow: none;
+        }
+
+        #reset-wall-btn {
+            color: #d81b60;
+            border-color: #d81b60;
+            box-shadow: 0 4px 0 #f48fb1;
+        }
+
+        #status-info {
+            position: absolute;
+            bottom: 30px;
+            left: 50%;
+            transform: translateX(-50%);
+            font-family: 'Chewy', cursive;
+            font-size: 1.8rem;
+            color: #fff;
+            text-shadow: 2px 2px 0 #8e24aa, -1px -1px 0 #8e24aa;
+            white-space: nowrap;
+        }
+
+        /* Main Tally Area - Confined to Surface */
+        #tally-container {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            overflow-y: auto;
+            display: flex;
+            flex-wrap: wrap;
+            align-content: flex-start;
+            justify-content: flex-start;
+            padding: 20px;
+            gap: calc(15px * var(--mark-scale));
+            scrollbar-width: none;
+            -ms-overflow-style: none;
+            /* No custom cursor here, inherit 'move' from parent */
+        }
+
+        #tally-container::-webkit-scrollbar {
+            display: none;
+        }
+
+        /* Tally Group */
+        .tally-group {
+            position: relative;
+            width: calc(40px * var(--mark-scale));
+            height: calc(40px * var(--mark-scale));
+            margin: calc(5px * var(--mark-scale));
+            transform: rotate(var(--group-rot, 0deg));
+        }
+
+        /* Thumbtack / Marker Style */
+        .mark {
+            position: absolute;
+            background-color: var(--mark-color);
+            border-radius: 3px;
+            opacity: 0.9;
+        }
+
+        .mark.vertical {
+            width: calc(4px * var(--mark-scale));
+            height: calc(35px * var(--mark-scale));
+            top: calc(2px * var(--mark-scale));
+            border-radius: 2px 2px 50% 50%;
+        }
+
+        .mark:nth-child(1) {
+            left: calc(2px * var(--mark-scale));
+            transform: rotate(-2deg);
+            background: #d81b60;
+        }
+
+        .mark:nth-child(2) {
+            left: calc(10px * var(--mark-scale));
+            transform: rotate(1deg);
+            background: #8e24aa;
+        }
+
+        .mark:nth-child(3) {
+            left: calc(18px * var(--mark-scale));
+            transform: rotate(-1deg);
+            background: #5e35b1;
+        }
+
+        .mark:nth-child(4) {
+            left: calc(26px * var(--mark-scale));
+            transform: rotate(2deg);
+            background: #3949ab;
+        }
+
+        .mark.slash {
+            width: calc(50px * var(--mark-scale));
+            height: calc(4px * var(--mark-scale));
+            top: calc(15px * var(--mark-scale));
+            left: calc(-5px * var(--mark-scale));
+            background: #e53935;
+            border-radius: 5px;
+            transform: rotate(-15deg);
+            opacity: 0.8;
+        }
+
+        @keyframes pop-in {
+            0% {
+                transform: scale(0) rotate(var(--rot));
+                opacity: 0;
+            }
+
+            80% {
+                transform: scale(1.2) rotate(var(--rot));
+                opacity: 1;
+            }
+
+            100% {
+                transform: scale(1) rotate(var(--rot));
+            }
+        }
+
+        .mark.animate {
+            animation: pop-in 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards;
+        }
+
+        /* Sparkles */
+        .sparkle {
+            position: absolute;
+            font-size: 20px;
+            pointer-events: none;
+            animation: float-up 1s ease-out forwards;
+            color: #fff;
+            text-shadow: 0 0 5px #f48fb1;
+            z-index: 20;
+        }
+
+        @keyframes float-up {
+            0% {
+                transform: translateY(0) scale(0.5);
+                opacity: 1;
+            }
+
+            100% {
+                transform: translateY(-50px) scale(1.5);
+                opacity: 0;
+            }
+        }
+
+        #blackout {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: #fff;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.5s ease;
+            z-index: 1000;
+        }
+
+        #floating-add {
+            position: fixed;
+            bottom: 90px;
+            left: 50%;
+            transform: translateX(-50%);
+            font-size: 3rem;
+            color: #fff;
+            background: #ba68c8;
+            border-radius: 50%;
+            width: 70px;
+            height: 70px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            z-index: 50;
+            box-shadow: 0 4px 10px rgba(186, 104, 200, 0.6);
+            transition: all 0.2s;
+            line-height: 0;
+            padding-bottom: 5px;
+        }
+
+        #floating-add:active {
+            transform: translateX(-50%) scale(0.9);
+            background: #ab47bc;
+        }
+
+        #modal-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(255, 255, 255, 0.6);
+            backdrop-filter: blur(8px);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 200;
+            display: none;
+        }
+
+        #modal-content {
+            text-align: center;
+            background: #fff;
+            padding: 40px;
+            border-radius: 30px;
+            border: 4px solid #ba68c8;
+            box-shadow: 0 10px 30px rgba(186, 104, 200, 0.3);
+        }
+
+        #modal-content h2 {
+            font-family: 'Chewy', cursive;
+            color: #8e24aa;
+            font-size: 2.5rem;
+            margin: 0 0 20px 0;
+        }
+
+        #goal-input {
+            background: #f3e5f5;
+            border: 2px solid #ba68c8;
+            border-radius: 15px;
+            color: #8e24aa;
+            font-family: 'Coming Soon', cursive;
+            font-size: 2rem;
+            width: 120px;
+            padding: 10px;
+            text-align: center;
+            margin: 10px;
+            outline: none;
+        }
+
+        #goal-input::placeholder {
+            color: #e1bee7;
+        }
+    </style>
+</head>
+
+<body>
+
+    <!-- Surface Container (Corkboard Area) -->
+    <div id="surface-area">
+        <!-- Quote as Sticky Note -->
+        <div id="quote-container">
+            <div id="wall-quote"></div>
+        </div>
+
+        <!-- Tallys confined here -->
+        <div id="tally-container"></div>
+
+        <!-- Resize Handle -->
+        <div class="resize-handle"></div>
+    </div>
+
+    <div id="blackout"></div>
+
+    <!-- Controls Bar -->
+    <div id="controls-bar">
+        <button id="reset-wall-btn" class="ctrl-btn">Clean Board</button>
+        <div id="status-info"></div>
+        <button id="next-quote-btn" class="ctrl-btn">New Note 📝</button>
+    </div>
+
+    <div id="floating-add">+</div>
+
+    <!-- Goal Modal -->
+    <div id="modal-overlay">
+        <div id="modal-content">
+            <h2>Your Goal ✨</h2>
+            <input type="number" id="goal-input" min="1" placeholder="days">
+            <br>
+            <div style="font-size: 1rem; color: #ba68c8; margin-top:20px; font-family:'Coming Soon';">Let's do this!
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const quotes = [
+            "Believe in yourself! ✨",
+            "Every day is a fresh start! 🌸",
+            "Keep going, you're doing great! 💖",
+            "Small steps every day! 🐾",
+            "Dreams don't work unless you do! ⭐",
+            "Stay positive! 🌈",
+            "You got this! 💪",
+            "Make today amazing! ✨",
+            "Focus on the good! 🌼",
+            "Be happy! 😊"
+        ];
+
+        let currentQuoteIndex = parseInt(localStorage.getItem('prisonQuoteIndex') || '0');
+        const quoteEl = document.getElementById('wall-quote');
+        const nextQuoteBtn = document.getElementById('next-quote-btn');
+        const resetWallBtn = document.getElementById('reset-wall-btn');
+        const statusInfo = document.getElementById('status-info');
+
+        function renderQuote() {
+            quoteEl.innerText = quotes[currentQuoteIndex % quotes.length];
+        }
+
+        nextQuoteBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            currentQuoteIndex = (currentQuoteIndex + 1) % quotes.length;
+            localStorage.setItem('prisonQuoteIndex', currentQuoteIndex);
+            quoteEl.style.opacity = 0;
+            setTimeout(() => {
+                renderQuote();
+                quoteEl.style.opacity = 1;
+            }, 300);
+        });
+
+        renderQuote();
+
+        // -- Layout & Drag Logic --
+        const surface = document.getElementById('surface-area');
+        const resizeHandle = document.querySelector('.resize-handle');
+
+        let layout = JSON.parse(localStorage.getItem('prisonLayout') || 'null');
+
+        if (layout) {
+            surface.style.top = layout.top;
+            surface.style.left = layout.left;
+            surface.style.width = layout.width;
+            surface.style.height = layout.height;
+        } else {
+            // Default position
+            surface.style.top = '17%';
+            surface.style.left = '48%';
+            surface.style.width = '44%';
+            surface.style.height = '44%';
+        }
+
+        function saveLayout() {
+            const layout = {
+                top: surface.style.top,
+                left: surface.style.left,
+                width: surface.style.width,
+                height: surface.style.height
+            };
+            localStorage.setItem('prisonLayout', JSON.stringify(layout));
+        }
+
+        // Draggable
+        let isDragging = false;
+        let dragStartX, dragStartY;
+        let initialLeft, initialTop;
+
+        surface.addEventListener('mousedown', (e) => {
+            if (e.target.classList.contains('resize-handle')) return;
+            // Only drag if not clicking interactive children besides tallies? 
+            // Actually, we want whole box to drag.
+
+            isDragging = true;
+            dragStartX = e.clientX;
+            dragStartY = e.clientY;
+
+            // Get current % or pixel values computed
+            const rect = surface.getBoundingClientRect();
+            // We want to operate in percentages to keep responsiveness if possible, 
+            // but for dragging it's easier to switch to PX or compute diffs.
+            // Let's stick to modifying the style attribute which might be % or px.
+            // Best to convert to pixels for the move, then save? 
+            // Or just update `left` and `top` in pixels during drag.
+
+            initialLeft = rect.left;
+            initialTop = rect.top;
+
+            // Ensure style is in absolute layout mode
+            surface.style.left = initialLeft + 'px';
+            surface.style.top = initialTop + 'px';
+
+            document.body.style.cursor = 'grabbing';
+            e.preventDefault(); // Prevent text selection
+        });
+
+        // Resizable
+        let isResizing = false;
+        let resizeStartX, resizeStartY;
+        let initialWidth, initialHeight;
+
+        resizeHandle.addEventListener('mousedown', (e) => {
+            isResizing = true;
+            resizeStartX = e.clientX;
+            resizeStartY = e.clientY;
+            const rect = surface.getBoundingClientRect();
+            initialWidth = rect.width;
+            initialHeight = rect.height;
+
+            surface.style.width = initialWidth + 'px';
+            surface.style.height = initialHeight + 'px';
+
+            document.body.style.cursor = 'nwse-resize';
+            e.stopPropagation(); // Don't trigger drag
+            e.preventDefault();
+        });
+
+        document.addEventListener('mousemove', (e) => {
+            if (isDragging) {
+                const dx = e.clientX - dragStartX;
+                const dy = e.clientY - dragStartY;
+                surface.style.left = (initialLeft + dx) + 'px';
+                surface.style.top = (initialTop + dy) + 'px';
+            }
+            if (isResizing) {
+                const dx = e.clientX - resizeStartX;
+                const dy = e.clientY - resizeStartY;
+                surface.style.width = (initialWidth + dx) + 'px';
+                surface.style.height = (initialHeight + dy) + 'px';
+            }
+        });
+
+        document.addEventListener('mouseup', () => {
+            if (isDragging || isResizing) {
+                isDragging = false;
+                isResizing = false;
+                document.body.style.cursor = 'default';
+                saveLayout();
+            }
+        });
+
+
+        // -- Tally Logic --
+
+        const container = document.getElementById('tally-container');
+        const blackout = document.getElementById('blackout');
+        const modalOverlay = document.getElementById('modal-overlay');
+        const goalInput = document.getElementById('goal-input');
+
+        let count = parseInt(localStorage.getItem('prisonTallyCount') || '0');
+        let targetGoal = parseInt(localStorage.getItem('prisonTallyGoal') || '0');
+
+        function updateStatus() {
+            if (!targetGoal) {
+                statusInfo.innerText = "";
+                return;
+            }
+            if (count < targetGoal) {
+                const left = targetGoal - count;
+                statusInfo.innerText = left + " days left! 🌟";
+                statusInfo.style.color = "#fff";
+            } else {
+                statusInfo.innerText = "You did it! 🎉";
+                statusInfo.style.color = "#ffff00";
+            }
+        }
+
+        function updateScale() {
+            if (!targetGoal) return;
+            // Corkboard is smaller, adjust scale logic slightly
+            let scale = Math.sqrt(80 / targetGoal);
+            scale = Math.max(0.6, Math.min(2.0, scale));
+            document.documentElement.style.setProperty('--mark-scale', scale);
+        }
+
+        function initialRender() {
+            if (!targetGoal) {
+                modalOverlay.style.display = 'flex';
+                goalInput.focus();
+                return;
+            } else {
+                modalOverlay.style.display = 'none';
+            }
+            updateScale();
+            updateStatus();
+            container.innerHTML = '';
+            const groups = Math.floor(count / 5);
+            const remainder = count % 5;
+            for (let i = 0; i < groups; i++) createGroupDOM(5);
+            if (remainder > 0) createGroupDOM(remainder);
+        }
+
+        function createGroupDOM(numMarks) {
+            const groupDiv = document.createElement('div');
+            groupDiv.className = 'tally-group';
+            const groupRot = (Math.random() * 10 - 5).toFixed(1) + 'deg';
+            groupDiv.style.setProperty('--group-rot', groupRot);
+
+            container.appendChild(groupDiv);
+            for (let i = 1; i <= numMarks; i++) {
+                addMarkToGroup(groupDiv, i, false);
+            }
+            return groupDiv;
+        }
+
+        function addMarkToGroup(groupDiv, index, animate) {
+            const mark = document.createElement('div');
+            const rot = (Math.random() * 6 - 3 + (index === 5 ? -15 : 0)).toFixed(1) + 'deg';
+
+            mark.style.setProperty('--rot', rot);
+
+            if (index === 5) mark.className = 'mark slash';
+            else mark.className = 'mark vertical';
+
+            const baseLeft = [2, 10, 18, 26];
+            if (index < 5) {
+                mark.style.left = `calc(${baseLeft[index - 1]}px * var(--mark-scale))`;
+            }
+
+            if (animate) {
+                mark.classList.add('animate');
+                spawnSparkles(mark);
+            }
+
+            groupDiv.appendChild(mark);
+        }
+
+        function spawnSparkles(element) {
+            const rect = element.getBoundingClientRect();
+            const types = ['✨', '⭐', '🌸'];
+            for (let i = 0; i < 4; i++) {
+                const s = document.createElement('div');
+                s.className = 'sparkle';
+                s.innerText = types[Math.floor(Math.random() * types.length)];
+                s.style.left = (rect.left + Math.random() * rect.width) + 'px';
+                s.style.top = (rect.top + Math.random() * rect.height) + 'px';
+                document.body.appendChild(s);
+                setTimeout(() => s.remove(), 1000);
+            }
+        }
+
+        function addMark() {
+            if (!targetGoal) return;
+            count++;
+            localStorage.setItem('prisonTallyCount', count);
+            if (navigator.vibrate) navigator.vibrate(10);
+
+            const remainder = count % 5;
+            if (remainder === 1) {
+                const newGroup = createGroupDOM(0);
+                addMarkToGroup(newGroup, 1, true);
+            } else if (remainder === 0) {
+                const lastGroup = container.lastElementChild;
+                addMarkToGroup(lastGroup, 5, true);
+            } else {
+                const lastGroup = container.lastElementChild;
+                addMarkToGroup(lastGroup, remainder, true);
+            }
+
+            lastGroup = container.lastElementChild;
+            lastGroup.scrollIntoView({ behavior: "smooth", block: "end", inline: "nearest" });
+            updateStatus();
+        }
+
+        function reset() {
+            if (confirm("Wipe the board? 🌸")) {
+                blackout.style.opacity = '1';
+                setTimeout(() => {
+                    count = 0;
+                    targetGoal = 0;
+                    localStorage.setItem('prisonTallyCount', '0');
+                    localStorage.removeItem('prisonTallyGoal');
+                    goalInput.value = '';
+                    initialRender();
+
+                    setTimeout(() => {
+                        blackout.style.opacity = '0';
+                    }, 500);
+                }, 500);
+            }
+        }
+
+        resetWallBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            reset();
+        });
+
+        document.addEventListener('click', (e) => {
+            if (e.target.closest('#controls-bar') || e.target.closest('#modal-overlay')) return;
+
+            // Only add mark if clicking on the surface area itself? 
+            // User requested "add" functionality.
+            // If they are dragging, we don't want to add a mark.
+            // Let's filter slightly better: if we just dragged, don't add mark.
+
+            if (isDragging || isResizing) return;
+
+            if (modalOverlay.style.display === 'none' && targetGoal > 0) {
+                addMark();
+            }
+        });
+
+        goalInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                const val = parseInt(goalInput.value);
+                if (val > 0) {
+                    targetGoal = val;
+                    localStorage.setItem('prisonTallyGoal', targetGoal);
+                    modalOverlay.style.display = 'none';
+                    updateScale();
+                    initialRender();
+                }
+            }
+        });
+
+        initialRender();
+
+    </script>
+</body>
+
+</html>
