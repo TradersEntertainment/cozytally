@@ -821,6 +821,32 @@
             }
         });
 
+        const cheers = [
+            "You're amazing! 💖",
+            "Keep it up! 🌟",
+            "Doing great! 🔥",
+            "Wow! ✨",
+            "So proud! 🥰",
+            "One step closer! 🐾",
+            "Fantastic! 🌈",
+            "You got this! 💪",
+            "Believe! 🦋",
+            "Yay! 🎉"
+        ];
+
+        function showCheer() {
+            const cheer = document.createElement('div');
+            cheer.className = 'center-cheer';
+            cheer.innerText = cheers[Math.floor(Math.random() * cheers.length)];
+
+            // Random slight rotation
+            const rot = (Math.random() * 20 - 10).toFixed(1);
+            cheer.style.transform = `translate(-50%, -50%) rotate(${rot}deg)`;
+
+            document.body.appendChild(cheer);
+            setTimeout(() => cheer.remove(), 1500);
+        }
+
         initialRender();
 
     </script>
