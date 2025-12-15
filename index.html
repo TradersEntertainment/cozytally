@@ -410,6 +410,7 @@
     <!-- Controls Bar -->
     <div id="controls-bar">
         <button id="reset-wall-btn" class="ctrl-btn">Clean Board</button>
+        <button id="undo-btn" class="ctrl-btn">Undo ↩️</button>
         <div id="status-info"></div>
         <button id="next-quote-btn" class="ctrl-btn">New Note 📝</button>
     </div>
@@ -445,6 +446,7 @@
         const quoteEl = document.getElementById('wall-quote');
         const nextQuoteBtn = document.getElementById('next-quote-btn');
         const resetWallBtn = document.getElementById('reset-wall-btn');
+        const undoBtn = document.getElementById('undo-btn');
         const statusInfo = document.getElementById('status-info');
 
         function renderQuote() {
@@ -715,6 +717,30 @@
         resetWallBtn.addEventListener('click', (e) => {
             e.stopPropagation();
             reset();
+        });
+
+        function removeMark() {
+            if (count > 0) {
+                count--;
+                localStorage.setItem('prisonTallyCount', count);
+
+                const lastGroup = container.lastElementChild;
+                if (lastGroup) {
+                    const lastMark = lastGroup.lastElementChild;
+                    if (lastMark) {
+                        lastMark.remove();
+                    }
+                    if (lastGroup.children.length === 0) {
+                        lastGroup.remove();
+                    }
+                }
+                updateStatus();
+            }
+        }
+
+        undoBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            removeMark();
         });
 
         document.addEventListener('click', (e) => {
