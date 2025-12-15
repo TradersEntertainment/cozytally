@@ -471,6 +471,8 @@
             <h2>Your Goal ✨</h2>
             <input type="number" id="goal-input" min="1" placeholder="days">
             <br>
+            <button id="set-goal-btn" class="ctrl-btn"
+                style="margin-top:15px; background:#ba68c8; color:#fff; border-color:#8e24aa;">Go! 🌟</button>
             <div style="font-size: 1rem; color: #ba68c8; margin-top:20px; font-family:'Coming Soon';">Let's do this!
             </div>
         </div>
@@ -809,16 +811,27 @@
             }
         });
 
+        const setGoalBtn = document.getElementById('set-goal-btn');
+
+        function setGoal() {
+            const val = parseInt(goalInput.value);
+            if (val > 0) {
+                targetGoal = val;
+                localStorage.setItem('prisonTallyGoal', targetGoal);
+                modalOverlay.style.display = 'none';
+                updateScale();
+                initialRender();
+            }
+        }
+
+        setGoalBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            setGoal();
+        });
+
         goalInput.addEventListener('keydown', (e) => {
             if (e.key === 'Enter') {
-                const val = parseInt(goalInput.value);
-                if (val > 0) {
-                    targetGoal = val;
-                    localStorage.setItem('prisonTallyGoal', targetGoal);
-                    modalOverlay.style.display = 'none';
-                    updateScale();
-                    initialRender();
-                }
+                setGoal();
             }
         });
 
