@@ -785,6 +785,7 @@
                     }
                 }
                 updateStatus();
+                showCheer('sad');
             }
         }
 
@@ -834,10 +835,28 @@
             "Yay! 🎉"
         ];
 
-        function showCheer() {
+        const sadCheers = [
+            "Oh no... 🥺",
+            "It's okay! 🌸",
+            "Maybe tomorrow? 🌙",
+            "Don't give up! 💖",
+            "Mistakes happen! 🍃",
+            "Still proud! 🥰",
+            "Soft hugs! 🧸",
+            "Keep going! ✨"
+        ];
+
+        function showCheer(type = 'happy') {
             const cheer = document.createElement('div');
             cheer.className = 'center-cheer';
-            cheer.innerText = cheers[Math.floor(Math.random() * cheers.length)];
+
+            const list = type === 'happy' ? cheers : sadCheers;
+            cheer.innerText = list[Math.floor(Math.random() * list.length)];
+
+            if (type === 'sad') {
+                cheer.style.color = '#7e57c2'; // Softer purple/blue for sad messages
+                cheer.style.textShadow = '3px 3px 0 #fff, -1px -1px 0 #fff, 0 0 20px rgba(126, 87, 194, 0.5)';
+            }
 
             // Random slight rotation
             const rot = (Math.random() * 20 - 10).toFixed(1);
