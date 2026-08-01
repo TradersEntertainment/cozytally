@@ -324,7 +324,7 @@ input, select {
 
 .lang-toggle {
   position: fixed;
-  top: 14px;
+  top: calc(14px + env(safe-area-inset-top));
   right: 14px;
   z-index: 40;
   letter-spacing: 0.05em;
@@ -356,10 +356,16 @@ input[type="date"], input[type="datetime-local"] { color-scheme: dark; }
 .landing-wrap {
   max-width: 860px;
   margin: 0 auto;
-  padding: clamp(40px, 9vh, 90px) 20px 60px;
+  padding: calc(clamp(40px, 9vh, 90px) + env(safe-area-inset-top)) 20px 60px;
   display: flex;
   flex-direction: column;
   gap: 34px;
+}
+
+.account-bar {
+  display: flex;
+  justify-content: flex-end;
+  margin: -14px 0 -18px;
 }
 
 .landing-head { text-align: center; }
@@ -634,7 +640,7 @@ input[type="date"], input[type="datetime-local"] { color-scheme: dark; }
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 22px clamp(16px, 4vw, 40px) 6px;
+  padding: calc(22px + env(safe-area-inset-top)) clamp(16px, 4vw, 40px) 6px;
   padding-right: 110px; /* clear the fixed language toggle */
 }
 
@@ -744,6 +750,7 @@ input[type="date"], input[type="datetime-local"] { color-scheme: dark; }
 .card--countdown { --accent: var(--lavender); }
 .card--note { --accent: #ffe08a; }
 .card--money { --accent: #ffcf6b; }
+.card--list { --accent: #9fd8ff; }
 
 .card-head {
   display: flex;
@@ -944,6 +951,150 @@ input[type="date"], input[type="datetime-local"] { color-scheme: dark; }
   animation: twinkle 1.2s ease-in-out infinite;
 }
 
+/* checklist */
+
+.check-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 240px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.2) transparent;
+}
+
+.check-item {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 6px 4px;
+  border-radius: 10px;
+  transition: background 0.15s;
+}
+
+.check-item:hover { background: rgba(255, 255, 255, 0.05); }
+
+.check-box {
+  flex: 0 0 auto;
+  width: 24px;
+  height: 24px;
+  border-radius: 8px;
+  border: 1.8px solid var(--card-border);
+  background: rgba(255, 255, 255, 0.05);
+  color: #221a30;
+  font-size: 0.95rem;
+  font-weight: 800;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s, border-color 0.15s, transform 0.1s;
+}
+
+.check-box:active { transform: scale(0.85); }
+
+.check-item.done .check-box {
+  background: var(--accent, var(--amber));
+  border-color: transparent;
+}
+
+.check-text {
+  flex: 1;
+  min-width: 0;
+  font-size: 0.93rem;
+  cursor: pointer;
+  word-break: break-word;
+}
+
+.check-item.done .check-text {
+  text-decoration: line-through;
+  color: var(--ink-dim);
+  opacity: 0.75;
+}
+
+.check-by {
+  font-size: 0.72rem;
+  color: var(--ink-dim);
+  flex: 0 0 auto;
+}
+
+.check-del { font-size: 0.8rem; opacity: 0; flex: 0 0 auto; }
+.check-item:hover .check-del { opacity: 0.5; }
+.check-del:hover { opacity: 1 !important; }
+
+@media (hover: none) {
+  .check-del { opacity: 0.4; }
+}
+
+.list-add {
+  display: flex;
+  gap: 7px;
+  width: 100%;
+}
+
+.list-add input {
+  flex: 1;
+  padding: 9px 13px !important;
+  font-size: 0.9rem;
+}
+
+/* ready-made packs */
+
+.pack-head {
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: var(--ink-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin: 20px 0 10px;
+}
+
+.pack-head:first-of-type { margin-top: 0; }
+
+.pack-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+
+.pack-btn {
+  display: flex;
+  align-items: center;
+  gap: 13px;
+  text-align: left;
+  background: rgba(255, 184, 107, 0.07);
+  border: 1.5px solid rgba(255, 184, 107, 0.28);
+  border-radius: 16px;
+  padding: 13px 15px;
+  color: var(--ink);
+  transition: transform 0.12s, background 0.15s, border-color 0.15s;
+}
+
+.pack-btn:hover {
+  transform: translateY(-2px);
+  background: rgba(255, 184, 107, 0.13);
+  border-color: var(--amber);
+}
+
+.pack-btn .p-emoji { font-size: 1.7rem; flex: 0 0 auto; }
+.pack-btn b { display: block; font-size: 0.98rem; }
+.pack-btn small { color: var(--ink-dim); font-size: 0.79rem; }
+
+/* auth */
+
+.auth-error {
+  color: var(--pink);
+  font-size: 0.88rem;
+  margin: 0;
+  padding: 9px 13px;
+  background: rgba(255, 158, 181, 0.1);
+  border-radius: 12px;
+}
+
 /* sticky note */
 
 .note-paper {
@@ -1116,7 +1267,7 @@ textarea::placeholder { color: rgba(244, 238, 255, 0.35); }
 
 .fab {
   position: fixed;
-  bottom: 26px;
+  bottom: calc(26px + env(safe-area-inset-bottom));
   right: 26px;
   width: 62px;
   height: 62px;
@@ -1198,11 +1349,27 @@ textarea::placeholder { color: rgba(244, 238, 255, 0.35); }
 
 .chat-drawer.open { transform: translateX(0); }
 
+/* tap anywhere outside the drawer to close it */
+.chat-scrim {
+  position: fixed;
+  inset: 0;
+  background: rgba(10, 8, 24, 0.5);
+  backdrop-filter: blur(2px);
+  z-index: 94;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.25s;
+}
+
+.chat-scrim.open { opacity: 1; pointer-events: auto; }
+
 .chat-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 16px 18px 10px;
+  gap: 10px;
+  /* keep the title and close button clear of the iOS status bar / notch */
+  padding: calc(14px + env(safe-area-inset-top)) 10px 10px 18px;
   border-bottom: 1px solid var(--card-border);
 }
 
@@ -1211,6 +1378,26 @@ textarea::placeholder { color: rgba(244, 238, 255, 0.35); }
   font-size: 1.1rem;
   color: var(--peach);
 }
+
+/* a proper 44px tap target — the old one was a tiny glyph in the corner */
+.chat-close-btn {
+  flex: 0 0 auto;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  border: 1px solid var(--card-border);
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--ink);
+  font-size: 1.25rem;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s, transform 0.12s;
+}
+
+.chat-close-btn:hover { background: rgba(255, 255, 255, 0.18); }
+.chat-close-btn:active { transform: scale(0.9); }
 
 .chat-list {
   flex: 1;

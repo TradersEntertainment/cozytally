@@ -100,7 +100,31 @@
     countdown: { emoji: '🎈', nameKey: 'typeCountdown', descKey: 'typeCountdownDesc' },
     note: { emoji: '💌', nameKey: 'typeNote', descKey: 'typeNoteDesc' },
     money: { emoji: '💰', nameKey: 'typeMoney', descKey: 'typeMoneyDesc' },
+    list: { emoji: '📝', nameKey: 'typeList', descKey: 'typeListDesc' },
   };
+
+  // ------------------------------------------------------------ account
+  let auth = JSON.parse(localStorage.getItem('ct:auth') || 'null'); // { token, user }
+
+  async function api(path, { method = 'GET', body } = {}) {
+    const res = await fetch(path, {
+      method,
+      headers: {
+        ...(body ? { 'Content-Type': 'application/json' } : {}),
+        ...(auth?.token ? { Authorization: 'Bearer ' + auth.token } : {}),
+      },
+      ...(body ? { body: JSON.stringify(body) } : {}),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw Object.assign(new Error(data.error || 'request-failed'), { code: data.error });
+    return data;
+  }
+
+  function setAuth(next) {
+    auth = next;
+    if (next) localStorage.setItem('ct:auth', JSON.stringify(next));
+    else localStorage.removeItem('ct:auth');
+  }
 
   // stable per-browser id: lets the server skip push notifications to yourself
   let myCid = localStorage.getItem('ct:cid');
@@ -264,20 +288,164 @@
   }
 
   // ------------------------------------------------------------ landing
+  let accountRooms = null; // server-side room list when signed in
+
   function renderRecents() {
-    const recents = JSON.parse(localStorage.getItem('ct:recent') || '[]');
     const wrap = $('#recent-rooms');
     if (!wrap) return;
+    const signedIn = !!auth;
+    const rooms = signedIn
+      ? accountRooms || []
+      : JSON.parse(localStorage.getItem('ct:recent') || '[]');
+
+    $('#recent-rooms h3').textContent = signedIn ? t('yourRooms') : t('recentTitle');
     const list = $('#recent-list');
     list.innerHTML = '';
-    wrap.hidden = recents.length === 0;
-    for (const r of recents) {
+    wrap.hidden = !signedIn && rooms.length === 0;
+
+    if (signedIn && rooms.length === 0) {
+      list.innerHTML = `<span class="sub-label">${esc(t('noAccountRooms'))}</span>`;
+      return;
+    }
+    for (const r of rooms) {
       const a = document.createElement('a');
       a.className = 'chip chip-btn';
       a.href = '/r/' + encodeURIComponent(r.code);
       a.innerHTML = `${esc(r.name)}&nbsp;<small>${esc(r.code)}</small>`;
       list.appendChild(a);
     }
+  }
+
+  function renderAccountBtn() {
+    const btn = $('#account-btn');
+    if (!btn) return;
+    btn.textContent = auth ? `${auth.user.avatar} ${auth.user.name}` : `👤 ${t('signIn')}`;
+  }
+
+  async function refreshAccount() {
+    if (!auth) return;
+    try {
+      const me = await api('/api/auth/me');
+      setAuth({ token: auth.token, user: me.user });
+      accountRooms = me.rooms;
+    } catch (err) {
+      if (err.code === 'unauthorized') setAuth(null); // expired session
+    }
+    renderAccountBtn();
+    renderRecents();
+  }
+
+  function openAccountModal(mode = auth ? 'profile' : 'signin') {
+    if (mode === 'profile' && auth) {
+      const box = openModal(`
+        <h2>${esc(t('accountTitle'))}</h2>
+        <p class="tour-body">${esc(t('helloUser', { name: auth.user.name }))} <span style="font-size:1.4rem">${esc(auth.user.avatar)}</span></p>
+        <p class="sub-label" style="margin-top:10px">@${esc(auth.user.username)}</p>
+        <div class="modal-actions">
+          <button class="btn btn-ghost js-out">${esc(t('signOut'))}</button>
+          <button class="btn btn-primary js-close">${esc(t('cancel'))}</button>
+        </div>`);
+      $('.js-close', box).onclick = closeModal;
+      $('.js-out', box).onclick = async () => {
+        try { await api('/api/auth/logout', { method: 'POST' }); } catch { /* token already gone */ }
+        setAuth(null);
+        accountRooms = null;
+        closeModal();
+        renderAccountBtn();
+        renderRecents();
+        toast(t('signedOut'));
+      };
+      return;
+    }
+
+    const isUp = mode === 'signup';
+    let avatar = AVATARS[0];
+    const box = openModal(`
+      <h2>${esc(isUp ? t('signUp') : t('signIn'))} 🌙</h2>
+      <p class="sub-label" style="margin-bottom:16px">${esc(t('accountWhy'))}</p>
+      <div class="field">
+        <label>${esc(t('username'))}</label>
+        <input id="au-user" type="text" maxlength="24" autocomplete="username"
+          placeholder="${esc(t('usernamePh'))}" spellcheck="false">
+      </div>
+      <div class="field">
+        <label>${esc(t('password'))}</label>
+        <input id="au-pass" type="password" maxlength="100"
+          autocomplete="${isUp ? 'new-password' : 'current-password'}" placeholder="${esc(t('passwordPh'))}">
+      </div>
+      ${isUp
+        ? `<div class="field">
+             <label>${esc(t('displayName'))}</label>
+             <input id="au-name" type="text" maxlength="24" placeholder="${esc(t('namePlaceholder'))}">
+           </div>
+           <div class="field">
+             <label>${esc(t('pickAvatar'))}</label>
+             <div class="emoji-row avatar-row">
+               ${AVATARS.map((a) => `<button type="button" class="emoji-opt av-opt ${a === avatar ? 'selected' : ''}" data-a="${a}">${a}</button>`).join('')}
+             </div>
+           </div>`
+        : ''}
+      <p class="auth-error" hidden></p>
+      <div class="modal-actions">
+        <button class="btn btn-ghost js-swap">${esc(isUp ? t('signIn') : t('signUp'))}</button>
+        <button class="btn btn-primary js-go">${esc(isUp ? t('signUp') : t('signIn'))}</button>
+      </div>
+      <p class="sub-label" style="margin-top:14px">${esc(t('guestNote'))}</p>`);
+
+    $$('.av-opt', box).forEach((b) => {
+      b.onclick = () => {
+        avatar = b.dataset.a;
+        $$('.av-opt', box).forEach((x) => x.classList.toggle('selected', x === b));
+      };
+    });
+
+    $('.js-swap', box).onclick = () => openAccountModal(isUp ? 'signin' : 'signup');
+
+    const errEl = $('.auth-error', box);
+    const fail = (key) => {
+      errEl.textContent = t(key);
+      errEl.hidden = false;
+    };
+
+    const submit = async () => {
+      const username = $('#au-user', box).value.trim().toLowerCase();
+      const password = $('#au-pass', box).value;
+      if (!username || !password) return;
+      const goBtn = $('.js-go', box);
+      goBtn.disabled = true;
+      try {
+        const data = isUp
+          ? await api('/api/auth/register', {
+              method: 'POST',
+              body: { username, password, name: $('#au-name', box).value.trim() || username, avatar },
+            })
+          : await api('/api/auth/login', { method: 'POST', body: { username, password } });
+        setAuth({ token: data.token, user: data.user });
+        accountRooms = data.rooms || [];
+        // an account's identity wins over any nickname saved on this device
+        localStorage.setItem('ct:name', data.user.name);
+        localStorage.setItem('ct:avatar', data.user.avatar);
+        closeModal();
+        renderAccountBtn();
+        renderRecents();
+        toast(t('welcomeBack'));
+      } catch (err) {
+        const map = {
+          'username-taken': 'errUsernameTaken',
+          'bad-username': 'errBadUsername',
+          'short-password': 'errShortPassword',
+          'bad-credentials': 'errBadCredentials',
+        };
+        fail(map[err.code] || 'errNetwork');
+        goBtn.disabled = false;
+      }
+    };
+
+    $('.js-go', box).onclick = submit;
+    ['#au-user', '#au-pass', '#au-name'].forEach((sel) => {
+      $(sel, box)?.addEventListener('keydown', (e) => e.key === 'Enter' && submit());
+    });
+    setTimeout(() => $('#au-user', box)?.focus(), 60);
   }
 
   function rememberRoom(code, name) {
@@ -324,8 +492,11 @@
 
   function initLanding() {
     $('#view-landing').hidden = false;
+    renderAccountBtn();
     renderRecents();
     renderIntro();
+    refreshAccount();
+    $('#account-btn').onclick = () => openAccountModal();
 
     $('#create-form').addEventListener('submit', async (e) => {
       e.preventDefault();
@@ -357,6 +528,8 @@
   // ------------------------------------------------------------ identity
   function ensureIdentity() {
     return new Promise((resolve) => {
+      // signed-in members carry their account identity everywhere
+      if (auth) return resolve({ name: auth.user.name, avatar: auth.user.avatar });
       const savedName = localStorage.getItem('ct:name');
       const savedAvatar = localStorage.getItem('ct:avatar');
       if (savedName) return resolve({ name: savedName, avatar: savedAvatar || '🐻' });
@@ -410,7 +583,14 @@
 
     ws.onopen = () => {
       reconnectDelay = 1000;
-      ws.send(JSON.stringify({ t: 'join', room: roomCode, name: identity.name, avatar: identity.avatar, cid: myCid }));
+      ws.send(JSON.stringify({
+        t: 'join',
+        room: roomCode,
+        name: identity.name,
+        avatar: identity.avatar,
+        cid: myCid,
+        token: auth?.token,
+      }));
     };
 
     ws.onmessage = (e) => {
@@ -529,6 +709,11 @@
         updateEmptyHint();
         return;
 
+      case 'list:done':
+        confetti();
+        centerCheer(t('toastListAllDone', { card: msg.title }));
+        return;
+
       case 'cheer':
         heartsRain();
         if (msg.by?.id !== myId) toast(t('toastHearts', { name: msg.by.name }));
@@ -560,6 +745,8 @@
       'streak:reset': 'toastStreakReset',
       'card:add': 'toastCardAdd',
       'note:set': 'toastNote',
+      'list:add': 'toastListAdd',
+      'list:toggle': 'toastListDone',
     };
     if (map[verb]) toast(t(map[verb], vars));
   }
@@ -602,6 +789,13 @@
       el.dataset.id = card.id;
       $('#board').appendChild(el);
     }
+
+    // A card re-renders whenever anyone touches it. Don't yank the text out
+    // from under someone who is mid-typing in this card's input.
+    const typing = el.contains(document.activeElement) && document.activeElement.tagName === 'INPUT'
+      ? { cls: document.activeElement.className, value: document.activeElement.value }
+      : null;
+
     el.className = `card card--${card.type}`;
     el.innerHTML = `
       <div class="card-head">
@@ -629,7 +823,68 @@
     if (card.type === 'countdown') renderCountdownBody(body, card);
     if (card.type === 'note') renderNoteBody(body, card);
     if (card.type === 'money') renderMoneyBody(body, card, opts);
+    if (card.type === 'list') renderListBody(body, card);
+
+    if (typing) {
+      const again = el.querySelector('input.' + typing.cls.trim().split(/\s+/).join('.'));
+      if (again) {
+        again.value = typing.value;
+        again.focus();
+        again.setSelectionRange(again.value.length, again.value.length);
+      }
+    }
     return el;
+  }
+
+  // ---- checklist
+  function renderListBody(body, card) {
+    const items = card.state.items || [];
+    const done = items.filter((i) => i.done).length;
+    const allDone = items.length > 0 && done === items.length;
+
+    body.innerHTML = `
+      ${items.length
+        ? `<div class="goal-bar"><div class="goal-fill" style="width:${(done / items.length) * 100}%"></div></div>
+           <div class="sub-label">${allDone ? esc(t('listAllDone')) : esc(t('listProgress', { done, total: items.length }))}</div>`
+        : ''}
+      <ul class="check-list">
+        ${items
+          .map(
+            (i) => `
+          <li class="check-item ${i.done ? 'done' : ''}" data-id="${esc(i.id)}">
+            <button class="check-box">${i.done ? '✓' : ''}</button>
+            <span class="check-text">${esc(i.text)}</span>
+            ${i.done && i.doneBy ? `<span class="check-by">${esc(i.doneBy)}</span>` : ''}
+            <button class="check-del icon-btn">✕</button>
+          </li>`
+          )
+          .join('')}
+      </ul>
+      <form class="list-add">
+        <input type="text" maxlength="120" class="js-item" placeholder="${esc(t('listAddPh'))}" autocomplete="off">
+        <button type="submit" class="small-btn accent">+</button>
+      </form>
+      ${done ? `<button class="small-btn js-clear-done">${esc(t('clearDone'))}</button>` : ''}`;
+
+    $$('.check-item', body).forEach((li) => {
+      const itemId = li.dataset.id;
+      $('.check-box', li).onclick = () => send({ t: 'list', id: card.id, op: 'toggle', itemId });
+      $('.check-text', li).onclick = () => send({ t: 'list', id: card.id, op: 'toggle', itemId });
+      $('.check-del', li).onclick = () => send({ t: 'list', id: card.id, op: 'remove', itemId });
+    });
+
+    $('.list-add', body).addEventListener('submit', (e) => {
+      e.preventDefault();
+      const input = $('.js-item', body);
+      const text = input.value.trim();
+      if (!text) return;
+      send({ t: 'list', id: card.id, op: 'add', text });
+      input.value = '';
+      input.focus();
+    });
+
+    const clearBtn = $('.js-clear-done', body);
+    if (clearBtn) clearBtn.onclick = () => send({ t: 'list', id: card.id, op: 'clear-done' });
   }
 
   // ---- money pot
@@ -890,9 +1145,31 @@
   }, 500);
 
   // ------------------------------------------------------------ card add/edit modal
+  const PACKS = {
+    trip: { emoji: '🏖️', nameKey: 'packTrip', descKey: 'packTripDesc' },
+    move: { emoji: '📦', nameKey: 'packMove', descKey: 'packMoveDesc' },
+    health: { emoji: '💪', nameKey: 'packHealth', descKey: 'packHealthDesc' },
+  };
+
   function openTypePicker() {
     const box = openModal(`
       <h2>${esc(t('newCardTitle'))}</h2>
+      <h3 class="pack-head">${esc(t('packsTitle'))}</h3>
+      <div class="pack-grid">
+        ${Object.entries(PACKS)
+          .map(
+            ([key, p]) => `
+          <button class="pack-btn" data-pack="${key}">
+            <span class="p-emoji">${p.emoji}</span>
+            <span>
+              <b>${esc(t(p.nameKey))}</b>
+              <small>${esc(t(p.descKey))}</small>
+            </span>
+          </button>`
+          )
+          .join('')}
+      </div>
+      <h3 class="pack-head">${esc(t('orSingleCard'))}</h3>
       <div class="type-grid">
         ${Object.entries(TYPE_META)
           .map(
@@ -908,6 +1185,89 @@
     $$('.type-btn', box).forEach((btn) => {
       btn.onclick = () => openCardModal(btn.dataset.type, null);
     });
+    $$('.pack-btn', box).forEach((btn) => {
+      btn.onclick = () => openPackModal(btn.dataset.pack);
+    });
+  }
+
+  // ---- ready-made packs: create several linked cards in one go
+  function openPackModal(pack) {
+    const today = new Date();
+    const pad = (n) => String(n).padStart(2, '0');
+    const inTwoMonths = new Date(today.getTime() + 60 * 86400000);
+    const dateVal = `${inTwoMonths.getFullYear()}-${pad(inTwoMonths.getMonth() + 1)}-${pad(inTwoMonths.getDate())}T09:00`;
+
+    const cfg = {
+      trip: { emoji: '🏖️', titleKey: 'tripSetup', nameLabel: 'tripName', namePh: 'tripNamePh', dateLabel: 'tripDate', budget: true },
+      move: { emoji: '📦', titleKey: 'packMove', nameLabel: 'tripName', namePh: 'tripNamePh', dateLabel: 'tripDate', budget: true },
+      health: { emoji: '💪', titleKey: 'packHealth', nameLabel: 'fieldTitle', namePh: 'fieldTitlePh', dateLabel: null, budget: false },
+    }[pack];
+
+    const box = openModal(`
+      <h2>${cfg.emoji} ${esc(t(cfg.titleKey))}</h2>
+      <div class="field">
+        <label>${esc(t(cfg.nameLabel))}</label>
+        <input id="pk-name" type="text" maxlength="40" placeholder="${esc(t(cfg.namePh))}" autocomplete="off">
+      </div>
+      ${cfg.dateLabel
+        ? `<div class="field">
+             <label>${esc(t(cfg.dateLabel))}</label>
+             <input id="pk-date" type="datetime-local" value="${dateVal}">
+           </div>`
+        : ''}
+      ${cfg.budget
+        ? `<div class="field">
+             <label>${esc(t('tripBudget'))}</label>
+             <input id="pk-budget" type="number" inputmode="numeric" min="0" placeholder="${esc(t('fieldGoalPh'))}">
+           </div>`
+        : ''}
+      <div class="modal-actions">
+        <button class="btn btn-ghost js-back">${esc(t('back'))}</button>
+        <button class="btn btn-primary js-create">${esc(t('createPack'))}</button>
+      </div>`);
+
+    $('.js-back', box).onclick = openTypePicker;
+    $('.js-create', box).onclick = () => {
+      const name = $('#pk-name', box).value.trim();
+      if (!name) return $('#pk-name', box).focus();
+      const dateEl = $('#pk-date', box);
+      const budget = Math.max(0, Math.round(Number($('#pk-budget', box)?.value))) || 0;
+      const targetAt = dateEl?.value ? new Date(dateEl.value).getTime() : 0;
+
+      const add = (card) => send({ t: 'card:add', card });
+
+      if (pack === 'trip' || pack === 'move') {
+        if (targetAt) {
+          add({
+            type: 'countdown',
+            title: t('tripCountdown', { name }),
+            emoji: pack === 'trip' ? '✈️' : '📦',
+            config: { targetAt },
+          });
+        }
+        if (budget) {
+          add({
+            type: 'money',
+            title: t('tripFund', { name }),
+            emoji: '💰',
+            config: { goal: budget, cur: '₺' },
+          });
+        }
+        add({
+          type: 'list',
+          title: t('tripChecklist', { name }),
+          emoji: '📝',
+          config: { items: t(pack === 'trip' ? 'tripItems' : 'moveItems') },
+        });
+      } else {
+        add({ type: 'tally', title: `${name} 💧`, emoji: '💧', config: { goal: 8 } });
+        add({ type: 'streak', title: name, emoji: '💪', config: { startAt: Date.now() } });
+        add({ type: 'list', title: name, emoji: '📝', config: { items: [] } });
+      }
+      closeModal();
+    };
+
+    setTimeout(() => $('#pk-name', box)?.focus(), 60);
   }
 
   function openCardModal(type, existing) {
@@ -1163,6 +1523,7 @@
   function setChatOpen(open) {
     chatOpen = open;
     $('#chat-drawer').classList.toggle('open', open);
+    $('#chat-scrim').classList.toggle('open', open);
     if (open) {
       chatUnread = 0;
       updateChatBadge();
@@ -1175,6 +1536,26 @@
   function initChat() {
     $('#fab-chat').onclick = () => setChatOpen(!chatOpen);
     $('#chat-close').onclick = () => setChatOpen(false);
+    $('#chat-scrim').onclick = () => setChatOpen(false);
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && chatOpen && overlay.hidden) setChatOpen(false);
+    });
+
+    // swipe right on the drawer to dismiss
+    const drawer = $('#chat-drawer');
+    let swipeX = null;
+    let swipeY = null;
+    drawer.addEventListener('touchstart', (e) => {
+      swipeX = e.touches[0].clientX;
+      swipeY = e.touches[0].clientY;
+    }, { passive: true });
+    drawer.addEventListener('touchend', (e) => {
+      if (swipeX === null) return;
+      const dx = e.changedTouches[0].clientX - swipeX;
+      const dy = Math.abs(e.changedTouches[0].clientY - swipeY);
+      if (dx > 70 && dy < 60) setChatOpen(false);
+      swipeX = swipeY = null;
+    }, { passive: true });
     $('#chat-form').addEventListener('submit', (e) => {
       e.preventDefault();
       const input = $('#chat-input');

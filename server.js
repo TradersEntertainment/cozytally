@@ -56,6 +56,26 @@ db.exec(`
     created_at INTEGER NOT NULL
   );
   CREATE INDEX IF NOT EXISTS idx_subs_room ON push_subs(room_code);
+  CREATE TABLE IF NOT EXISTS users (
+    id         TEXT PRIMARY KEY,
+    username   TEXT NOT NULL UNIQUE,
+    pass       TEXT NOT NULL,
+    name       TEXT NOT NULL,
+    avatar     TEXT NOT NULL DEFAULT '🐻',
+    created_at INTEGER NOT NULL
+  );
+  CREATE TABLE IF NOT EXISTS sessions (
+    token      TEXT PRIMARY KEY,
+    user_id    TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    created_at INTEGER NOT NULL,
+    last_seen  INTEGER NOT NULL
+  );
+  CREATE TABLE IF NOT EXISTS user_rooms (
+    user_id   TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    room_code TEXT NOT NULL,
+    joined_at INTEGER NOT NULL,
+    PRIMARY KEY (user_id, room_code)
+  );
 `);
 
 // Web Push (VAPID) keys live on the data volume so they survive deploys.
@@ -101,7 +121,65 @@ const q = {
     'INSERT INTO push_subs (endpoint, room_code, cid, keys, created_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT(endpoint) DO UPDATE SET room_code = excluded.room_code, cid = excluded.cid, keys = excluded.keys'
   ),
   delSub: db.prepare('DELETE FROM push_subs WHERE endpoint = ?'),
+
+  createUser: db.prepare(
+    'INSERT INTO users (id, username, pass, name, avatar, created_at) VALUES (?, ?, ?, ?, ?, ?)'
+  ),
+  userByName: db.prepare('SELECT * FROM users WHERE username = ?'),
+  userById: db.prepare('SELECT * FROM users WHERE id = ?'),
+  updateUser: db.prepare('UPDATE users SET name = ?, avatar = ? WHERE id = ?'),
+  createSession: db.prepare(
+    'INSERT INTO sessions (token, user_id, created_at, last_seen) VALUES (?, ?, ?, ?)'
+  ),
+  sessionByToken: db.prepare('SELECT * FROM sessions WHERE token = ?'),
+  touchSession: db.prepare('UPDATE sessions SET last_seen = ? WHERE token = ?'),
+  delSession: db.prepare('DELETE FROM sessions WHERE token = ?'),
+  linkRoom: db.prepare(
+    'INSERT INTO user_rooms (user_id, room_code, joined_at) VALUES (?, ?, ?) ON CONFLICT(user_id, room_code) DO UPDATE SET joined_at = excluded.joined_at'
+  ),
+  unlinkRoom: db.prepare('DELETE FROM user_rooms WHERE user_id = ? AND room_code = ?'),
+  userRooms: db.prepare(
+    `SELECT r.code, r.name, ur.joined_at FROM user_rooms ur
+     JOIN rooms r ON r.code = ur.room_code
+     WHERE ur.user_id = ? ORDER BY ur.joined_at DESC LIMIT 50`
+  ),
 };
+
+// ---------------------------------------------------------------- auth
+const SESSION_TTL = 400 * 24 * 60 * 60 * 1000; // ~13 months
+
+function hashPassword(password, salt = crypto.randomBytes(16).toString('hex')) {
+  const hash = crypto.scryptSync(password, salt, 64).toString('hex');
+  return `${salt}:${hash}`;
+}
+
+function verifyPassword(password, stored) {
+  const [salt, hash] = String(stored).split(':');
+  if (!salt || !hash) return false;
+  const candidate = crypto.scryptSync(password, salt, 64);
+  const known = Buffer.from(hash, 'hex');
+  return candidate.length === known.length && crypto.timingSafeEqual(candidate, known);
+}
+
+function userFromToken(token) {
+  if (typeof token !== 'string' || token.length < 20) return null;
+  const session = q.sessionByToken.get(token);
+  if (!session) return null;
+  const now = Date.now();
+  if (now - session.created_at > SESSION_TTL) {
+    q.delSession.run(token);
+    return null;
+  }
+  if (now - session.last_seen > 60_000) q.touchSession.run(now, token);
+  return q.userById.get(session.user_id) || null;
+}
+
+const publicUser = (u) => ({ id: u.id, username: u.username, name: u.name, avatar: u.avatar });
+
+function bearer(req) {
+  const h = req.headers.authorization || '';
+  return h.startsWith('Bearer ') ? h.slice(7) : '';
+}
 
 // ---------------------------------------------------------------- room codes
 const CODE_WORDS = [
@@ -121,7 +199,8 @@ function newRoomCode() {
   return crypto.randomUUID().slice(0, 8);
 }
 
-const CARD_TYPES = new Set(['tally', 'streak', 'timer', 'countdown', 'note', 'money']);
+const CARD_TYPES = new Set(['tally', 'streak', 'timer', 'countdown', 'note', 'money', 'list']);
+const MAX_LIST_ITEMS = 60;
 const MAX_CARDS_PER_ROOM = 60;
 
 const clampStr = (v, max) => String(v ?? '').trim().slice(0, max);
@@ -151,6 +230,7 @@ function defaultState(type, now) {
   if (type === 'timer') return { running: false, startedAt: 0, accumulated: 0 };
   if (type === 'note') return { text: '', author: '', updatedAt: 0 };
   if (type === 'money') return { total: 0, log: [] };
+  if (type === 'list') return { items: [] };
   return {};
 }
 
@@ -205,6 +285,82 @@ app.get('/api/rooms/:code', (req, res) => {
 
 app.get('/r/:code', (_req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
+
+// ------------------------------------------------------------ auth api
+const authBuckets = new Map();
+function allowAuth(ip) {
+  const now = Date.now();
+  let b = authBuckets.get(ip);
+  if (!b || now > b.resetAt) {
+    b = { count: 0, resetAt: now + 15 * 60 * 1000 };
+    authBuckets.set(ip, b);
+  }
+  b.count++;
+  return b.count <= 30;
+}
+
+const clientIp = (req) =>
+  req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.socket.remoteAddress || '?';
+
+app.post('/api/auth/register', (req, res) => {
+  if (!allowAuth(clientIp(req))) return res.status(429).json({ error: 'rate-limited' });
+  const username = clampStr(req.body?.username, 24).toLowerCase();
+  const password = String(req.body?.password ?? '');
+  if (!/^[a-z0-9._-]{3,24}$/.test(username)) return res.status(400).json({ error: 'bad-username' });
+  if (password.length < 6) return res.status(400).json({ error: 'short-password' });
+  if (q.userByName.get(username)) return res.status(409).json({ error: 'username-taken' });
+
+  const now = Date.now();
+  const user = {
+    id: crypto.randomUUID(),
+    username,
+    name: clampStr(req.body?.name, 24) || username,
+    avatar: clampStr(req.body?.avatar, 8) || '🐻',
+  };
+  q.createUser.run(user.id, username, hashPassword(password), user.name, user.avatar, now);
+  const token = crypto.randomBytes(32).toString('hex');
+  q.createSession.run(token, user.id, now, now);
+  res.json({ token, user, rooms: [] });
+});
+
+app.post('/api/auth/login', (req, res) => {
+  if (!allowAuth(clientIp(req))) return res.status(429).json({ error: 'rate-limited' });
+  const username = clampStr(req.body?.username, 24).toLowerCase();
+  const row = q.userByName.get(username);
+  if (!row || !verifyPassword(String(req.body?.password ?? ''), row.pass))
+    return res.status(401).json({ error: 'bad-credentials' });
+  const now = Date.now();
+  const token = crypto.randomBytes(32).toString('hex');
+  q.createSession.run(token, row.id, now, now);
+  res.json({ token, user: publicUser(row), rooms: q.userRooms.all(row.id) });
+});
+
+app.post('/api/auth/logout', (req, res) => {
+  q.delSession.run(bearer(req));
+  res.json({ ok: true });
+});
+
+app.get('/api/auth/me', (req, res) => {
+  const user = userFromToken(bearer(req));
+  if (!user) return res.status(401).json({ error: 'unauthorized' });
+  res.json({ user: publicUser(user), rooms: q.userRooms.all(user.id) });
+});
+
+app.post('/api/auth/profile', (req, res) => {
+  const user = userFromToken(bearer(req));
+  if (!user) return res.status(401).json({ error: 'unauthorized' });
+  const name = clampStr(req.body?.name, 24) || user.name;
+  const avatar = clampStr(req.body?.avatar, 8) || user.avatar;
+  q.updateUser.run(name, avatar, user.id);
+  res.json({ user: { ...publicUser(user), name, avatar } });
+});
+
+app.post('/api/auth/forget-room', (req, res) => {
+  const user = userFromToken(bearer(req));
+  if (!user) return res.status(401).json({ error: 'unauthorized' });
+  q.unlinkRoom.run(user.id, clampStr(req.body?.code, 40).toLowerCase());
+  res.json({ rooms: q.userRooms.all(user.id) });
 });
 
 // ------------------------------------------------------------ push api
@@ -384,11 +540,16 @@ function handleMessage(ws, msg) {
     if (!room) return sendTo(ws, { t: 'error', code: 'room-not-found' });
 
     // Leaving a previous room on the same socket is not supported; clients reconnect.
+    // Signed-in members get their account identity and the room saved to
+    // their account, so it follows them to every device.
+    const account = userFromToken(msg.token);
     ws.meta.room = code;
-    ws.meta.name = clampStr(msg.name, 24) || 'misafir';
-    ws.meta.avatar = clampStr(msg.avatar, 8) || '🐻';
+    ws.meta.name = account?.name || clampStr(msg.name, 24) || 'misafir';
+    ws.meta.avatar = account?.avatar || clampStr(msg.avatar, 8) || '🐻';
     ws.meta.cid = clampStr(msg.cid, 64);
+    ws.meta.userId = account?.id || null;
     ws.meta.joined = true;
+    if (account) q.linkRoom.run(account.id, code, now);
 
     let set = roomSockets.get(code);
     if (!set) roomSockets.set(code, (set = new Set()));
@@ -447,6 +608,13 @@ function handleMessage(ws, msg) {
         state.text = clampStr(c.config?.text, 500);
         state.author = ws.meta.name;
         state.updatedAt = now;
+      }
+      if (c.type === 'list' && Array.isArray(c.config?.items)) {
+        state.items = c.config.items
+          .slice(0, MAX_LIST_ITEMS)
+          .map((text) => clampStr(text, 120))
+          .filter(Boolean)
+          .map((text) => ({ id: crypto.randomUUID(), text, done: false, doneBy: '' }));
       }
       const sort = q.maxSort.get(code).m + 1;
       q.insertCard.run(id, code, c.type, title, emoji, JSON.stringify(config), JSON.stringify(state), sort, now);
@@ -542,6 +710,42 @@ function handleMessage(ws, msg) {
         `${ws.meta.name} 💰 ${amount > 0 ? '+' : ''}${amount}${cur} · ${row.title}`,
         ws.meta.cid
       );
+      return;
+    }
+
+    case 'list': {
+      const row = q.getCard.get(clampStr(msg.id, 40), code);
+      if (!row || row.type !== 'list') return;
+      const state = JSON.parse(row.state);
+      state.items = Array.isArray(state.items) ? state.items : [];
+
+      if (msg.op === 'add') {
+        const text = clampStr(msg.text, 120);
+        if (!text || state.items.length >= MAX_LIST_ITEMS) return;
+        state.items.push({ id: crypto.randomUUID(), text, done: false, doneBy: '' });
+      } else if (msg.op === 'toggle') {
+        const item = state.items.find((i) => i.id === msg.itemId);
+        if (!item) return;
+        item.done = !item.done;
+        item.doneBy = item.done ? ws.meta.name : '';
+      } else if (msg.op === 'remove') {
+        const before = state.items.length;
+        state.items = state.items.filter((i) => i.id !== msg.itemId);
+        if (state.items.length === before) return;
+      } else if (msg.op === 'clear-done') {
+        const before = state.items.length;
+        state.items = state.items.filter((i) => !i.done);
+        if (state.items.length === before) return;
+      } else {
+        return;
+      }
+
+      q.updateCardState.run(JSON.stringify(state), row.id);
+      broadcastCard(code, row.id, by, `list:${msg.op}`);
+      // Celebrate out loud only when a list is finished off.
+      if (state.items.length && state.items.every((i) => i.done) && msg.op === 'toggle') {
+        broadcast(code, { t: 'list:done', id: row.id, title: row.title, by });
+      }
       return;
     }
 

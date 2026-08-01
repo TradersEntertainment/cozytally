@@ -12,7 +12,15 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Quicksand:wght@400;500;600;700&family=Caveat:wght@500;700&display=swap" rel="stylesheet">
+  <!-- Loaded without blocking the parser: a pending stylesheet also blocks
+       script execution, so a slow or unreachable font host would otherwise
+       leave the whole app stuck on a blank page. -->
+  <link rel="stylesheet" media="print" onload="this.media='all'"
+    href="https://fonts.googleapis.com/css2?family=Quicksand:wght@400;500;600;700&family=Caveat:wght@500;700&display=swap">
+  <noscript>
+    <link rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Quicksand:wght@400;500;600;700&family=Caveat:wght@500;700&display=swap">
+  </noscript>
   <link rel="stylesheet" href="/style.css">
 </head>
 <body>
@@ -50,6 +58,10 @@
   <!-- ===================== landing ===================== -->
   <main id="view-landing" class="view" hidden>
     <div class="landing-wrap">
+      <div class="account-bar">
+        <button id="account-btn" class="chip chip-btn"></button>
+      </div>
+
       <header class="landing-head">
         <h1 class="logo">Cozy<span>Tally</span> <span class="logo-moon">🌙</span></h1>
         <p class="tagline" data-i18n="tagline"></p>
@@ -196,22 +208,24 @@
     <button id="fab-add" class="fab" title="+">+</button>
     <button id="fab-love" class="fab fab-love" title="💖">💖</button>
     <button id="fab-chat" class="fab fab-chat" title="💬">💬<span id="chat-badge" class="chat-badge" hidden></span></button>
-
-    <!-- chat drawer -->
-    <aside id="chat-drawer" class="chat-drawer">
-      <header class="chat-head">
-        <h3 data-i18n="chatTitle"></h3>
-        <button id="chat-close" class="icon-btn">✕</button>
-      </header>
-      <div id="chat-list" class="chat-list"></div>
-      <form id="chat-form" class="chat-form">
-        <button type="button" id="chat-photo" class="icon-btn chat-photo-btn" title="📷">📷</button>
-        <input type="file" id="chat-file" accept="image/*" hidden>
-        <input type="text" id="chat-input" maxlength="500" autocomplete="off" data-i18n-ph="chatPlaceholder">
-        <button type="submit" class="chat-send">➤</button>
-      </form>
-    </aside>
   </main>
+
+  <!-- chat drawer — kept outside the room view so it stacks above the
+       fixed page chrome instead of being trapped in the view's layer -->
+  <div id="chat-scrim" class="chat-scrim"></div>
+  <aside id="chat-drawer" class="chat-drawer">
+    <header class="chat-head">
+      <h3 data-i18n="chatTitle"></h3>
+      <button id="chat-close" class="chat-close-btn" aria-label="✕">✕</button>
+    </header>
+    <div id="chat-list" class="chat-list"></div>
+    <form id="chat-form" class="chat-form">
+      <button type="button" id="chat-photo" class="icon-btn chat-photo-btn" title="📷">📷</button>
+      <input type="file" id="chat-file" accept="image/*" hidden>
+      <input type="text" id="chat-input" maxlength="500" autocomplete="off" data-i18n-ph="chatPlaceholder">
+      <button type="submit" class="chat-send">➤</button>
+    </form>
+  </aside>
 
   <!-- language toggle (both views) -->
   <button id="lang-toggle" class="chip chip-btn lang-toggle"></button>
