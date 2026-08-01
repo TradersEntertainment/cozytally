@@ -170,7 +170,9 @@
 
   function openModal(html, { dismissable = true } = {}) {
     modalDismissable = dismissable;
-    modalBox.innerHTML = html;
+    modalBox.innerHTML = `<div class="sheet-grabber"></div>${html}`;
+    modalBox.scrollTop = 0;
+    modalBox.style.transform = '';
     overlay.hidden = false;
     return modalBox;
   }
@@ -186,6 +188,36 @@
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape' && !overlay.hidden && modalDismissable) closeModal();
   });
+
+  // Bottom sheets on phones: drag down to dismiss, with rubber-banding past
+  // the top. Only starts when the sheet is already scrolled to the top.
+  (() => {
+    let startY = null;
+    let dy = 0;
+
+    modalBox.addEventListener('touchstart', (e) => {
+      if (!modalDismissable || modalBox.scrollTop > 0) return;
+      startY = e.touches[0].clientY;
+      dy = 0;
+      modalBox.style.transition = 'none';
+    }, { passive: true });
+
+    modalBox.addEventListener('touchmove', (e) => {
+      if (startY === null) return;
+      dy = e.touches[0].clientY - startY;
+      if (dy <= 0) return;
+      modalBox.style.transform = `translateY(${dy * 0.75}px)`;
+    }, { passive: true });
+
+    modalBox.addEventListener('touchend', () => {
+      if (startY === null) return;
+      modalBox.style.transition = '';
+      if (dy > 110) closeModal();
+      else modalBox.style.transform = '';
+      startY = null;
+      dy = 0;
+    }, { passive: true });
+  })();
 
   function confirmModal({ title, body, yesLabel, danger = true }) {
     return new Promise((resolve) => {
@@ -1877,6 +1909,12 @@
 
     if (!localStorage.getItem('ct:toured')) showTour(0);
     $('#replay-tour').onclick = () => showTour(0);
+
+    // frost and tighten the header once the board scrolls under it
+    const header = $('#room-header');
+    const onScroll = () => header.classList.toggle('stuck', scrollY > 12);
+    addEventListener('scroll', onScroll, { passive: true });
+    onScroll();
 
     $('#fab-add').onclick = openTypePicker;
     $('#fab-love').onclick = () => send({ t: 'cheer', kind: 'hearts' });

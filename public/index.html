@@ -205,9 +205,12 @@
       <button id="replay-tour" class="chip chip-btn" data-i18n="howItWorks"></button>
     </div>
 
-    <button id="fab-add" class="fab" title="+">+</button>
-    <button id="fab-love" class="fab fab-love" title="💖">💖</button>
-    <button id="fab-chat" class="fab fab-chat" title="💬">💬<span id="chat-badge" class="chat-badge" hidden></span></button>
+    <div class="dock-veil" aria-hidden="true"></div>
+    <nav class="dock" aria-label="CozyTally">
+      <button id="fab-chat" class="fab fab-chat" title="💬">💬<span id="chat-badge" class="chat-badge" hidden></span></button>
+      <button id="fab-love" class="fab fab-love" title="💖">💖</button>
+      <button id="fab-add" class="fab" title="+">+</button>
+    </nav>
   </main>
 
   <!-- chat drawer — kept outside the room view so it stacks above the
