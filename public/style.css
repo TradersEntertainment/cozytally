@@ -1107,6 +1107,8 @@ textarea::placeholder { color: rgba(244, 238, 255, 0.35); }
   .fab { bottom: 20px; right: 18px; }
   .fab-love { right: 92px; }
   .stargazers { width: 150px; right: 10px; }
-  .landing-wrap { padding-bottom: 150px; }
-  .moon-cat { width: 92px; top: calc(7% + 40px); right: calc(8% - 20px); }
+  .landing-wrap { padding-top: 84px; padding-bottom: 150px; }
+  .moon { width: 58px; height: 58px; top: 3.2%; right: 5%; }
+  .moon-cat { width: 72px; top: calc(3.2% + 28px); right: calc(5% - 14px); }
+  .lang-toggle { right: auto; left: 14px; }
 }
