@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import express from 'express';
 import { WebSocketServer } from 'ws';
 import Database from 'better-sqlite3';
+import webpush from 'web-push';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = process.env.PORT || 3000;
@@ -36,7 +37,41 @@ db.exec(`
     created_at INTEGER NOT NULL
   );
   CREATE INDEX IF NOT EXISTS idx_cards_room ON cards(room_code, sort);
+  CREATE TABLE IF NOT EXISTS messages (
+    id         TEXT PRIMARY KEY,
+    room_code  TEXT NOT NULL,
+    cid        TEXT,
+    author     TEXT NOT NULL,
+    avatar     TEXT,
+    text       TEXT NOT NULL DEFAULT '',
+    photo      TEXT,
+    created_at INTEGER NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_msgs_room ON messages(room_code, created_at);
+  CREATE TABLE IF NOT EXISTS push_subs (
+    endpoint   TEXT PRIMARY KEY,
+    room_code  TEXT NOT NULL,
+    cid        TEXT,
+    keys       TEXT NOT NULL,
+    created_at INTEGER NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_subs_room ON push_subs(room_code);
 `);
+
+// Web Push (VAPID) keys live on the data volume so they survive deploys.
+const vapidPath = path.join(DATA_DIR, 'vapid.json');
+let vapid = null;
+try {
+  vapid = JSON.parse(fs.readFileSync(vapidPath, 'utf8'));
+} catch {
+  vapid = webpush.generateVAPIDKeys();
+  fs.writeFileSync(vapidPath, JSON.stringify(vapid));
+}
+webpush.setVapidDetails('mailto:hello@cozytally.app', vapid.publicKey, vapid.privateKey);
+
+// Uploaded chat photos also live on the volume.
+const UPLOAD_DIR = path.join(DATA_DIR, 'uploads');
+fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 
 const q = {
   getRoom: db.prepare('SELECT * FROM rooms WHERE code = ?'),
@@ -53,6 +88,19 @@ const q = {
   updateCardState: db.prepare('UPDATE cards SET state = ? WHERE id = ?'),
   deleteCard: db.prepare('DELETE FROM cards WHERE id = ?'),
   maxSort: db.prepare('SELECT COALESCE(MAX(sort), 0) AS m FROM cards WHERE room_code = ?'),
+  insertMsg: db.prepare(
+    'INSERT INTO messages (id, room_code, cid, author, avatar, text, photo, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+  ),
+  recentMsgs: db.prepare('SELECT * FROM messages WHERE room_code = ? ORDER BY created_at DESC LIMIT ?'),
+  oldMsgs: db.prepare(
+    'SELECT id, photo FROM messages WHERE room_code = ? AND id NOT IN (SELECT id FROM messages WHERE room_code = ? ORDER BY created_at DESC LIMIT 500)'
+  ),
+  delMsg: db.prepare('DELETE FROM messages WHERE id = ?'),
+  subsByRoom: db.prepare('SELECT * FROM push_subs WHERE room_code = ?'),
+  upsertSub: db.prepare(
+    'INSERT INTO push_subs (endpoint, room_code, cid, keys, created_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT(endpoint) DO UPDATE SET room_code = excluded.room_code, cid = excluded.cid, keys = excluded.keys'
+  ),
+  delSub: db.prepare('DELETE FROM push_subs WHERE endpoint = ?'),
 };
 
 // ---------------------------------------------------------------- room codes
@@ -73,7 +121,7 @@ function newRoomCode() {
   return crypto.randomUUID().slice(0, 8);
 }
 
-const CARD_TYPES = new Set(['tally', 'streak', 'timer', 'countdown', 'note']);
+const CARD_TYPES = new Set(['tally', 'streak', 'timer', 'countdown', 'note', 'money']);
 const MAX_CARDS_PER_ROOM = 60;
 
 const clampStr = (v, max) => String(v ?? '').trim().slice(0, max);
@@ -88,6 +136,12 @@ function sanitizeConfig(type, raw) {
   const out = {};
   if (type === 'tally') out.goal = toInt(src.goal, 0, 100000, 0);
   if (type === 'countdown') out.targetAt = toInt(src.targetAt, 0, 4102444800000, 0);
+  if (type === 'money') {
+    out.goal = toInt(src.goal, 0, 1000000000, 0);
+    out.cur = clampStr(src.cur, 4) || '₺';
+    if (typeof src.photo === 'string' && /^\/u\/[\w-]+\.(jpg|png|webp|gif)$/.test(src.photo))
+      out.photo = src.photo;
+  }
   return out;
 }
 
@@ -96,6 +150,7 @@ function defaultState(type, now) {
   if (type === 'streak') return { startAt: now, best: 0 };
   if (type === 'timer') return { running: false, startedAt: 0, accumulated: 0 };
   if (type === 'note') return { text: '', author: '', updatedAt: 0 };
+  if (type === 'money') return { total: 0, log: [] };
   return {};
 }
 
@@ -151,6 +206,87 @@ app.get('/api/rooms/:code', (req, res) => {
 app.get('/r/:code', (_req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
+
+// ------------------------------------------------------------ push api
+app.get('/api/push/key', (_req, res) => res.json({ key: vapid.publicKey }));
+
+app.post('/api/push/subscribe', (req, res) => {
+  const { room, cid, sub } = req.body || {};
+  const code = clampStr(room, 40).toLowerCase();
+  if (!q.getRoom.get(code)) return res.status(404).json({ error: 'not-found' });
+  if (!sub?.endpoint || !sub?.keys?.p256dh || !sub?.keys?.auth || sub.endpoint.length > 1024)
+    return res.status(400).json({ error: 'bad-subscription' });
+  q.upsertSub.run(sub.endpoint, code, clampStr(cid, 64), JSON.stringify(sub.keys), Date.now());
+  res.json({ ok: true });
+});
+
+app.post('/api/push/unsubscribe', (req, res) => {
+  const endpoint = req.body?.endpoint;
+  if (typeof endpoint === 'string') q.delSub.run(endpoint);
+  res.json({ ok: true });
+});
+
+function pushToRoom(code, body, exceptCid) {
+  const room = q.getRoom.get(code);
+  if (!room) return;
+  const online = new Set(
+    [...(roomSockets.get(code) || [])].map((s) => s.meta?.cid).filter(Boolean)
+  );
+  const payload = JSON.stringify({
+    title: room.name,
+    body,
+    tag: 'ct-' + code,
+    url: '/r/' + encodeURIComponent(code),
+  });
+  for (const row of q.subsByRoom.all(code)) {
+    if (row.cid && (row.cid === exceptCid || online.has(row.cid))) continue;
+    const sub = { endpoint: row.endpoint, keys: JSON.parse(row.keys) };
+    webpush.sendNotification(sub, payload, { TTL: 3600 }).catch((err) => {
+      if (err.statusCode === 404 || err.statusCode === 410) q.delSub.run(row.endpoint);
+    });
+  }
+}
+
+const heartPushAt = new Map(); // room -> ts, so hearts can't spam phones
+
+// ------------------------------------------------------------ photo uploads
+const EXT_BY_MIME = {
+  'image/jpeg': 'jpg',
+  'image/png': 'png',
+  'image/webp': 'webp',
+  'image/gif': 'gif',
+};
+
+const uploadBuckets = new Map();
+function allowUpload(ip) {
+  const now = Date.now();
+  let b = uploadBuckets.get(ip);
+  if (!b || now > b.resetAt) {
+    b = { count: 0, resetAt: now + 10 * 60 * 1000 };
+    uploadBuckets.set(ip, b);
+  }
+  b.count++;
+  return b.count <= 60;
+}
+
+app.post(
+  '/api/upload/:code',
+  express.raw({ type: ['image/jpeg', 'image/png', 'image/webp', 'image/gif'], limit: '6mb' }),
+  (req, res) => {
+    const code = clampStr(req.params.code, 40).toLowerCase();
+    if (!q.getRoom.get(code)) return res.status(404).json({ error: 'not-found' });
+    const ip = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.socket.remoteAddress || '?';
+    if (!allowUpload(ip)) return res.status(429).json({ error: 'rate-limited' });
+    const ext = EXT_BY_MIME[req.headers['content-type']];
+    if (!ext || !Buffer.isBuffer(req.body) || req.body.length === 0)
+      return res.status(400).json({ error: 'bad-image' });
+    const name = `${crypto.randomUUID()}.${ext}`;
+    fs.writeFileSync(path.join(UPLOAD_DIR, name), req.body);
+    res.json({ url: '/u/' + name });
+  }
+);
+
+app.use('/u', express.static(UPLOAD_DIR, { maxAge: '365d', immutable: true }));
 
 // ---------------------------------------------------------------- websocket
 const server = http.createServer(app);
@@ -251,6 +387,7 @@ function handleMessage(ws, msg) {
     ws.meta.room = code;
     ws.meta.name = clampStr(msg.name, 24) || 'misafir';
     ws.meta.avatar = clampStr(msg.avatar, 8) || '🐻';
+    ws.meta.cid = clampStr(msg.cid, 64);
     ws.meta.joined = true;
 
     let set = roomSockets.get(code);
@@ -264,6 +401,13 @@ function handleMessage(ws, msg) {
       cards: q.roomCards.all(code).map(rowToCard),
       members: membersOf(code),
       you: ws.meta.id,
+      chat: q.recentMsgs
+        .all(code, 60)
+        .reverse()
+        .map((m) => ({
+          id: m.id, cid: m.cid, author: m.author, avatar: m.avatar,
+          text: m.text, photo: m.photo, createdAt: m.created_at,
+        })),
       now,
     });
     broadcast(code, { t: 'members', members: membersOf(code) }, ws);
@@ -329,6 +473,8 @@ function handleMessage(ws, msg) {
     case 'card:delete': {
       const row = q.getCard.get(clampStr(msg.id, 40), code);
       if (!row) return;
+      const cfg = JSON.parse(row.config);
+      if (cfg.photo) fs.unlink(path.join(UPLOAD_DIR, path.basename(cfg.photo)), () => {});
       q.deleteCard.run(row.id);
       broadcast(code, { t: 'card:delete', id: row.id, title: row.title, by });
       return;
@@ -380,6 +526,50 @@ function handleMessage(ws, msg) {
       return;
     }
 
+    case 'money': {
+      const row = q.getCard.get(clampStr(msg.id, 40), code);
+      if (!row || row.type !== 'money') return;
+      const amount = toInt(msg.amount, -100000000, 100000000, 0);
+      if (!amount) return;
+      const state = JSON.parse(row.state);
+      state.total = Math.max(0, (state.total || 0) + amount);
+      state.log = [{ a: amount, by: ws.meta.name, at: now }, ...(state.log || [])].slice(0, 20);
+      q.updateCardState.run(JSON.stringify(state), row.id);
+      broadcastCard(code, row.id, by, amount > 0 ? 'money+' : 'money-');
+      const cur = JSON.parse(row.config).cur || '₺';
+      pushToRoom(
+        code,
+        `${ws.meta.name} 💰 ${amount > 0 ? '+' : ''}${amount}${cur} · ${row.title}`,
+        ws.meta.cid
+      );
+      return;
+    }
+
+    case 'chat:send': {
+      const text = clampStr(msg.text, 500);
+      const photo = typeof msg.photo === 'string' && /^\/u\/[\w-]+\.(jpg|png|webp|gif)$/.test(msg.photo)
+        ? msg.photo
+        : null;
+      if (!text && !photo) return;
+      const m = {
+        id: crypto.randomUUID(),
+        cid: ws.meta.cid || '',
+        author: ws.meta.name,
+        avatar: ws.meta.avatar,
+        text,
+        photo,
+        createdAt: now,
+      };
+      q.insertMsg.run(m.id, code, m.cid, m.author, m.avatar, m.text, m.photo, m.createdAt);
+      for (const old of q.oldMsgs.all(code, code)) {
+        if (old.photo) fs.unlink(path.join(UPLOAD_DIR, path.basename(old.photo)), () => {});
+        q.delMsg.run(old.id);
+      }
+      broadcast(code, { t: 'chat:new', msg: m });
+      pushToRoom(code, `${m.author}: ${photo ? '📷 ' : ''}${text.slice(0, 90) || ''}`.trim(), ws.meta.cid);
+      return;
+    }
+
     case 'note:set': {
       const row = q.getCard.get(clampStr(msg.id, 40), code);
       if (!row || row.type !== 'note') return;
@@ -389,12 +579,17 @@ function handleMessage(ws, msg) {
       state.updatedAt = now;
       q.updateCardState.run(JSON.stringify(state), row.id);
       broadcastCard(code, row.id, by, 'note:set');
+      pushToRoom(code, `${ws.meta.name} 💌 ${state.text.slice(0, 90)}`, ws.meta.cid);
       return;
     }
 
     case 'cheer': {
       const kind = msg.kind === 'confetti' ? 'confetti' : 'hearts';
       broadcast(code, { t: 'cheer', kind, by });
+      if ((heartPushAt.get(code) || 0) < now - 20000) {
+        heartPushAt.set(code, now);
+        pushToRoom(code, `${ws.meta.name} 💖✨`, ws.meta.cid);
+      }
       return;
     }
   }

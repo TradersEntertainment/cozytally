@@ -12,6 +12,14 @@ ikiniz de aynı panoyu **canlı** görürsünüz. Panoya istediğiniz kadar kart
 | ⏳ **Ortak Kronometre** | Birlikte süre sayarsınız; başlat/durdur herkeste senkron |
 | 🎈 **Geri Sayım** | Özel bir güne kalan süreyi sayar, vakti gelince konfeti 🎉 |
 | 💌 **Not** | Birbirinize yapışkan notlar bırakırsınız — kim yazdıysa imzası düşer |
+| 💰 **Kumbara** | Birlikte para biriktirin: hedef tutar, %25/50/75/100 seviye yıldızları, hedef fotoğrafı, +/− işlem geçmişi ve para atınca 🪙 yağmuru |
+
+Ayrıca her odada:
+
+- 💬 **Kalıcı sohbet** — mesajlar veritabanında saklanır, sonra girince de durur; 📷 fotoğraf da atabilirsiniz
+- 🔔 **Push bildirimleri** — sekme kapalıyken bile "Ayşe: akşam film? 💬" diye telefona bildirim düşer
+  (odadaki 🔔 düğmesiyle açılır; VAPID anahtarları ilk açılışta otomatik üretilip `/data`'da saklanır)
+- 📱 **PWA** — telefonda "Ana Ekrana Ekle" ile gerçek uygulama gibi kurulur
 
 Hesap yok, şifre yok — sadece takma ad + oda kodu. TR/EN dil desteği var.
 
@@ -19,8 +27,9 @@ Hesap yok, şifre yok — sadece takma ad + oda kodu. TR/EN dil desteği var.
 
 1. Bu repoyu Railway'de yeni bir servis olarak ekle (GitHub'dan deploy).
 2. Servise bir **Volume** ekle ve mount path olarak **`/data`** yaz.
-3. Bu kadar! Uygulama SQLite veritabanını `/data/cozytally.db` içinde tutar,
-   yani odalar ve çeteleler deploy'lar arasında kaybolmaz.
+3. Bu kadar! Uygulama SQLite veritabanını `/data/cozytally.db` içinde,
+   sohbet fotoğraflarını `/data/uploads/` içinde, bildirim anahtarlarını
+   `/data/vapid.json` içinde tutar — deploy'lar arasında hiçbiri kaybolmaz.
 
 > Not: `PORT` değişkenini Railway kendisi verir. Volume başka bir yere mount
 > edersen `DATA_DIR` ortam değişkeniyle yolu belirtebilirsin.

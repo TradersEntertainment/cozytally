@@ -1,0 +1,14 @@
+{
+  "name": "CozyTally",
+  "short_name": "CozyTally",
+  "description": "Count together under the stars — cozy shared tallies, timers, notes and chat.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#14112b",
+  "theme_color": "#191531",
+  "icons": [
+    { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

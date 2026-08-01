@@ -98,7 +98,17 @@
     timer: { emoji: '⏳', nameKey: 'typeTimer', descKey: 'typeTimerDesc' },
     countdown: { emoji: '🎈', nameKey: 'typeCountdown', descKey: 'typeCountdownDesc' },
     note: { emoji: '💌', nameKey: 'typeNote', descKey: 'typeNoteDesc' },
+    money: { emoji: '💰', nameKey: 'typeMoney', descKey: 'typeMoneyDesc' },
   };
+
+  // stable per-browser id: lets the server skip push notifications to yourself
+  let myCid = localStorage.getItem('ct:cid');
+  if (!myCid) {
+    myCid = crypto.randomUUID ? crypto.randomUUID() : String(Math.random()).slice(2);
+    localStorage.setItem('ct:cid', myCid);
+  }
+
+  const fmtNum = (n) => Number(n || 0).toLocaleString(lang === 'tr' ? 'tr-TR' : 'en-US');
 
   // ------------------------------------------------------------ modal helpers
   const overlay = $('#modal-overlay');
@@ -363,7 +373,7 @@
 
     ws.onopen = () => {
       reconnectDelay = 1000;
-      ws.send(JSON.stringify({ t: 'join', room: roomCode, name: identity.name, avatar: identity.avatar }));
+      ws.send(JSON.stringify({ t: 'join', room: roomCode, name: identity.name, avatar: identity.avatar, cid: myCid }));
     };
 
     ws.onmessage = (e) => {
@@ -409,10 +419,12 @@
         clockOffset = msg.now - Date.now();
         room = msg.room;
         cards = new Map(msg.cards.map((c) => [c.id, c]));
+        chatMsgs = msg.chat || [];
         rememberRoom(room.code, room.name);
         renderRoomHeader();
         renderMembers(msg.members);
         renderAllCards();
+        renderChat();
         if (connBanner) {
           connBanner.remove();
           connBanner = null;
@@ -420,6 +432,18 @@
         if (wasDisconnected) {
           toast(t('reconnected'));
           wasDisconnected = false;
+        }
+        return;
+      }
+
+      case 'chat:new': {
+        chatMsgs.push(msg.msg);
+        if (chatMsgs.length > 200) chatMsgs.shift();
+        appendChatMsg(msg.msg, true);
+        if (!chatOpen && msg.msg.cid !== myCid) {
+          chatUnread++;
+          updateChatBadge();
+          toast(`${msg.msg.author}: ${msg.msg.photo ? '📷 ' : ''}${msg.msg.text.slice(0, 42)}`);
         }
         return;
       }
@@ -448,6 +472,15 @@
         if (msg.now) clockOffset = msg.now - Date.now();
         renderCard(msg.card, { prev, verb: msg.verb, by: msg.by });
         handleCardToasts(msg);
+        // everyone celebrates when the piggy bank crosses its goal
+        if (msg.verb === 'money+' && msg.card.config.goal) {
+          const before = prev?.state?.total || 0;
+          const after = msg.card.state.total || 0;
+          if (before < msg.card.config.goal && after >= msg.card.config.goal) {
+            confetti();
+            centerCheer(t('moneyReached'));
+          }
+        }
         updateEmptyHint();
         return;
       }
@@ -467,11 +500,20 @@
   }
 
   let myId = null;
+  let chatMsgs = [];
+  let chatOpen = false;
+  let chatUnread = 0;
 
   function handleCardToasts(msg) {
     const { by, verb, card } = msg;
     if (!by || by.id === myId) return; // own actions get cheers, not toasts
     const vars = { name: by.name, card: card.title };
+    if (verb === 'money+' || verb === 'money-') {
+      const last = card.state.log?.[0];
+      const amt = fmtNum(Math.abs(last?.a || 0)) + (card.config.cur || '₺');
+      toast(t(verb === 'money+' ? 'toastMoneyPlus' : 'toastMoneyMinus', { ...vars, amt }));
+      return;
+    }
     const map = {
       'tally+': 'toastTallyPlus',
       'tally-': 'toastTallyMinus',
@@ -549,7 +591,76 @@
     if (card.type === 'timer') renderTimerBody(body, card);
     if (card.type === 'countdown') renderCountdownBody(body, card);
     if (card.type === 'note') renderNoteBody(body, card);
+    if (card.type === 'money') renderMoneyBody(body, card, opts);
     return el;
+  }
+
+  // ---- money pot
+  function renderMoneyBody(body, card, opts = {}) {
+    const total = card.state.total || 0;
+    const goal = card.config.goal || 0;
+    const cur = card.config.cur || '₺';
+    const pct = goal ? (total / goal) * 100 : 0;
+
+    const milestones = goal
+      ? `<div class="goal-bar"><div class="goal-fill" style="width:${Math.min(100, pct)}%"></div></div>
+         <div class="milestones">${[25, 50, 75, 100]
+           .map((m) => `<div class="milestone ${pct >= m ? 'reached' : ''}">
+             <span class="ms-star">${pct >= m ? '⭐' : '☆'}</span>${lang === 'tr' ? '%' + m : m + '%'}
+           </div>`)
+           .join('')}</div>
+         <div class="sub-label">${total >= goal
+           ? esc(t('moneyReached'))
+           : esc(t('moneyLeft', { n: fmtNum(goal - total) + cur }))} · ${esc(t('goal', { n: fmtNum(goal) + cur }))}</div>`
+      : '';
+
+    const log = (card.state.log || []).slice(0, 4)
+      .map((e) => `<div><span class="${e.a > 0 ? 'm-in' : 'm-out'}">${e.a > 0 ? '+' : '−'}${fmtNum(Math.abs(e.a))}${esc(cur)}</span> — ${esc(e.by)}</div>`)
+      .join('');
+
+    body.innerHTML = `
+      ${card.config.photo ? `<img class="money-photo" src="${esc(card.config.photo)}" alt="">` : ''}
+      <div class="money-total">${fmtNum(total)}<small>${esc(cur)}</small></div>
+      ${milestones}
+      <div class="money-form">
+        <input type="number" inputmode="numeric" class="money-input js-amt" placeholder="${esc(t('amountPh'))}">
+        <button class="round-btn plus js-madd">+</button>
+        <button class="round-btn minus js-msub">−</button>
+      </div>
+      ${log ? `<div class="money-log">${log}</div>` : ''}`;
+
+    const photoEl = $('.money-photo', body);
+    if (photoEl) photoEl.onclick = () => openLightbox(card.config.photo);
+
+    const amtInput = $('.js-amt', body);
+    const sendAmount = (sign) => {
+      const v = Math.round(Math.abs(Number(amtInput.value)));
+      if (!v) return amtInput.focus();
+      send({ t: 'money', id: card.id, amount: sign * v });
+      amtInput.value = '';
+    };
+    $('.js-madd', body).onclick = () => sendAmount(1);
+    $('.js-msub', body).onclick = () => sendAmount(-1);
+    amtInput.addEventListener('keydown', (e) => e.key === 'Enter' && sendAmount(1));
+
+    if (opts.verb === 'money+') coinRain(body.closest('.card'));
+    if (opts.verb === 'money-') sparklesAt(body.closest('.card'));
+  }
+
+  function coinRain(cardEl) {
+    if (!cardEl) return;
+    const rect = cardEl.getBoundingClientRect();
+    for (let i = 0; i < 7; i++) {
+      const c = document.createElement('div');
+      c.className = 'coin-fx';
+      c.textContent = '🪙';
+      c.style.left = rect.left + 14 + Math.random() * (rect.width - 28) + 'px';
+      c.style.top = rect.top + 8 + 'px';
+      c.style.animationDelay = (Math.random() * 0.35).toFixed(2) + 's';
+      c.style.fontSize = 16 + Math.random() * 12 + 'px';
+      document.body.appendChild(c);
+      setTimeout(() => c.remove(), 1600);
+    }
   }
 
   // ---- sticky note
@@ -807,6 +918,29 @@
           <textarea id="cf-note" maxlength="500" placeholder="${esc(t('fieldNotePh'))}"></textarea>
         </div>`;
     }
+    if (type === 'money') {
+      const curs = ['₺', '$', '€', '£'];
+      const curNow = existing?.config?.cur || '₺';
+      extraFields = `
+        <div class="field">
+          <label>${esc(t('fieldMoneyGoal'))}</label>
+          <input id="cf-mgoal" type="number" inputmode="numeric" min="0" placeholder="${esc(t('fieldGoalPh'))}"
+            value="${existing?.config?.goal || ''}">
+        </div>
+        <div class="field">
+          <label>${esc(t('fieldCurrency'))}</label>
+          <div class="emoji-row">
+            ${curs.map((c) => `<button type="button" class="emoji-opt cur-opt ${c === curNow ? 'selected' : ''}" data-c="${c}">${c}</button>`).join('')}
+          </div>
+        </div>
+        <div class="field">
+          <label>${esc(t('fieldMoneyPhoto'))}</label>
+          <button type="button" class="small-btn js-mphoto">📷 ${esc(t('choosePhoto'))}</button>
+          <input type="file" class="js-mfile" accept="image/*" hidden>
+          <img class="js-mpreview money-photo" style="margin-top:10px; ${existing?.config?.photo ? '' : 'display:none'}"
+            src="${esc(existing?.config?.photo || '')}" alt="">
+        </div>`;
+    }
 
     const box = openModal(`
       <h2>${meta.emoji} ${esc(isEdit ? t('editCardTitle') : t(meta.nameKey))}</h2>
@@ -828,18 +962,41 @@
         <button class="btn btn-primary js-save">${esc(isEdit ? t('save') : t('create'))}</button>
       </div>`);
 
-    $$('.emoji-opt', box).forEach((btn) => {
+    $$('.emoji-opt[data-e]', box).forEach((btn) => {
       btn.onclick = () => {
         emoji = btn.dataset.e;
-        $$('.emoji-opt', box).forEach((b) => b.classList.toggle('selected', b === btn));
+        $$('.emoji-opt[data-e]', box).forEach((b) => b.classList.toggle('selected', b === btn));
       };
     });
+
+    // money extras: currency picker + goal photo
+    let cur = existing?.config?.cur || '₺';
+    let photoFile = null;
+    $$('.cur-opt', box).forEach((btn) => {
+      btn.onclick = () => {
+        cur = btn.dataset.c;
+        $$('.cur-opt', box).forEach((b) => b.classList.toggle('selected', b === btn));
+      };
+    });
+    const mPhotoBtn = $('.js-mphoto', box);
+    if (mPhotoBtn) {
+      const fileInput = $('.js-mfile', box);
+      mPhotoBtn.onclick = () => fileInput.click();
+      fileInput.onchange = () => {
+        photoFile = fileInput.files[0] || null;
+        if (photoFile) {
+          const prev = $('.js-mpreview', box);
+          prev.src = URL.createObjectURL(photoFile);
+          prev.style.display = '';
+        }
+      };
+    }
 
     const backBtn = $('.js-back', box);
     if (backBtn) backBtn.onclick = () => openTypePicker();
     $('.js-cancel', box).onclick = closeModal;
 
-    $('.js-save', box).onclick = () => {
+    $('.js-save', box).onclick = async () => {
       const title = $('#cf-title', box).value.trim();
       if (!title) return $('#cf-title', box).focus();
       const config = {};
@@ -860,6 +1017,24 @@
       if (type === 'note' && !isEdit) {
         config.text = $('#cf-note', box)?.value.trim() || '';
       }
+      if (type === 'money') {
+        config.goal = Math.max(0, Math.round(Number($('#cf-mgoal', box)?.value))) || 0;
+        config.cur = cur;
+        if (existing?.config?.photo) config.photo = existing.config.photo;
+        if (photoFile) {
+          const saveBtn = $('.js-save', box);
+          saveBtn.disabled = true;
+          saveBtn.textContent = '⏳';
+          try {
+            config.photo = await uploadPhoto(photoFile);
+          } catch {
+            toast(t('photoFailed'));
+            saveBtn.disabled = false;
+            saveBtn.textContent = isEdit ? t('save') : t('create');
+            return;
+          }
+        }
+      }
       if (isEdit) {
         send({ t: 'card:edit', id: existing.id, title, emoji, config });
       } else {
@@ -871,12 +1046,201 @@
     setTimeout(() => $('#cf-title', box)?.focus(), 60);
   }
 
+  // ------------------------------------------------------------ photos
+  async function processImage(file) {
+    if (file.type === 'image/gif') {
+      if (file.size > 6 * 1024 * 1024) throw new Error('too-big');
+      return file;
+    }
+    const bmp = await createImageBitmap(file);
+    const scale = Math.min(1, 1280 / Math.max(bmp.width, bmp.height));
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.max(1, Math.round(bmp.width * scale));
+    canvas.height = Math.max(1, Math.round(bmp.height * scale));
+    canvas.getContext('2d').drawImage(bmp, 0, 0, canvas.width, canvas.height);
+    const blob = await new Promise((r) => canvas.toBlob(r, 'image/jpeg', 0.82));
+    if (!blob) throw new Error('encode-failed');
+    return blob;
+  }
+
+  async function uploadPhoto(file) {
+    const blob = await processImage(file);
+    if (blob.size > 6 * 1024 * 1024) {
+      toast(t('photoTooBig'));
+      throw new Error('too-big');
+    }
+    const res = await fetch('/api/upload/' + encodeURIComponent(room.code), {
+      method: 'POST',
+      headers: { 'Content-Type': blob.type || 'image/jpeg' },
+      body: blob,
+    });
+    if (!res.ok) throw new Error('upload-failed');
+    return (await res.json()).url;
+  }
+
+  function openLightbox(url) {
+    openModal(`<img class="lightbox-img" src="${esc(url)}" alt="">`);
+  }
+
+  // ------------------------------------------------------------ chat
+  function updateChatBadge() {
+    const badge = $('#chat-badge');
+    badge.hidden = chatUnread === 0;
+    badge.textContent = chatUnread > 9 ? '9+' : chatUnread;
+  }
+
+  function chatMsgEl(m) {
+    const el = document.createElement('div');
+    el.className = 'msg' + (m.cid === myCid ? ' mine' : '');
+    const time = new Date(m.createdAt).toLocaleTimeString(lang === 'tr' ? 'tr-TR' : 'en-US', {
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+    el.innerHTML = `
+      <div class="msg-meta">${esc(m.avatar || '')} ${esc(m.author)} · ${time}</div>
+      <div class="msg-bubble">${esc(m.text)}${m.photo ? `<img class="msg-photo" src="${esc(m.photo)}" alt="" loading="lazy">` : ''}</div>`;
+    const img = $('.msg-photo', el);
+    if (img) img.onclick = () => openLightbox(m.photo);
+    return el;
+  }
+
+  function renderChat() {
+    const list = $('#chat-list');
+    list.innerHTML = '';
+    if (!chatMsgs.length) {
+      list.innerHTML = `<div class="chat-empty">${esc(t('chatEmpty'))}</div>`;
+      return;
+    }
+    for (const m of chatMsgs) list.appendChild(chatMsgEl(m));
+    list.scrollTop = list.scrollHeight;
+  }
+
+  function appendChatMsg(m) {
+    const list = $('#chat-list');
+    $('.chat-empty', list)?.remove();
+    const nearBottom = list.scrollHeight - list.scrollTop - list.clientHeight < 140;
+    list.appendChild(chatMsgEl(m));
+    if (nearBottom || m.cid === myCid) list.scrollTop = list.scrollHeight;
+  }
+
+  function setChatOpen(open) {
+    chatOpen = open;
+    $('#chat-drawer').classList.toggle('open', open);
+    if (open) {
+      chatUnread = 0;
+      updateChatBadge();
+      const list = $('#chat-list');
+      list.scrollTop = list.scrollHeight;
+      $('#chat-input').focus();
+    }
+  }
+
+  function initChat() {
+    $('#fab-chat').onclick = () => setChatOpen(!chatOpen);
+    $('#chat-close').onclick = () => setChatOpen(false);
+    $('#chat-form').addEventListener('submit', (e) => {
+      e.preventDefault();
+      const input = $('#chat-input');
+      const text = input.value.trim();
+      if (!text) return;
+      send({ t: 'chat:send', text });
+      input.value = '';
+    });
+    const photoBtn = $('#chat-photo');
+    const fileInput = $('#chat-file');
+    photoBtn.onclick = () => fileInput.click();
+    fileInput.onchange = async () => {
+      const file = fileInput.files[0];
+      fileInput.value = '';
+      if (!file) return;
+      photoBtn.textContent = '⏳';
+      try {
+        const url = await uploadPhoto(file);
+        send({ t: 'chat:send', text: $('#chat-input').value.trim(), photo: url });
+        $('#chat-input').value = '';
+      } catch {
+        toast(t('photoFailed'));
+      }
+      photoBtn.textContent = '📷';
+    };
+  }
+
+  // ------------------------------------------------------------ push notifications
+  let swReg = null;
+  const pushKey = () => 'ct:push:' + roomCode;
+
+  function updateBellUI() {
+    const btn = $('#notif-btn');
+    btn.textContent = localStorage.getItem(pushKey()) === '1' ? '🔔' : '🔕';
+  }
+
+  async function initPushUI() {
+    if (!('serviceWorker' in navigator)) return;
+    try {
+      swReg = await navigator.serviceWorker.register('/sw.js');
+    } catch {
+      return;
+    }
+    const btn = $('#notif-btn');
+    btn.hidden = false;
+    updateBellUI();
+    btn.onclick = togglePush;
+  }
+
+  const urlB64 = (s) => {
+    const pad = '='.repeat((4 - (s.length % 4)) % 4);
+    const raw = atob((s + pad).replace(/-/g, '+').replace(/_/g, '/'));
+    return Uint8Array.from([...raw].map((c) => c.charCodeAt(0)));
+  };
+
+  async function togglePush() {
+    if (!swReg || !('PushManager' in window) || !('Notification' in window)) {
+      return toast(t('notifUnsupported'));
+    }
+    try {
+      if (localStorage.getItem(pushKey()) === '1') {
+        const sub = await swReg.pushManager.getSubscription();
+        if (sub) {
+          fetch('/api/push/unsubscribe', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ endpoint: sub.endpoint }),
+          });
+          await sub.unsubscribe();
+        }
+        localStorage.setItem(pushKey(), '0');
+        toast(t('notifOff'));
+      } else {
+        const perm = await Notification.requestPermission();
+        if (perm !== 'granted') return toast(t('notifDenied'));
+        const { key } = await (await fetch('/api/push/key')).json();
+        const sub = await swReg.pushManager.subscribe({
+          userVisibleOnly: true,
+          applicationServerKey: urlB64(key),
+        });
+        const res = await fetch('/api/push/subscribe', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ room: room.code, cid: myCid, sub: sub.toJSON() }),
+        });
+        if (!res.ok) throw new Error('subscribe-failed');
+        localStorage.setItem(pushKey(), '1');
+        toast(t('notifOn'));
+      }
+    } catch {
+      toast(t('notifUnsupported'));
+    }
+    updateBellUI();
+  }
+
   // ------------------------------------------------------------ room init
   async function initRoom() {
     $('#view-room').hidden = false;
 
     identity = await ensureIdentity();
     connect();
+    initChat();
+    initPushUI();
 
     $('#fab-add').onclick = openTypePicker;
     $('#fab-love').onclick = () => send({ t: 'cheer', kind: 'hearts' });
