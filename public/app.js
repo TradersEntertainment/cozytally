@@ -29,6 +29,7 @@
     applyI18n();
     if (room) renderAllCards();
     renderRecents();
+    renderIntro();
   });
 
   // ------------------------------------------------------------ night sky
@@ -286,9 +287,45 @@
     localStorage.setItem('ct:recent', JSON.stringify(recents.slice(0, 6)));
   }
 
+  const PERKS = [
+    { emoji: '⚡', k: 'perkLive' },
+    { emoji: '💬', k: 'perkChat' },
+    { emoji: '🔔', k: 'perkPush' },
+    { emoji: '🌙', k: 'perkFree' },
+  ];
+
+  function renderIntro() {
+    const cardsEl = $('#intro-cards');
+    if (!cardsEl) return;
+    cardsEl.innerHTML = Object.entries(TYPE_META)
+      .map(
+        ([type, meta]) => `
+        <div class="intro-card card--${type}">
+          <span class="ic-emoji">${meta.emoji}</span>
+          <div>
+            <b>${esc(t(meta.nameKey))}</b>
+            <span>${esc(t(meta.descKey))}</span>
+          </div>
+        </div>`
+      )
+      .join('');
+
+    $('#intro-perks').innerHTML = PERKS.map(
+      (p) => `
+      <div class="perk">
+        <span class="p-emoji">${p.emoji}</span>
+        <div>
+          <b>${esc(t(p.k))}</b>
+          <span>${esc(t(p.k + 'Desc'))}</span>
+        </div>
+      </div>`
+    ).join('');
+  }
+
   function initLanding() {
     $('#view-landing').hidden = false;
     renderRecents();
+    renderIntro();
 
     $('#create-form').addEventListener('submit', async (e) => {
       e.preventDefault();
@@ -1165,6 +1202,65 @@
     };
   }
 
+  // ------------------------------------------------------------ welcome tour
+  const TOUR_SLIDES = [
+    { art: '🌙✨', title: 'tourTitle1', body: 'tourBody1' },
+    { art: '✏️🔥⏳<br>🎈💌💰', title: 'tourTitle2', body: 'tourBody2' },
+    { art: '💬💖🔔', title: 'tourTitle3', body: 'tourBody3' },
+  ];
+
+  function showTour(step = 0) {
+    const slide = TOUR_SLIDES[step];
+    const last = step === TOUR_SLIDES.length - 1;
+    const box = openModal(`
+      <div class="tour-art">${slide.art}</div>
+      <h2 style="text-align:center; margin-bottom:12px">${esc(t(slide.title))}</h2>
+      <p class="tour-body">${esc(t(slide.body))}</p>
+      <div class="tour-dots">
+        ${TOUR_SLIDES.map((_, i) => `<span class="tour-dot ${i === step ? 'on' : ''}"></span>`).join('')}
+      </div>
+      <div class="tour-actions">
+        <button class="btn btn-ghost js-skip">${esc(last ? '' : t('tourSkip'))}</button>
+        <button class="btn btn-primary js-next">${esc(last ? t('tourDone') : t('tourNext'))}</button>
+      </div>`, { dismissable: false });
+
+    const skipBtn = $('.js-skip', box);
+    if (last) skipBtn.style.visibility = 'hidden';
+    skipBtn.onclick = endTour;
+    $('.js-next', box).onclick = () => (last ? endTour() : showTour(step + 1));
+  }
+
+  function endTour() {
+    localStorage.setItem('ct:toured', '1');
+    closeModal();
+    // only nudge once the board has actually loaded and turned out empty
+    if (!$('#empty-hint').hidden) pointAtAddButton();
+  }
+
+  function pointAtAddButton() {
+    const fab = $('#fab-add');
+    fab.classList.add('pulse');
+    const bubble = document.createElement('div');
+    bubble.className = 'hint-bubble';
+    bubble.textContent = t('hintAdd');
+    document.body.appendChild(bubble);
+    const place = () => {
+      const r = fab.getBoundingClientRect();
+      bubble.style.top = r.top - bubble.offsetHeight - 12 + 'px';
+      bubble.style.left = Math.max(12, r.right - bubble.offsetWidth) + 'px';
+    };
+    place();
+    addEventListener('resize', place);
+    const clear = () => {
+      bubble.remove();
+      fab.classList.remove('pulse');
+      removeEventListener('resize', place);
+      fab.removeEventListener('click', clear);
+    };
+    fab.addEventListener('click', clear);
+    setTimeout(clear, 7000);
+  }
+
   // ------------------------------------------------------------ push notifications
   let swReg = null;
   const pushKey = () => 'ct:push:' + roomCode;
@@ -1241,6 +1337,9 @@
     connect();
     initChat();
     initPushUI();
+
+    if (!localStorage.getItem('ct:toured')) showTour(0);
+    $('#replay-tour').onclick = () => showTour(0);
 
     $('#fab-add').onclick = openTypePicker;
     $('#fab-love').onclick = () => send({ t: 'cheer', kind: 'hearts' });
