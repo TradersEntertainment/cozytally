@@ -90,13 +90,14 @@
   const serverNow = () => Date.now() + clockOffset;
 
   const AVATARS = ['🐻', '🐰', '🦊', '🐱', '🐼', '🐨', '🦄', '🐣', '🐧', '🦉', '🐹', '🐸'];
-  const EMOJIS = ['✏️', '🔥', '⏳', '🎈', '💖', '🌙', '⭐', '🍓', '🍵', '📚', '💪', '🧸',
-    '🌸', '🎯', '💧', '🚭', '🏃', '🎁', '☕', '🎮', '🕌', '🌿', '✈️', '🎂'];
+  const EMOJIS = ['✏️', '🔥', '⏳', '🎈', '💌', '💖', '🌙', '⭐', '🍓', '🍵', '📚', '💪',
+    '🧸', '🌸', '🎯', '💧', '🚭', '🏃', '🎁', '☕', '🎮', '🕌', '🌿', '✈️', '🎂'];
   const TYPE_META = {
     tally: { emoji: '✏️', nameKey: 'typeTally', descKey: 'typeTallyDesc' },
     streak: { emoji: '🔥', nameKey: 'typeStreak', descKey: 'typeStreakDesc' },
     timer: { emoji: '⏳', nameKey: 'typeTimer', descKey: 'typeTimerDesc' },
     countdown: { emoji: '🎈', nameKey: 'typeCountdown', descKey: 'typeCountdownDesc' },
+    note: { emoji: '💌', nameKey: 'typeNote', descKey: 'typeNoteDesc' },
   };
 
   // ------------------------------------------------------------ modal helpers
@@ -479,6 +480,7 @@
       'timer:reset': 'toastTimerReset',
       'streak:reset': 'toastStreakReset',
       'card:add': 'toastCardAdd',
+      'note:set': 'toastNote',
     };
     if (map[verb]) toast(t(map[verb], vars));
   }
@@ -546,7 +548,37 @@
     if (card.type === 'streak') renderStreakBody(body, card);
     if (card.type === 'timer') renderTimerBody(body, card);
     if (card.type === 'countdown') renderCountdownBody(body, card);
+    if (card.type === 'note') renderNoteBody(body, card);
     return el;
+  }
+
+  // ---- sticky note
+  function renderNoteBody(body, card) {
+    const text = card.state.text || '';
+    body.innerHTML = `
+      <div class="note-paper">
+        ${text ? esc(text) : `<span class="note-empty">${esc(t('noteEmpty'))}</span>`}
+        ${text && card.state.author ? `<span class="note-author">— ${esc(card.state.author)}</span>` : ''}
+      </div>`;
+    $('.note-paper', body).onclick = () => openNoteEditor(card);
+  }
+
+  function openNoteEditor(card) {
+    const box = openModal(`
+      <h2>💌 ${esc(card.title)}</h2>
+      <div class="field">
+        <textarea id="note-text" maxlength="500" placeholder="${esc(t('fieldNotePh'))}">${esc(card.state.text || '')}</textarea>
+      </div>
+      <div class="modal-actions">
+        <button class="btn btn-ghost js-cancel">${esc(t('cancel'))}</button>
+        <button class="btn btn-primary js-save">${esc(t('save'))}</button>
+      </div>`);
+    $('.js-cancel', box).onclick = closeModal;
+    $('.js-save', box).onclick = () => {
+      send({ t: 'note:set', id: card.id, text: $('#note-text', box).value.trim() });
+      closeModal();
+    };
+    setTimeout(() => $('#note-text', box)?.focus(), 60);
   }
 
   // ---- tally
@@ -768,6 +800,13 @@
           <input id="cf-target" type="datetime-local" value="${targetVal}">
         </div>`;
     }
+    if (type === 'note' && !isEdit) {
+      extraFields = `
+        <div class="field">
+          <label>${esc(t('fieldNote'))}</label>
+          <textarea id="cf-note" maxlength="500" placeholder="${esc(t('fieldNotePh'))}"></textarea>
+        </div>`;
+    }
 
     const box = openModal(`
       <h2>${meta.emoji} ${esc(isEdit ? t('editCardTitle') : t(meta.nameKey))}</h2>
@@ -817,6 +856,9 @@
         if (!v) return $('#cf-target', box).focus();
         config.targetAt = new Date(v).getTime();
         countdownCelebrated.delete(existing?.id);
+      }
+      if (type === 'note' && !isEdit) {
+        config.text = $('#cf-note', box)?.value.trim() || '';
       }
       if (isEdit) {
         send({ t: 'card:edit', id: existing.id, title, emoji, config });

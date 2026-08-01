@@ -73,7 +73,7 @@ function newRoomCode() {
   return crypto.randomUUID().slice(0, 8);
 }
 
-const CARD_TYPES = new Set(['tally', 'streak', 'timer', 'countdown']);
+const CARD_TYPES = new Set(['tally', 'streak', 'timer', 'countdown', 'note']);
 const MAX_CARDS_PER_ROOM = 60;
 
 const clampStr = (v, max) => String(v ?? '').trim().slice(0, max);
@@ -95,6 +95,7 @@ function defaultState(type, now) {
   if (type === 'tally') return { count: 0 };
   if (type === 'streak') return { startAt: now, best: 0 };
   if (type === 'timer') return { running: false, startedAt: 0, accumulated: 0 };
+  if (type === 'note') return { text: '', author: '', updatedAt: 0 };
   return {};
 }
 
@@ -298,6 +299,11 @@ function handleMessage(ws, msg) {
         const startAt = toInt(c.config?.startAt, 0, now, now);
         state.startAt = startAt || now;
       }
+      if (c.type === 'note') {
+        state.text = clampStr(c.config?.text, 500);
+        state.author = ws.meta.name;
+        state.updatedAt = now;
+      }
       const sort = q.maxSort.get(code).m + 1;
       q.insertCard.run(id, code, c.type, title, emoji, JSON.stringify(config), JSON.stringify(state), sort, now);
       broadcastCard(code, id, by, 'card:add');
@@ -371,6 +377,18 @@ function handleMessage(ws, msg) {
       }
       q.updateCardState.run(JSON.stringify(state), row.id);
       broadcastCard(code, row.id, by, `timer:${msg.op}`);
+      return;
+    }
+
+    case 'note:set': {
+      const row = q.getCard.get(clampStr(msg.id, 40), code);
+      if (!row || row.type !== 'note') return;
+      const state = JSON.parse(row.state);
+      state.text = clampStr(msg.text, 500);
+      state.author = ws.meta.name;
+      state.updatedAt = now;
+      q.updateCardState.run(JSON.stringify(state), row.id);
+      broadcastCard(code, row.id, by, 'note:set');
       return;
     }
 

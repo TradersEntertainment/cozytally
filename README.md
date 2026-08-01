@@ -11,6 +11,7 @@ ikiniz de aynı panoyu **canlı** görürsünüz. Panoya istediğiniz kadar kart
 | 🔥 **Gün Sayacı** | "Kaç gündür?" — seriyi takip eder, en iyi seriyi saklar |
 | ⏳ **Ortak Kronometre** | Birlikte süre sayarsınız; başlat/durdur herkeste senkron |
 | 🎈 **Geri Sayım** | Özel bir güne kalan süreyi sayar, vakti gelince konfeti 🎉 |
+| 💌 **Not** | Birbirinize yapışkan notlar bırakırsınız — kim yazdıysa imzası düşer |
 
 Hesap yok, şifre yok — sadece takma ad + oda kodu. TR/EN dil desteği var.
 
