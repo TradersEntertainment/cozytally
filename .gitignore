@@ -2,3 +2,7 @@ node_modules
 .DS_Store
 dist
 .env
+/data/
+*.db
+*.db-shm
+*.db-wal

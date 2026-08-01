@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="theme-color" content="#191531">
+  <title>CozyTally 🌙</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Quicksand:wght@400;500;600;700&family=Caveat:wght@500;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+
+  <!-- night sky -->
+  <div id="sky" aria-hidden="true">
+    <div class="moon"></div>
+    <svg id="string-lights" viewBox="0 0 1200 90" preserveAspectRatio="none" aria-hidden="true">
+      <path d="M0,20 Q300,80 600,35 T1200,25" fill="none" stroke="rgba(255,215,160,0.25)" stroke-width="2"/>
+    </svg>
+  </div>
+
+  <!-- ===================== landing ===================== -->
+  <main id="view-landing" class="view" hidden>
+    <div class="landing-wrap">
+      <header class="landing-head">
+        <h1 class="logo">Cozy<span>Tally</span> <span class="logo-moon">🌙</span></h1>
+        <p class="tagline" data-i18n="tagline"></p>
+      </header>
+
+      <div class="landing-panels">
+        <section class="panel">
+          <h2 data-i18n="createTitle"></h2>
+          <form id="create-form">
+            <input id="create-name" type="text" maxlength="40" autocomplete="off" data-i18n-ph="createPlaceholder">
+            <button type="submit" class="btn btn-primary" data-i18n="createBtn"></button>
+          </form>
+        </section>
+
+        <section class="panel">
+          <h2 data-i18n="joinTitle"></h2>
+          <form id="join-form">
+            <input id="join-code" type="text" maxlength="40" autocomplete="off" spellcheck="false" data-i18n-ph="joinPlaceholder">
+            <button type="submit" class="btn btn-secondary" data-i18n="joinBtn"></button>
+          </form>
+          <p id="join-error" class="join-error" hidden data-i18n="roomNotFound"></p>
+        </section>
+      </div>
+
+      <section id="recent-rooms" class="recent" hidden>
+        <h3 data-i18n="recentTitle"></h3>
+        <div id="recent-list" class="recent-list"></div>
+      </section>
+
+      <p class="landing-footer" data-i18n="landingFooter"></p>
+    </div>
+  </main>
+
+  <!-- ===================== room ===================== -->
+  <main id="view-room" class="view" hidden>
+    <header id="room-header">
+      <div class="room-title-wrap">
+        <h1 id="room-name"></h1>
+        <button id="rename-btn" class="icon-btn" title="✏️">✏️</button>
+      </div>
+      <div class="room-tools">
+        <button id="copy-link" class="chip chip-btn"><span class="chip-code"></span> 🔗</button>
+        <div id="members" class="members"></div>
+      </div>
+    </header>
+
+    <div id="board" class="board"></div>
+    <p id="empty-hint" class="empty-hint" hidden data-i18n="emptyBoard"></p>
+
+    <button id="fab-add" class="fab" title="+">+</button>
+    <button id="fab-love" class="fab fab-love" title="💖">💖</button>
+  </main>
+
+  <!-- language toggle (both views) -->
+  <button id="lang-toggle" class="chip chip-btn lang-toggle"></button>
+
+  <!-- ===================== modals ===================== -->
+  <div id="modal-overlay" class="modal-overlay" hidden>
+    <div id="modal-box" class="modal-box" role="dialog" aria-modal="true"></div>
+  </div>
+
+  <div id="toasts" class="toasts" aria-live="polite"></div>
+  <canvas id="confetti-canvas"></canvas>
+
+  <script src="/i18n.js"></script>
+  <script src="/app.js"></script>
+</body>
+</html>
