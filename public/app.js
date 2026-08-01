@@ -101,7 +101,35 @@
     note: { emoji: '💌', nameKey: 'typeNote', descKey: 'typeNoteDesc' },
     money: { emoji: '💰', nameKey: 'typeMoney', descKey: 'typeMoneyDesc' },
     list: { emoji: '📝', nameKey: 'typeList', descKey: 'typeListDesc' },
+    checkin: { emoji: '🤝', nameKey: 'typeCheckin', descKey: 'typeCheckinDesc' },
   };
+
+  // ---- shared day helpers (local calendar, so "today" matches your phone)
+  const pad2 = (n) => String(n).padStart(2, '0');
+  const localDay = (d = new Date()) =>
+    `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+  const dayBefore = (n) => localDay(new Date(Date.now() - n * 86400000));
+
+  const myKey = () => auth?.user?.id || myCid;
+
+  function checkinComplete(state, mode, day) {
+    const rec = state.days?.[day];
+    if (!rec) return false;
+    const people = Object.keys(state.people || {});
+    if (!people.length) return false;
+    if (mode === 'any') return Object.keys(rec).length > 0;
+    return people.every((k) => rec[k]);
+  }
+
+  function checkinStreak(state, mode) {
+    let n = 0;
+    for (let i = 0; i < 400; i++) {
+      if (checkinComplete(state, mode, dayBefore(i))) n++;
+      else if (i === 0) continue; // today may still be in progress
+      else break;
+    }
+    return n;
+  }
 
   // ------------------------------------------------------------ account
   let auth = JSON.parse(localStorage.getItem('ct:auth') || 'null'); // { token, user }
@@ -714,6 +742,16 @@
         centerCheer(t('toastListAllDone', { card: msg.title }));
         return;
 
+      case 'checkin:done':
+        confetti();
+        centerCheer(t('dayComplete', { n: msg.streak }));
+        return;
+
+      case 'checkin:cover':
+        heartsRain();
+        centerCheer(t('coveredCheer', { name: msg.by }));
+        return;
+
       case 'cheer':
         heartsRain();
         if (msg.by?.id !== myId) toast(t('toastHearts', { name: msg.by.name }));
@@ -747,6 +785,7 @@
       'note:set': 'toastNote',
       'list:add': 'toastListAdd',
       'list:toggle': 'toastListDone',
+      'checkin:tick': 'toastCheckin',
     };
     if (map[verb]) toast(t(map[verb], vars));
   }
@@ -824,6 +863,7 @@
     if (card.type === 'note') renderNoteBody(body, card);
     if (card.type === 'money') renderMoneyBody(body, card, opts);
     if (card.type === 'list') renderListBody(body, card);
+    if (card.type === 'checkin') renderCheckinBody(body, card);
 
     if (typing) {
       const again = el.querySelector('input.' + typing.cls.trim().split(/\s+/).join('.'));
@@ -834,6 +874,95 @@
       }
     }
     return el;
+  }
+
+  // ---- together check-in
+  function renderCheckinBody(body, card) {
+    const state = card.state || {};
+    const mode = card.config.mode || 'all';
+    const today = localDay();
+    const people = state.people || {};
+    const todayRec = state.days?.[today] || {};
+    const me = myKey();
+    const myRec = todayRec[me];
+    const iTicked = !!myRec;
+    const coveredForMe = myRec?.coveredBy || '';
+    const streak = checkinStreak(state, mode);
+    const others = Object.entries(people).filter(([k]) => k !== me);
+    const days7 = Array.from({ length: 7 }, (_, i) => dayBefore(6 - i));
+    const dayNames = lang === 'tr'
+      ? ['Pz', 'Pt', 'Sa', 'Ça', 'Pe', 'Cu', 'Ct']
+      : ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'];
+
+    body.innerHTML = `
+      <div class="streak-hero">
+        <span class="streak-flame ${streak ? 'lit' : ''}">${streak ? '🔥' : '🌱'}</span>
+        <span class="big-number">${streak}</span>
+      </div>
+      <div class="sub-label">${esc(t('ourStreak'))} · ${esc(t(mode === 'any' ? 'modeAnyShort' : 'modeAllShort'))}</div>
+
+      <button class="small-btn ${iTicked ? '' : 'accent'} js-tick" ${coveredForMe ? 'disabled' : ''}>
+        ${coveredForMe
+          ? `🧣 ${esc(t('coveredForYou', { name: coveredForMe }))}`
+          : iTicked
+            ? `✓ ${esc(t('tickedToday'))}`
+            : esc(t('tickToday'))}
+      </button>
+
+      ${others.length
+        ? `<div class="peep-row">
+            ${others
+              .map(([k, p]) => {
+                const rec = todayRec[k];
+                const covered = rec?.coveredBy;
+                return `<div class="peep ${rec ? 'on' : ''}" title="${esc(p.name)}">
+                  <span class="peep-av">${esc(p.avatar || '🐻')}</span>
+                  <span class="peep-name">${esc(p.name)}</span>
+                  ${rec
+                    ? `<span class="peep-state">${covered ? `🧣 ${esc(covered)}` : '✓'}</span>`
+                    : `<button class="cover-btn js-cover" data-key="${esc(k)}"
+                         ${(state.tokens || 0) > 0 ? '' : 'disabled'}>🧣</button>`}
+                </div>`;
+              })
+              .join('')}
+          </div>`
+        : `<div class="sub-label">${esc(t('waitingForOthers'))}</div>`}
+
+      <div class="week-grid">
+        ${days7
+          .map((d) => {
+            const done = checkinComplete(state, mode, d);
+            const partial = !done && state.days?.[d];
+            const wd = dayNames[new Date(d + 'T12:00:00').getDay()];
+            return `<div class="wk-cell ${done ? 'done' : partial ? 'partial' : ''}">
+              <span class="wk-dot"></span><span class="wk-day">${wd}</span>
+            </div>`;
+          })
+          .join('')}
+      </div>
+
+      <div class="sub-label checkin-foot">
+        🧣 ${esc(t('tokensLeft', { n: state.tokens ?? 0 }))}${state.best ? ` · 🏆 ${esc(t('bestStreak', { n: state.best }))}` : ''}
+      </div>`;
+
+    $('.js-tick', body).onclick = () => {
+      if (coveredForMe) return; // someone gifted this day; not yours to undo
+      send({ t: 'checkin', id: card.id, op: iTicked ? 'untick' : 'tick', day: today });
+      if (!iTicked && navigator.vibrate) navigator.vibrate(12);
+    };
+
+    $$('.js-cover', body).forEach((btn) => {
+      btn.onclick = async () => {
+        const person = people[btn.dataset.key];
+        const ok = await confirmModal({
+          title: t('coverTitle'),
+          body: t('coverBody', { name: person?.name || '' }),
+          yesLabel: t('coverYes'),
+          danger: false,
+        });
+        if (ok) send({ t: 'checkin', id: card.id, op: 'cover', forKey: btn.dataset.key, day: today });
+      };
+    });
   }
 
   // ---- checklist
@@ -1308,6 +1437,23 @@
           <input id="cf-target" type="datetime-local" value="${targetVal}">
         </div>`;
     }
+    if (type === 'checkin') {
+      const modeNow = existing?.config?.mode || 'all';
+      extraFields = `
+        <div class="field">
+          <label>${esc(t('fieldMode'))}</label>
+          <div class="mode-row">
+            ${['all', 'any']
+              .map(
+                (m) => `<button type="button" class="mode-opt ${m === modeNow ? 'selected' : ''}" data-m="${m}">
+                  <b>${esc(t(m === 'all' ? 'modeAll' : 'modeAny'))}</b>
+                  <span>${esc(t(m === 'all' ? 'modeAllDesc' : 'modeAnyDesc'))}</span>
+                </button>`
+              )
+              .join('')}
+          </div>
+        </div>`;
+    }
     if (type === 'note' && !isEdit) {
       extraFields = `
         <div class="field">
@@ -1315,6 +1461,7 @@
           <textarea id="cf-note" maxlength="500" placeholder="${esc(t('fieldNotePh'))}"></textarea>
         </div>`;
     }
+
     if (type === 'money') {
       const curs = ['₺', '$', '€', '£'];
       const curNow = existing?.config?.cur || '₺';
@@ -1366,6 +1513,14 @@
       };
     });
 
+    let mode = existing?.config?.mode || 'all';
+    $$('.mode-opt', box).forEach((btn) => {
+      btn.onclick = () => {
+        mode = btn.dataset.m;
+        $$('.mode-opt', box).forEach((b) => b.classList.toggle('selected', b === btn));
+      };
+    });
+
     // money extras: currency picker + goal photo
     let cur = existing?.config?.cur || '₺';
     let photoFile = null;
@@ -1411,6 +1566,7 @@
         config.targetAt = new Date(v).getTime();
         countdownCelebrated.delete(existing?.id);
       }
+      if (type === 'checkin') config.mode = mode;
       if (type === 'note' && !isEdit) {
         config.text = $('#cf-note', box)?.value.trim() || '';
       }

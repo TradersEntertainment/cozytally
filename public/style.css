@@ -751,6 +751,7 @@ input[type="date"], input[type="datetime-local"] { color-scheme: dark; }
 .card--note { --accent: #ffe08a; }
 .card--money { --accent: #ffcf6b; }
 .card--list { --accent: #9fd8ff; }
+.card--checkin { --accent: #ff9d76; }
 
 .card-head {
   display: flex;
@@ -950,6 +951,128 @@ input[type="date"], input[type="datetime-local"] { color-scheme: dark; }
   margin-right: 6px;
   animation: twinkle 1.2s ease-in-out infinite;
 }
+
+/* together check-in */
+
+.streak-hero {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+}
+
+.streak-flame {
+  font-size: 2.1rem;
+  filter: grayscale(1) opacity(0.5);
+  transition: filter 0.3s;
+}
+
+.streak-flame.lit {
+  filter: none;
+  animation: flame-flicker 2.4s ease-in-out infinite;
+}
+
+@keyframes flame-flicker {
+  0%, 100% { transform: scale(1) rotate(-2deg); }
+  50% { transform: scale(1.12) rotate(2deg); }
+}
+
+.peep-row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 100%;
+}
+
+.peep {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 7px 11px;
+  border-radius: 13px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--card-border);
+  font-size: 0.88rem;
+}
+
+.peep.on {
+  background: color-mix(in srgb, var(--accent) 13%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 40%, transparent);
+}
+
+.peep-av { font-size: 1.15rem; }
+.peep-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.peep-state { font-weight: 700; color: var(--accent); font-size: 0.85rem; }
+
+.cover-btn {
+  border: 1px solid var(--card-border);
+  background: rgba(255, 255, 255, 0.07);
+  border-radius: 10px;
+  padding: 4px 10px;
+  font-size: 0.95rem;
+  transition: background 0.15s, transform 0.1s;
+}
+
+.cover-btn:hover:not(:disabled) { background: rgba(255, 158, 181, 0.2); transform: scale(1.08); }
+.cover-btn:disabled { opacity: 0.3; cursor: not-allowed; }
+
+.week-grid {
+  display: flex;
+  gap: 6px;
+  justify-content: center;
+  width: 100%;
+}
+
+.wk-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  flex: 1;
+  max-width: 40px;
+}
+
+.wk-dot {
+  width: 100%;
+  height: 22px;
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.07);
+  border: 1px solid var(--card-border);
+}
+
+.wk-cell.done .wk-dot {
+  background: var(--accent);
+  border-color: transparent;
+  box-shadow: 0 0 12px color-mix(in srgb, var(--accent) 55%, transparent);
+}
+
+.wk-cell.partial .wk-dot {
+  background: linear-gradient(180deg, transparent 50%, color-mix(in srgb, var(--accent) 55%, transparent) 50%);
+}
+
+.wk-day { font-size: 0.66rem; color: var(--ink-dim); }
+
+.checkin-foot { opacity: 0.85; }
+
+.mode-row {
+  display: flex;
+  gap: 9px;
+}
+
+.mode-opt {
+  flex: 1;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1.5px solid var(--card-border);
+  border-radius: 14px;
+  padding: 12px 11px;
+  color: var(--ink);
+  text-align: left;
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.mode-opt.selected { border-color: var(--amber); background: rgba(255, 184, 107, 0.1); }
+.mode-opt b { display: block; font-size: 0.9rem; margin-bottom: 3px; }
+.mode-opt span { font-size: 0.74rem; color: var(--ink-dim); line-height: 1.3; }
 
 /* checklist */
 

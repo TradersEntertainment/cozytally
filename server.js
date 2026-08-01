@@ -199,8 +199,45 @@ function newRoomCode() {
   return crypto.randomUUID().slice(0, 8);
 }
 
-const CARD_TYPES = new Set(['tally', 'streak', 'timer', 'countdown', 'note', 'money', 'list']);
+const CARD_TYPES = new Set(['tally', 'streak', 'timer', 'countdown', 'note', 'money', 'list', 'checkin']);
 const MAX_LIST_ITEMS = 60;
+const KEEP_DAYS = 90;
+const COVER_TOKENS_PER_MONTH = 2;
+
+const dayKey = (d) =>
+  `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`;
+
+/** Members send their own local day; accept anything within a day of UTC so
+ *  timezones work without forcing a single clock on the room. */
+function validDay(day) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(day ?? ''))) return null;
+  const now = Date.now();
+  for (let offset = -2; offset <= 2; offset++) {
+    if (dayKey(new Date(now + offset * 86400000)) === day) return day;
+  }
+  return null;
+}
+
+function dayIsComplete(state, mode, day) {
+  const rec = state.days?.[day];
+  if (!rec) return false;
+  const people = Object.keys(state.people || {});
+  if (!people.length) return false;
+  if (mode === 'any') return Object.keys(rec).length > 0;
+  return people.every((k) => rec[k]);
+}
+
+function computeStreak(state, mode) {
+  let n = 0;
+  const now = Date.now();
+  for (let i = 0; i < 400; i++) {
+    const day = dayKey(new Date(now - i * 86400000));
+    if (dayIsComplete(state, mode, day)) n++;
+    else if (i === 0) continue; // today may still be in progress
+    else break;
+  }
+  return n;
+}
 const MAX_CARDS_PER_ROOM = 60;
 
 const clampStr = (v, max) => String(v ?? '').trim().slice(0, max);
@@ -215,6 +252,7 @@ function sanitizeConfig(type, raw) {
   const out = {};
   if (type === 'tally') out.goal = toInt(src.goal, 0, 100000, 0);
   if (type === 'countdown') out.targetAt = toInt(src.targetAt, 0, 4102444800000, 0);
+  if (type === 'checkin') out.mode = src.mode === 'any' ? 'any' : 'all';
   if (type === 'money') {
     out.goal = toInt(src.goal, 0, 1000000000, 0);
     out.cur = clampStr(src.cur, 4) || '₺';
@@ -231,6 +269,8 @@ function defaultState(type, now) {
   if (type === 'note') return { text: '', author: '', updatedAt: 0 };
   if (type === 'money') return { total: 0, log: [] };
   if (type === 'list') return { items: [] };
+  if (type === 'checkin')
+    return { people: {}, days: {}, best: 0, tokens: COVER_TOKENS_PER_MONTH, tokenMonth: '', covers: [] };
   return {};
 }
 
@@ -710,6 +750,84 @@ function handleMessage(ws, msg) {
         `${ws.meta.name} 💰 ${amount > 0 ? '+' : ''}${amount}${cur} · ${row.title}`,
         ws.meta.cid
       );
+      return;
+    }
+
+    case 'checkin': {
+      const row = q.getCard.get(clampStr(msg.id, 40), code);
+      if (!row || row.type !== 'checkin') return;
+      const day = validDay(msg.day);
+      if (!day) return;
+
+      const mode = JSON.parse(row.config).mode || 'all';
+      const state = JSON.parse(row.state);
+      state.people = state.people || {};
+      state.days = state.days || {};
+      state.covers = state.covers || [];
+
+      // signed-in members keep one slot across all their devices
+      const me = ws.meta.userId || ws.meta.cid || ws.meta.id;
+      const wasComplete = dayIsComplete(state, mode, day);
+
+      // top the shared mercy pool back up at the start of each month
+      const month = day.slice(0, 7);
+      if (state.tokenMonth !== month) {
+        state.tokenMonth = month;
+        state.tokens = COVER_TOKENS_PER_MONTH;
+      }
+
+      const rec = (state.days[day] = state.days[day] || {});
+
+      if (msg.op === 'tick') {
+        state.people[me] = { name: ws.meta.name, avatar: ws.meta.avatar };
+        rec[me] = { by: ws.meta.name, at: now };
+      } else if (msg.op === 'untick') {
+        if (!rec[me] || rec[me].coveredBy) return;
+        delete rec[me];
+        if (!Object.keys(rec).length) delete state.days[day];
+      } else if (msg.op === 'cover') {
+        // you can only spend a token on someone else — that is the whole point
+        const forKey = clampStr(msg.forKey, 80);
+        if (!forKey || forKey === me) return;
+        if (!state.people[forKey] || rec[forKey]) return;
+        if ((state.tokens || 0) <= 0) return sendTo(ws, { t: 'error', code: 'no-tokens' });
+        state.tokens--;
+        rec[forKey] = { by: state.people[forKey].name, coveredBy: ws.meta.name, at: now };
+        state.covers = [{ by: ws.meta.name, for: state.people[forKey].name, day }, ...state.covers].slice(0, 10);
+      } else {
+        return;
+      }
+
+      // keep the history bounded
+      const cutoff = dayKey(new Date(now - KEEP_DAYS * 86400000));
+      for (const k of Object.keys(state.days)) if (k < cutoff) delete state.days[k];
+
+      state.best = Math.max(state.best || 0, computeStreak(state, mode));
+      q.updateCardState.run(JSON.stringify(state), row.id);
+      broadcastCard(code, row.id, by, `checkin:${msg.op}`);
+
+      if (msg.op === 'cover') {
+        broadcast(code, {
+          t: 'checkin:cover',
+          id: row.id,
+          title: row.title,
+          by: ws.meta.name,
+          forName: rec[clampStr(msg.forKey, 80)]?.by || '',
+        });
+        pushToRoom(code, `${ws.meta.name} bugünü senin için örttü 🧣 · ${row.title}`, ws.meta.cid);
+        return;
+      }
+
+      if (!wasComplete && dayIsComplete(state, mode, day)) {
+        broadcast(code, {
+          t: 'checkin:done',
+          id: row.id,
+          title: row.title,
+          streak: computeStreak(state, mode),
+        });
+      } else if (msg.op === 'tick') {
+        pushToRoom(code, `${ws.meta.name} ✅ ${row.title}`, ws.meta.cid);
+      }
       return;
     }
 
