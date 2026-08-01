@@ -25,8 +25,11 @@ o zaman odalar sadece o cihazda durur.
 Ayrıca her odada:
 
 - 💬 **Kalıcı sohbet** — mesajlar veritabanında saklanır, sonra girince de durur; 📷 fotoğraf da atabilirsiniz
-- 🔔 **Push bildirimleri** — sekme kapalıyken bile "Ayşe: akşam film? 💬" diye telefona bildirim düşer
-  (odadaki 🔔 düğmesiyle açılır; VAPID anahtarları ilk açılışta otomatik üretilip `/data`'da saklanır)
+- 🔔 **Push bildirimleri** — odadaki 🔔 düğmesiyle açılır. Kart eklenince/silinince, çetele
+  artınca, kumbaraya para girince, listeye madde eklenince, kronometre başlayınca, not
+  bırakılınca, mesaj gelince ve kalp gönderilince haber verir. Uygulamaya bakan kişiye
+  bildirim gitmez; hızlı tekrarlar kart başına dakikada bire kısılır. Bildirim metni
+  alıcının diline göre (TR/EN) yazılır. VAPID anahtarları ilk açılışta üretilip `/data`'da saklanır
 - 📱 **PWA** — telefonda "Ana Ekrana Ekle" ile gerçek uygulama gibi kurulur
 
 Hesap yok, şifre yok — sadece takma ad + oda kodu. TR/EN dil desteği var.

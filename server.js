@@ -56,6 +56,7 @@ db.exec(`
     created_at INTEGER NOT NULL
   );
   CREATE INDEX IF NOT EXISTS idx_subs_room ON push_subs(room_code);
+  CREATE TABLE IF NOT EXISTS schema_meta (k TEXT PRIMARY KEY, v TEXT);
   CREATE TABLE IF NOT EXISTS users (
     id         TEXT PRIMARY KEY,
     username   TEXT NOT NULL UNIQUE,
@@ -77,6 +78,51 @@ db.exec(`
     PRIMARY KEY (user_id, room_code)
   );
 `);
+
+// Notification language, added after the table shipped.
+if (!db.prepare('PRAGMA table_info(push_subs)').all().some((c) => c.name === 'lang')) {
+  db.exec("ALTER TABLE push_subs ADD COLUMN lang TEXT NOT NULL DEFAULT 'tr'");
+}
+
+/** Notification copy. Kept tiny and mirrored per language. */
+const PUSH_STR = {
+  tr: {
+    cardAdd: (n, c) => `${n} yeni kart ekledi: ${c}`,
+    cardDelete: (n, c) => `${n} bir kartı sildi: ${c} 🗑️`,
+    tally: (n, c, v) => `${n}: ${c} → ${v} ✨`,
+    money: (n, c, v) => `${n} 💰 ${v} · ${c}`,
+    note: (n, t) => `${n} 💌 ${t}`,
+    chat: (n, t) => `${n}: ${t}`,
+    cheer: (n) => `${n} 💖✨`,
+    timerStart: (n, c) => `${n} başlattı: ${c} ⏳`,
+    timerPause: (n, c) => `${n} durdurdu: ${c} 🌙`,
+    streakReset: (n, c) => `${n}: ${c} sıfırlandı 🌧️`,
+    listAdd: (n, c, t) => `${n}: ${c} 📝 ${t}`,
+    listTick: (n, c, d, tot) => `${n}: ${c} ${d}/${tot} ✅`,
+    listDone: (c) => `${c} tamamlandı! 🎉`,
+    checkinTick: (n, c) => `${n} ✅ ${c}`,
+    checkinDone: (c, s) => `Gün tamam! ${c} · ${s} gün 🔥`,
+    cover: (n, c) => `${n} bugünü senin için örttü 🧣 · ${c}`,
+  },
+  en: {
+    cardAdd: (n, c) => `${n} added a card: ${c}`,
+    cardDelete: (n, c) => `${n} deleted a card: ${c} 🗑️`,
+    tally: (n, c, v) => `${n}: ${c} → ${v} ✨`,
+    money: (n, c, v) => `${n} 💰 ${v} · ${c}`,
+    note: (n, t) => `${n} 💌 ${t}`,
+    chat: (n, t) => `${n}: ${t}`,
+    cheer: (n) => `${n} 💖✨`,
+    timerStart: (n, c) => `${n} started: ${c} ⏳`,
+    timerPause: (n, c) => `${n} paused: ${c} 🌙`,
+    streakReset: (n, c) => `${n}: ${c} was reset 🌧️`,
+    listAdd: (n, c, t) => `${n}: ${c} 📝 ${t}`,
+    listTick: (n, c, d, tot) => `${n}: ${c} ${d}/${tot} ✅`,
+    listDone: (c) => `${c} is done! 🎉`,
+    checkinTick: (n, c) => `${n} ✅ ${c}`,
+    checkinDone: (c, s) => `Day complete! ${c} · ${s} days 🔥`,
+    cover: (n, c) => `${n} covered today for you 🧣 · ${c}`,
+  },
+};
 
 // Web Push (VAPID) keys live on the data volume so they survive deploys.
 const vapidPath = path.join(DATA_DIR, 'vapid.json');
@@ -118,7 +164,9 @@ const q = {
   delMsg: db.prepare('DELETE FROM messages WHERE id = ?'),
   subsByRoom: db.prepare('SELECT * FROM push_subs WHERE room_code = ?'),
   upsertSub: db.prepare(
-    'INSERT INTO push_subs (endpoint, room_code, cid, keys, created_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT(endpoint) DO UPDATE SET room_code = excluded.room_code, cid = excluded.cid, keys = excluded.keys'
+    `INSERT INTO push_subs (endpoint, room_code, cid, keys, lang, created_at) VALUES (?, ?, ?, ?, ?, ?)
+     ON CONFLICT(endpoint) DO UPDATE SET room_code = excluded.room_code, cid = excluded.cid,
+       keys = excluded.keys, lang = excluded.lang`
   ),
   delSub: db.prepare('DELETE FROM push_subs WHERE endpoint = ?'),
 
@@ -412,7 +460,8 @@ app.post('/api/push/subscribe', (req, res) => {
   if (!q.getRoom.get(code)) return res.status(404).json({ error: 'not-found' });
   if (!sub?.endpoint || !sub?.keys?.p256dh || !sub?.keys?.auth || sub.endpoint.length > 1024)
     return res.status(400).json({ error: 'bad-subscription' });
-  q.upsertSub.run(sub.endpoint, code, clampStr(cid, 64), JSON.stringify(sub.keys), Date.now());
+  const lang = req.body?.lang === 'en' ? 'en' : 'tr';
+  q.upsertSub.run(sub.endpoint, code, clampStr(cid, 64), JSON.stringify(sub.keys), lang, Date.now());
   res.json({ ok: true });
 });
 
@@ -422,28 +471,53 @@ app.post('/api/push/unsubscribe', (req, res) => {
   res.json({ ok: true });
 });
 
-function pushToRoom(code, body, exceptCid) {
+/** room|key -> last send, so repeated taps don't machine-gun anyone's phone */
+const pushThrottle = new Map();
+
+setInterval(() => {
+  const cutoff = Date.now() - 10 * 60 * 1000;
+  for (const [k, ts] of pushThrottle) if (ts < cutoff) pushThrottle.delete(k);
+}, 10 * 60 * 1000).unref?.();
+
+/**
+ * Notify everyone subscribed to a room except the person who acted and
+ * anyone currently looking at it. A connected-but-hidden tab still counts
+ * as away — otherwise a backgrounded phone would go silent.
+ */
+function pushToRoom(code, strKey, args, exceptCid, { key, windowMs = 0 } = {}) {
   const room = q.getRoom.get(code);
   if (!room) return;
-  const online = new Set(
-    [...(roomSockets.get(code) || [])].map((s) => s.meta?.cid).filter(Boolean)
+
+  if (key && windowMs) {
+    const throttleKey = `${code}|${key}`;
+    const last = pushThrottle.get(throttleKey) || 0;
+    if (Date.now() - last < windowMs) return;
+    pushThrottle.set(throttleKey, Date.now());
+  }
+
+  const watching = new Set(
+    [...(roomSockets.get(code) || [])]
+      .filter((s) => s.meta?.joined && !s.meta.hidden)
+      .map((s) => s.meta.cid)
+      .filter(Boolean)
   );
-  const payload = JSON.stringify({
-    title: room.name,
-    body,
-    tag: 'ct-' + code,
-    url: '/r/' + encodeURIComponent(code),
-  });
+
   for (const row of q.subsByRoom.all(code)) {
-    if (row.cid && (row.cid === exceptCid || online.has(row.cid))) continue;
+    if (row.cid && (row.cid === exceptCid || watching.has(row.cid))) continue;
+    const write = (PUSH_STR[row.lang] || PUSH_STR.tr)[strKey] || PUSH_STR.tr[strKey];
+    if (!write) continue;
+    const payload = JSON.stringify({
+      title: room.name,
+      body: write(...args),
+      tag: 'ct-' + code,
+      url: '/r/' + encodeURIComponent(code),
+    });
     const sub = { endpoint: row.endpoint, keys: JSON.parse(row.keys) };
     webpush.sendNotification(sub, payload, { TTL: 3600 }).catch((err) => {
       if (err.statusCode === 404 || err.statusCode === 410) q.delSub.run(row.endpoint);
     });
   }
 }
-
-const heartPushAt = new Map(); // room -> ts, so hearts can't spam phones
 
 // ------------------------------------------------------------ photo uploads
 const EXT_BY_MIME = {
@@ -519,7 +593,7 @@ function broadcastCard(code, cardId, by, verb) {
 }
 
 wss.on('connection', (ws) => {
-  ws.meta = { joined: false, id: crypto.randomUUID(), room: null, name: '', avatar: '🐻' };
+  ws.meta = { joined: false, id: crypto.randomUUID(), room: null, name: '', avatar: '🐻', hidden: false };
   ws.isAlive = true;
   ws.budget = 20;
   ws.on('pong', () => (ws.isAlive = true));
@@ -573,6 +647,12 @@ function handleMessage(ws, msg) {
   const now = Date.now();
 
   if (msg.t === 'ping') return sendTo(ws, { t: 'pong', now });
+
+  // A tab that is open but hidden is not "watching" — it should still get a push.
+  if (msg.t === 'vis') {
+    ws.meta.hidden = !!msg.hidden;
+    return;
+  }
 
   if (msg.t === 'join') {
     const code = clampStr(msg.room, 40).toLowerCase();
@@ -659,6 +739,7 @@ function handleMessage(ws, msg) {
       const sort = q.maxSort.get(code).m + 1;
       q.insertCard.run(id, code, c.type, title, emoji, JSON.stringify(config), JSON.stringify(state), sort, now);
       broadcastCard(code, id, by, 'card:add');
+      pushToRoom(code, 'cardAdd', [ws.meta.name, `${emoji || ''} ${title}`.trim()], ws.meta.cid);
       return;
     }
 
@@ -685,6 +766,7 @@ function handleMessage(ws, msg) {
       if (cfg.photo) fs.unlink(path.join(UPLOAD_DIR, path.basename(cfg.photo)), () => {});
       q.deleteCard.run(row.id);
       broadcast(code, { t: 'card:delete', id: row.id, title: row.title, by });
+      pushToRoom(code, 'cardDelete', [ws.meta.name, row.title], ws.meta.cid);
       return;
     }
 
@@ -696,6 +778,13 @@ function handleMessage(ws, msg) {
       state.count = Math.max(0, (state.count || 0) + delta);
       q.updateCardState.run(JSON.stringify(state), row.id);
       broadcastCard(code, row.id, by, delta > 0 ? 'tally+' : 'tally-');
+      if (delta > 0) {
+        // one nudge per card per minute, however fast they tap
+        pushToRoom(code, 'tally', [ws.meta.name, row.title, state.count], ws.meta.cid, {
+          key: 'tally:' + row.id,
+          windowMs: 60000,
+        });
+      }
       return;
     }
 
@@ -708,6 +797,7 @@ function handleMessage(ws, msg) {
       state.startAt = now;
       q.updateCardState.run(JSON.stringify(state), row.id);
       broadcastCard(code, row.id, by, 'streak:reset');
+      pushToRoom(code, 'streakReset', [ws.meta.name, row.title], ws.meta.cid);
       return;
     }
 
@@ -731,6 +821,8 @@ function handleMessage(ws, msg) {
       }
       q.updateCardState.run(JSON.stringify(state), row.id);
       broadcastCard(code, row.id, by, `timer:${msg.op}`);
+      if (msg.op === 'start') pushToRoom(code, 'timerStart', [ws.meta.name, row.title], ws.meta.cid);
+      if (msg.op === 'pause') pushToRoom(code, 'timerPause', [ws.meta.name, row.title], ws.meta.cid);
       return;
     }
 
@@ -745,11 +837,7 @@ function handleMessage(ws, msg) {
       q.updateCardState.run(JSON.stringify(state), row.id);
       broadcastCard(code, row.id, by, amount > 0 ? 'money+' : 'money-');
       const cur = JSON.parse(row.config).cur || '₺';
-      pushToRoom(
-        code,
-        `${ws.meta.name} 💰 ${amount > 0 ? '+' : ''}${amount}${cur} · ${row.title}`,
-        ws.meta.cid
-      );
+      pushToRoom(code, 'money', [ws.meta.name, row.title, `${amount > 0 ? '+' : ''}${amount}${cur}`], ws.meta.cid);
       return;
     }
 
@@ -814,19 +902,16 @@ function handleMessage(ws, msg) {
           by: ws.meta.name,
           forName: rec[clampStr(msg.forKey, 80)]?.by || '',
         });
-        pushToRoom(code, `${ws.meta.name} bugünü senin için örttü 🧣 · ${row.title}`, ws.meta.cid);
+        pushToRoom(code, 'cover', [ws.meta.name, row.title], ws.meta.cid);
         return;
       }
 
       if (!wasComplete && dayIsComplete(state, mode, day)) {
-        broadcast(code, {
-          t: 'checkin:done',
-          id: row.id,
-          title: row.title,
-          streak: computeStreak(state, mode),
-        });
+        const streak = computeStreak(state, mode);
+        broadcast(code, { t: 'checkin:done', id: row.id, title: row.title, streak });
+        pushToRoom(code, 'checkinDone', [row.title, streak], ws.meta.cid);
       } else if (msg.op === 'tick') {
-        pushToRoom(code, `${ws.meta.name} ✅ ${row.title}`, ws.meta.cid);
+        pushToRoom(code, 'checkinTick', [ws.meta.name, row.title], ws.meta.cid);
       }
       return;
     }
@@ -860,9 +945,22 @@ function handleMessage(ws, msg) {
 
       q.updateCardState.run(JSON.stringify(state), row.id);
       broadcastCard(code, row.id, by, `list:${msg.op}`);
-      // Celebrate out loud only when a list is finished off.
-      if (state.items.length && state.items.every((i) => i.done) && msg.op === 'toggle') {
+
+      const allDone = state.items.length && state.items.every((i) => i.done);
+      if (allDone && msg.op === 'toggle') {
         broadcast(code, { t: 'list:done', id: row.id, title: row.title, by });
+        pushToRoom(code, 'listDone', [row.title], ws.meta.cid);
+      } else if (msg.op === 'add') {
+        pushToRoom(code, 'listAdd', [ws.meta.name, row.title, clampStr(msg.text, 60)], ws.meta.cid, {
+          key: 'list:' + row.id,
+          windowMs: 45000,
+        });
+      } else if (msg.op === 'toggle') {
+        const done = state.items.filter((i) => i.done).length;
+        pushToRoom(code, 'listTick', [ws.meta.name, row.title, done, state.items.length], ws.meta.cid, {
+          key: 'listtick:' + row.id,
+          windowMs: 60000,
+        });
       }
       return;
     }
@@ -888,7 +986,7 @@ function handleMessage(ws, msg) {
         q.delMsg.run(old.id);
       }
       broadcast(code, { t: 'chat:new', msg: m });
-      pushToRoom(code, `${m.author}: ${photo ? '📷 ' : ''}${text.slice(0, 90) || ''}`.trim(), ws.meta.cid);
+      pushToRoom(code, 'chat', [m.author, `${photo ? '📷 ' : ''}${text.slice(0, 90)}`.trim()], ws.meta.cid);
       return;
     }
 
@@ -901,17 +999,14 @@ function handleMessage(ws, msg) {
       state.updatedAt = now;
       q.updateCardState.run(JSON.stringify(state), row.id);
       broadcastCard(code, row.id, by, 'note:set');
-      pushToRoom(code, `${ws.meta.name} 💌 ${state.text.slice(0, 90)}`, ws.meta.cid);
+      pushToRoom(code, 'note', [ws.meta.name, state.text.slice(0, 90)], ws.meta.cid);
       return;
     }
 
     case 'cheer': {
       const kind = msg.kind === 'confetti' ? 'confetti' : 'hearts';
       broadcast(code, { t: 'cheer', kind, by });
-      if ((heartPushAt.get(code) || 0) < now - 20000) {
-        heartPushAt.set(code, now);
-        pushToRoom(code, `${ws.meta.name} 💖✨`, ws.meta.cid);
-      }
+      pushToRoom(code, 'cheer', [ws.meta.name], ws.meta.cid, { key: 'cheer', windowMs: 20000 });
       return;
     }
   }

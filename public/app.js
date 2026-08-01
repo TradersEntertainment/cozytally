@@ -30,7 +30,22 @@
     if (room) renderAllCards();
     renderRecents();
     renderIntro();
+    resubscribePushLang();
   });
+
+  /** Re-register the push subscription so notifications follow the UI language. */
+  async function resubscribePushLang() {
+    if (!room || !swReg || localStorage.getItem(pushKey()) !== '1') return;
+    try {
+      const sub = await swReg.pushManager.getSubscription();
+      if (!sub) return;
+      await fetch('/api/push/subscribe', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ room: room.code, cid: myCid, lang, sub: sub.toJSON() }),
+      });
+    } catch { /* language will catch up on the next subscribe */ }
+  }
 
   // ------------------------------------------------------------ night sky
   function buildSky() {
@@ -651,6 +666,7 @@
         cid: myCid,
         token: auth?.token,
       }));
+      if (document.hidden) ws.send(JSON.stringify({ t: 'vis', hidden: true }));
     };
 
     ws.onmessage = (e) => {
@@ -679,6 +695,12 @@
   };
 
   setInterval(() => send({ t: 'ping' }), 25000);
+
+  // Tell the server when we stop looking, so it knows to push instead of
+  // relying on the in-app toast nobody is there to see.
+  document.addEventListener('visibilitychange', () => {
+    send({ t: 'vis', hidden: document.hidden });
+  });
 
   function handleServer(msg) {
     switch (msg.t) {
@@ -1886,7 +1908,7 @@
         const res = await fetch('/api/push/subscribe', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ room: room.code, cid: myCid, sub: sub.toJSON() }),
+          body: JSON.stringify({ room: room.code, cid: myCid, lang, sub: sub.toJSON() }),
         });
         if (!res.ok) throw new Error('subscribe-failed');
         localStorage.setItem(pushKey(), '1');
