@@ -1371,6 +1371,85 @@ textarea {
 .milestone.reached { opacity: 1; color: var(--peach); }
 .milestone.reached .ms-star { filter: none; text-shadow: 0 0 12px rgba(255, 215, 168, 0.7); }
 
+/* contribution race */
+
+.race {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.race-label {
+  font-size: var(--t-caption);
+  font-weight: 700;
+  color: var(--ink-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.race-bar {
+  display: flex;
+  width: 100%;
+  height: 13px;
+  border-radius: var(--r-pill);
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.07);
+  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.3);
+}
+
+.race-seg {
+  height: 100%;
+  transition: width 0.65s var(--spring-soft);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.4);
+}
+
+.race-seg + .race-seg { border-left: 1px solid rgba(20, 16, 44, 0.45); }
+
+.race-legend {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.racer {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: var(--t-footnote);
+}
+
+.racer-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: 0 0 auto;
+}
+
+.racer-av { font-size: 0.95rem; }
+
+.racer-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ink-2);
+}
+
+.racer-amt {
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink);
+}
+
+.racer-pct {
+  color: var(--ink-dim);
+  font-variant-numeric: tabular-nums;
+  min-width: 34px;
+  text-align: right;
+}
+
 .money-form { display: flex; gap: 8px; width: 100%; justify-content: center; align-items: center; }
 .money-input { width: 118px !important; text-align: center; font-variant-numeric: tabular-nums; }
 

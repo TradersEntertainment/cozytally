@@ -419,7 +419,7 @@ function defaultState(type, now) {
   if (type === 'streak') return { startAt: now, best: 0 };
   if (type === 'timer') return { running: false, startedAt: 0, accumulated: 0 };
   if (type === 'note') return { text: '', author: '', updatedAt: 0 };
-  if (type === 'money') return { total: 0, log: [] };
+  if (type === 'money') return { total: 0, log: [], by: {} };
   if (type === 'list') return { items: [] };
   if (type === 'checkin')
     return { people: {}, days: {}, best: 0, tokens: COVER_TOKENS_PER_MONTH, tokenMonth: '', covers: [] };
@@ -956,6 +956,14 @@ function handleMessage(ws, msg) {
       const before = state.total || 0;
       state.total = Math.max(0, before + amount);
       state.log = [{ a: amount, by: ws.meta.name, at: now }, ...(state.log || [])].slice(0, 20);
+
+      // running per-person net, so the card can show who put in what
+      state.by = state.by || {};
+      const who = ws.meta.userId || ws.meta.cid || ws.meta.id;
+      const mine = (state.by[who] = state.by[who] || { net: 0 });
+      mine.name = ws.meta.name;
+      mine.avatar = ws.meta.avatar;
+      mine.net = (mine.net || 0) + amount;
       store.updateCardState(JSON.stringify(state), row.id);
       broadcastCard(code, row.id, by, amount > 0 ? 'money+' : 'money-');
 

@@ -924,7 +924,11 @@
       if (again) {
         again.value = typing.value;
         again.focus();
-        again.setSelectionRange(again.value.length, again.value.length);
+        // number inputs throw on setSelectionRange, and they park the caret
+        // at the end anyway
+        if (again.type === 'text' || again.type === 'search') {
+          again.setSelectionRange(again.value.length, again.value.length);
+        }
       }
     }
     return el;
@@ -1093,10 +1097,13 @@
       .map((e) => `<div><span class="${e.a > 0 ? 'm-in' : 'm-out'}">${e.a > 0 ? '+' : '−'}${fmtNum(Math.abs(e.a))}${esc(cur)}</span> — ${esc(e.by)}</div>`)
       .join('');
 
+    const race = renderRace(card.state.by, cur);
+
     body.innerHTML = `
       ${card.config.photo ? `<img class="money-photo" src="${esc(card.config.photo)}" alt="">` : ''}
       <div class="money-total">${fmtNum(total)}<small>${esc(cur)}</small></div>
       ${milestones}
+      ${race}
       <div class="money-form">
         <input type="number" inputmode="numeric" class="money-input js-amt" placeholder="${esc(t('amountPh'))}">
         <button class="round-btn plus js-madd">+</button>
@@ -1120,6 +1127,54 @@
 
     if (opts.verb === 'money+') coinRain(body.closest('.card'));
     if (opts.verb === 'money-') sparklesAt(body.closest('.card'));
+  }
+
+  // Who put in what. Always on the card — the whole point of a shared pot is
+  // seeing it fill up together, and hiding that behind a tap kills the feeling.
+  const RACER_COLORS = ['#ffb86b', '#8be9c9', '#ff9eb5', '#b7a4ff', '#9fd8ff', '#ffe08a'];
+  const racerColor = (key) => {
+    let h = 0;
+    for (let i = 0; i < key.length; i++) h = (h * 31 + key.charCodeAt(i)) >>> 0;
+    return RACER_COLORS[h % RACER_COLORS.length];
+  };
+
+  function renderRace(by, cur) {
+    const racers = Object.entries(by || {})
+      .map(([k, v]) => ({ key: k, name: v.name || '?', avatar: v.avatar || '🐻', net: v.net || 0 }))
+      .filter((r) => r.net > 0)
+      .sort((a, b) => b.net - a.net);
+    if (!racers.length) return '';
+
+    const sum = racers.reduce((n, r) => n + r.net, 0);
+    const lead = racers[0].net;
+    // a real tie shouldn't crown just one of them
+    const crowned = racers.filter((r) => r.net === lead).length === 1;
+
+    return `
+      <div class="race">
+        <div class="race-label">${esc(t('contributions'))}</div>
+        <div class="race-bar">
+          ${racers
+            .map(
+              (r) => `<span class="race-seg" title="${esc(r.name)}"
+                style="width:${(r.net / sum) * 100}%; background:${racerColor(r.key)}"></span>`
+            )
+            .join('')}
+        </div>
+        <div class="race-legend">
+          ${racers
+            .map(
+              (r, i) => `<div class="racer">
+                <span class="racer-dot" style="background:${racerColor(r.key)}"></span>
+                <span class="racer-av">${esc(r.avatar)}</span>
+                <span class="racer-name">${esc(r.name)}${crowned && i === 0 ? ' 👑' : ''}</span>
+                <span class="racer-amt">${fmtNum(r.net)}${esc(cur)}</span>
+                <span class="racer-pct">%${Math.round((r.net / sum) * 100)}</span>
+              </div>`
+            )
+            .join('')}
+        </div>
+      </div>`;
   }
 
   function coinRain(cardEl) {

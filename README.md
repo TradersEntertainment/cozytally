@@ -12,7 +12,7 @@ ikiniz de aynı panoyu **canlı** görürsünüz. Panoya istediğiniz kadar kart
 | ⏳ **Ortak Kronometre** | Birlikte süre sayarsınız; başlat/durdur herkeste senkron |
 | 🎈 **Geri Sayım** | Özel bir güne kalan süreyi sayar, vakti gelince konfeti 🎉 |
 | 💌 **Not** | Birbirinize yapışkan notlar bırakırsınız — kim yazdıysa imzası düşer |
-| 💰 **Kumbara** | Birlikte para biriktirin: hedef tutar, %25/50/75/100 seviye yıldızları, hedef fotoğrafı, +/− işlem geçmişi ve para atınca 🪙 yağmuru |
+| 💰 **Kumbara** | Birlikte para biriktirin: hedef tutar, %25/50/75/100 seviye yıldızları, hedef fotoğrafı, kim ne kadar koydu gösteren katkı yarışı, +/− işlem geçmişi ve para atınca 🪙 yağmuru |
 | 📝 **Liste** | Ortak yapılacaklar — herkes madde ekler ve işaretler, hepsi bitince konfeti |
 | 🤝 **Beraber** | Ortak seri: herkesin kendi günlük tiki var ama seri odanın. “Herkes” ya da “biri yeter” modu, son 7 günün ızgarası ve birbirinize hediye edebildiğiniz **pas hakkı** — biri günü kaçırdıysa pasını harcayıp onun için örtebilirsin, seri bozulmaz |
 
