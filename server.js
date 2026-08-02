@@ -84,9 +84,16 @@ if (!db.prepare('PRAGMA table_info(push_subs)').all().some((c) => c.name === 'la
   db.exec("ALTER TABLE push_subs ADD COLUMN lang TEXT NOT NULL DEFAULT 'tr'");
 }
 
+const nf = (lang, v) => new Intl.NumberFormat(lang === 'en' ? 'en-US' : 'tr-TR').format(v);
+
 /** Notification copy. Kept tiny and mirrored per language. */
 const PUSH_STR = {
   tr: {
+    moneyIn: (n, c, amt, total, cur) =>
+      `${n} kumbaraya +${nf('tr', amt)}${cur} attı 💰 · ${c}: ${nf('tr', total)}${cur}`,
+    moneyOut: (n, c, amt, total, cur) =>
+      `${n} kumbaradan −${nf('tr', amt)}${cur} çıkardı 🍃 · ${c}: ${nf('tr', total)}${cur}`,
+    moneyGoal: (c, total, cur) => `Hedefe ulaştınız! ${c} · ${nf('tr', total)}${cur} 🎉💰`,
     cardAdd: (n, c) => `${n} yeni kart ekledi: ${c}`,
     cardDelete: (n, c) => `${n} bir kartı sildi: ${c} 🗑️`,
     tally: (n, c, v) => `${n}: ${c} → ${v} ✨`,
@@ -105,6 +112,11 @@ const PUSH_STR = {
     cover: (n, c) => `${n} bugünü senin için örttü 🧣 · ${c}`,
   },
   en: {
+    moneyIn: (n, c, amt, total, cur) =>
+      `${n} put +${nf('en', amt)}${cur} in 💰 · ${c}: ${nf('en', total)}${cur}`,
+    moneyOut: (n, c, amt, total, cur) =>
+      `${n} took −${nf('en', amt)}${cur} out 🍃 · ${c}: ${nf('en', total)}${cur}`,
+    moneyGoal: (c, total, cur) => `Goal reached! ${c} · ${nf('en', total)}${cur} 🎉💰`,
     cardAdd: (n, c) => `${n} added a card: ${c}`,
     cardDelete: (n, c) => `${n} deleted a card: ${c} 🗑️`,
     tally: (n, c, v) => `${n}: ${c} → ${v} ✨`,
@@ -832,12 +844,24 @@ function handleMessage(ws, msg) {
       const amount = toInt(msg.amount, -100000000, 100000000, 0);
       if (!amount) return;
       const state = JSON.parse(row.state);
-      state.total = Math.max(0, (state.total || 0) + amount);
+      const before = state.total || 0;
+      state.total = Math.max(0, before + amount);
       state.log = [{ a: amount, by: ws.meta.name, at: now }, ...(state.log || [])].slice(0, 20);
       q.updateCardState.run(JSON.stringify(state), row.id);
       broadcastCard(code, row.id, by, amount > 0 ? 'money+' : 'money-');
-      const cur = JSON.parse(row.config).cur || '₺';
-      pushToRoom(code, 'money', [ws.meta.name, row.title, `${amount > 0 ? '+' : ''}${amount}${cur}`], ws.meta.cid);
+
+      const cfg = JSON.parse(row.config);
+      const cur = cfg.cur || '₺';
+      pushToRoom(
+        code,
+        amount > 0 ? 'moneyIn' : 'moneyOut',
+        [ws.meta.name, row.title, Math.abs(amount), state.total, cur],
+        ws.meta.cid
+      );
+      // crossing the finish line deserves its own nudge
+      if (cfg.goal && before < cfg.goal && state.total >= cfg.goal) {
+        pushToRoom(code, 'moneyGoal', [row.title, state.total, cur], ws.meta.cid);
+      }
       return;
     }
 
