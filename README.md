@@ -45,6 +45,25 @@ Hesap yok, şifre yok — sadece takma ad + oda kodu. TR/EN dil desteği var.
 > Not: `PORT` değişkenini Railway kendisi verir. Volume başka bir yere mount
 > edersen `DATA_DIR` ortam değişkeniyle yolu belirtebilirsin.
 
+### Diskte şifreleme (`CT_SECRET`)
+
+Servise **`CT_SECRET`** adında uzun ve rastgele bir ortam değişkeni eklersen
+(örn. `openssl rand -base64 32` çıktısı), yazılan her şey diske **AES-256-GCM**
+ile şifrelenmiş olarak kaydedilir: oda adları, kart başlıkları ve içerikleri,
+notlar, liste maddeleri, sohbet mesajları ve yüklenen fotoğraflar. Veritabanı
+dosyasını ya da bir yedeği eline geçiren biri yalnızca şifreli veri görür.
+
+**Neyi korur:** çalınan/yanlışlıkla paylaşılan volume anlık görüntüsünü, unutulmuş
+bir yedeği, diski doğrudan okuyan birini.
+**Neyi korumaz:** hem diske **hem de ortam değişkenlerine** erişebilen birini.
+Anahtar orada durduğu için uygulama şifreyi çözebiliyor; çözebiliyorsa aynı
+yetkiye sahip biri de çözebilir. Bunun tek gerçek çözümü içeriği tarayıcıda
+şifrelemektir (uçtan uca).
+
+Anahtarı sonradan eklemek güvenlidir: daha önce düz metin yazılmış kayıtlar
+okunmaya devam eder, yeni yazılanlar şifrelenir. **Anahtarı kaybedersen ya da
+değiştirirsen, onunla yazılmış içerik geri gelmez** — bir yere kaydet.
+
 ## Lokal geliştirme
 
 ```bash

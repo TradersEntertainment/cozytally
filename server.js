@@ -84,6 +84,71 @@ if (!db.prepare('PRAGMA table_info(push_subs)').all().some((c) => c.name === 'la
   db.exec("ALTER TABLE push_subs ADD COLUMN lang TEXT NOT NULL DEFAULT 'tr'");
 }
 
+/* ------------------------------------------------------------------
+   Encryption at rest.
+
+   Set CT_SECRET in the environment and everything people write — room
+   names, card titles and contents, chat messages, uploaded photos — is
+   stored as AES-256-GCM ciphertext instead of readable text. The key
+   lives only in the environment, never on the volume, so a copy of the
+   database or a leaked backup is useless on its own.
+
+   It does NOT hide anything from someone who can read the environment
+   as well as the disk, or run code on the server: the app must be able
+   to decrypt to work at all. For that, content has to be encrypted in
+   the browser instead.
+
+   With no CT_SECRET set, everything behaves exactly as before, and rows
+   written before a key was configured stay readable either way.
+   ------------------------------------------------------------------ */
+const CT_SECRET = process.env.CT_SECRET || '';
+const CRYPT_KEY = CT_SECRET ? crypto.createHash('sha256').update(CT_SECRET).digest() : null;
+const ENC_PREFIX = 'ct1:';
+const FILE_MAGIC = Buffer.from('CTENC1\0\0');
+
+function enc(value) {
+  if (!CRYPT_KEY || typeof value !== 'string' || value === '') return value;
+  const iv = crypto.randomBytes(12);
+  const cipher = crypto.createCipheriv('aes-256-gcm', CRYPT_KEY, iv);
+  const body = Buffer.concat([cipher.update(value, 'utf8'), cipher.final()]);
+  return ENC_PREFIX + Buffer.concat([iv, cipher.getAuthTag(), body]).toString('base64');
+}
+
+function dec(value, fallback = '') {
+  if (typeof value !== 'string' || !value.startsWith(ENC_PREFIX)) return value; // pre-key rows
+  if (!CRYPT_KEY) return fallback;
+  try {
+    const buf = Buffer.from(value.slice(ENC_PREFIX.length), 'base64');
+    const decipher = crypto.createDecipheriv('aes-256-gcm', CRYPT_KEY, buf.subarray(0, 12));
+    decipher.setAuthTag(buf.subarray(12, 28));
+    return Buffer.concat([decipher.update(buf.subarray(28)), decipher.final()]).toString('utf8');
+  } catch {
+    return fallback;
+  }
+}
+
+function encFile(buf) {
+  if (!CRYPT_KEY) return buf;
+  const iv = crypto.randomBytes(12);
+  const cipher = crypto.createCipheriv('aes-256-gcm', CRYPT_KEY, iv);
+  const body = Buffer.concat([cipher.update(buf), cipher.final()]);
+  return Buffer.concat([FILE_MAGIC, iv, cipher.getAuthTag(), body]);
+}
+
+function decFile(buf) {
+  if (buf.length < FILE_MAGIC.length || !buf.subarray(0, FILE_MAGIC.length).equals(FILE_MAGIC)) return buf;
+  if (!CRYPT_KEY) return null;
+  try {
+    const iv = buf.subarray(8, 20);
+    const tag = buf.subarray(20, 36);
+    const decipher = crypto.createDecipheriv('aes-256-gcm', CRYPT_KEY, iv);
+    decipher.setAuthTag(tag);
+    return Buffer.concat([decipher.update(buf.subarray(36)), decipher.final()]);
+  } catch {
+    return null;
+  }
+}
+
 const nf = (lang, v) => new Intl.NumberFormat(lang === 'en' ? 'en-US' : 'tr-TR').format(v);
 
 /** Notification copy. Kept tiny and mirrored per language. */
@@ -241,6 +306,33 @@ function bearer(req) {
   return h.startsWith('Bearer ') ? h.slice(7) : '';
 }
 
+/* Every read below hands back plaintext and every write takes plaintext,
+   so the rest of the server never has to think about encryption. */
+const readRoom = (row) => (row ? { ...row, name: dec(row.name, '???') } : row);
+const readCardRow = (row) =>
+  row ? { ...row, title: dec(row.title, '???'), config: dec(row.config, '{}'), state: dec(row.state, '{}') } : row;
+const readMsgRow = (row) => ({ ...row, author: dec(row.author, '???'), text: dec(row.text) });
+
+const store = {
+  getRoom: (code) => readRoom(q.getRoom.get(code)),
+  roomExists: (code) => !!q.getRoom.get(code),
+  createRoom: (code, name, a, b) => q.createRoom.run(code, enc(name), a, b),
+  renameRoom: (name, at, code) => q.renameRoom.run(enc(name), at, code),
+
+  getCard: (id, code) => readCardRow(q.getCard.get(id, code)),
+  roomCards: (code) => q.roomCards.all(code).map(readCardRow),
+  insertCard: (id, code, type, title, emoji, config, state, sort, at) =>
+    q.insertCard.run(id, code, type, enc(title), emoji, enc(config), enc(state), sort, at),
+  updateCardMeta: (title, emoji, config, id) => q.updateCardMeta.run(enc(title), emoji, enc(config), id),
+  updateCardState: (state, id) => q.updateCardState.run(enc(state), id),
+
+  insertMsg: (m, code) =>
+    q.insertMsg.run(m.id, code, m.cid, enc(m.author), m.avatar, enc(m.text), m.photo, m.createdAt),
+  recentMsgs: (code, n) => q.recentMsgs.all(code, n).map(readMsgRow),
+
+  userRooms: (userId) => q.userRooms.all(userId).map((r) => ({ ...r, name: dec(r.name, '???') })),
+};
+
 // ---------------------------------------------------------------- room codes
 const CODE_WORDS = [
   'luna', 'mocha', 'panda', 'koala', 'boba', 'nova', 'suki', 'momo',
@@ -254,7 +346,7 @@ function newRoomCode() {
     let b = CODE_WORDS[crypto.randomInt(CODE_WORDS.length)];
     while (b === a) b = CODE_WORDS[crypto.randomInt(CODE_WORDS.length)];
     const code = `${a}-${b}-${crypto.randomInt(10, 100)}`;
-    if (!q.getRoom.get(code)) return code;
+    if (!store.getRoom(code)) return code;
   }
   return crypto.randomUUID().slice(0, 8);
 }
@@ -373,12 +465,12 @@ app.post('/api/rooms', (req, res) => {
   const name = clampStr(req.body?.name, 40) || 'CozyTally';
   const code = newRoomCode();
   const now = Date.now();
-  q.createRoom.run(code, name, now, now);
+  store.createRoom(code, name, now, now);
   res.json({ code, name });
 });
 
 app.get('/api/rooms/:code', (req, res) => {
-  const room = q.getRoom.get(clampStr(req.params.code, 40).toLowerCase());
+  const room = store.getRoom(clampStr(req.params.code, 40).toLowerCase());
   if (!room) return res.status(404).json({ error: 'not-found' });
   res.json({ code: room.code, name: room.name });
 });
@@ -433,7 +525,7 @@ app.post('/api/auth/login', (req, res) => {
   const now = Date.now();
   const token = crypto.randomBytes(32).toString('hex');
   q.createSession.run(token, row.id, now, now);
-  res.json({ token, user: publicUser(row), rooms: q.userRooms.all(row.id) });
+  res.json({ token, user: publicUser(row), rooms: store.userRooms(row.id) });
 });
 
 app.post('/api/auth/logout', (req, res) => {
@@ -444,7 +536,7 @@ app.post('/api/auth/logout', (req, res) => {
 app.get('/api/auth/me', (req, res) => {
   const user = userFromToken(bearer(req));
   if (!user) return res.status(401).json({ error: 'unauthorized' });
-  res.json({ user: publicUser(user), rooms: q.userRooms.all(user.id) });
+  res.json({ user: publicUser(user), rooms: store.userRooms(user.id) });
 });
 
 app.post('/api/auth/profile', (req, res) => {
@@ -460,7 +552,7 @@ app.post('/api/auth/forget-room', (req, res) => {
   const user = userFromToken(bearer(req));
   if (!user) return res.status(401).json({ error: 'unauthorized' });
   q.unlinkRoom.run(user.id, clampStr(req.body?.code, 40).toLowerCase());
-  res.json({ rooms: q.userRooms.all(user.id) });
+  res.json({ rooms: store.userRooms(user.id) });
 });
 
 // ------------------------------------------------------------ push api
@@ -469,7 +561,7 @@ app.get('/api/push/key', (_req, res) => res.json({ key: vapid.publicKey }));
 app.post('/api/push/subscribe', (req, res) => {
   const { room, cid, sub } = req.body || {};
   const code = clampStr(room, 40).toLowerCase();
-  if (!q.getRoom.get(code)) return res.status(404).json({ error: 'not-found' });
+  if (!store.roomExists(code)) return res.status(404).json({ error: 'not-found' });
   if (!sub?.endpoint || !sub?.keys?.p256dh || !sub?.keys?.auth || sub.endpoint.length > 1024)
     return res.status(400).json({ error: 'bad-subscription' });
   const lang = req.body?.lang === 'en' ? 'en' : 'tr';
@@ -497,7 +589,7 @@ setInterval(() => {
  * as away — otherwise a backgrounded phone would go silent.
  */
 function pushToRoom(code, strKey, args, exceptCid, { key, windowMs = 0 } = {}) {
-  const room = q.getRoom.get(code);
+  const room = store.getRoom(code);
   if (!room) return;
 
   if (key && windowMs) {
@@ -556,19 +648,36 @@ app.post(
   express.raw({ type: ['image/jpeg', 'image/png', 'image/webp', 'image/gif'], limit: '6mb' }),
   (req, res) => {
     const code = clampStr(req.params.code, 40).toLowerCase();
-    if (!q.getRoom.get(code)) return res.status(404).json({ error: 'not-found' });
+    if (!store.roomExists(code)) return res.status(404).json({ error: 'not-found' });
     const ip = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.socket.remoteAddress || '?';
     if (!allowUpload(ip)) return res.status(429).json({ error: 'rate-limited' });
     const ext = EXT_BY_MIME[req.headers['content-type']];
     if (!ext || !Buffer.isBuffer(req.body) || req.body.length === 0)
       return res.status(400).json({ error: 'bad-image' });
     const name = `${crypto.randomUUID()}.${ext}`;
-    fs.writeFileSync(path.join(UPLOAD_DIR, name), req.body);
+    fs.writeFileSync(path.join(UPLOAD_DIR, name), encFile(req.body));
     res.json({ url: '/u/' + name });
   }
 );
 
-app.use('/u', express.static(UPLOAD_DIR, { maxAge: '365d', immutable: true }));
+// Photos are decrypted on the way out rather than served straight off disk.
+const MIME_BY_EXT = { jpg: 'image/jpeg', png: 'image/png', webp: 'image/webp', gif: 'image/gif' };
+
+app.get('/u/:name', (req, res) => {
+  const name = String(req.params.name || '');
+  if (!/^[\w-]+\.(jpg|png|webp|gif)$/.test(name)) return res.status(404).end();
+  let raw;
+  try {
+    raw = fs.readFileSync(path.join(UPLOAD_DIR, name));
+  } catch {
+    return res.status(404).end();
+  }
+  const body = decFile(raw);
+  if (!body) return res.status(500).end();
+  res.set('Content-Type', MIME_BY_EXT[name.split('.').pop()]);
+  res.set('Cache-Control', 'public, max-age=31536000, immutable');
+  res.send(body);
+});
 
 // ---------------------------------------------------------------- websocket
 const server = http.createServer(app);
@@ -599,7 +708,7 @@ function sendTo(ws, msg) {
 }
 
 function broadcastCard(code, cardId, by, verb) {
-  const row = q.getCard.get(cardId, code);
+  const row = store.getCard(cardId, code);
   if (!row) return;
   broadcast(code, { t: 'card:update', card: rowToCard(row), by, verb, now: Date.now() });
 }
@@ -668,7 +777,7 @@ function handleMessage(ws, msg) {
 
   if (msg.t === 'join') {
     const code = clampStr(msg.room, 40).toLowerCase();
-    const room = q.getRoom.get(code);
+    const room = store.getRoom(code);
     if (!room) return sendTo(ws, { t: 'error', code: 'room-not-found' });
 
     // Leaving a previous room on the same socket is not supported; clients reconnect.
@@ -691,11 +800,11 @@ function handleMessage(ws, msg) {
     sendTo(ws, {
       t: 'room',
       room: { code: room.code, name: room.name },
-      cards: q.roomCards.all(code).map(rowToCard),
+      cards: store.roomCards(code).map(rowToCard),
       members: membersOf(code),
       you: ws.meta.id,
-      chat: q.recentMsgs
-        .all(code, 60)
+      chat: store
+        .recentMsgs(code, 60)
         .reverse()
         .map((m) => ({
           id: m.id, cid: m.cid, author: m.author, avatar: m.avatar,
@@ -717,7 +826,7 @@ function handleMessage(ws, msg) {
     case 'room:rename': {
       const name = clampStr(msg.name, 40);
       if (!name) return;
-      q.renameRoom.run(name, now, code);
+      store.renameRoom(name, now, code);
       broadcast(code, { t: 'room:update', room: { code, name }, by });
       return;
     }
@@ -749,30 +858,30 @@ function handleMessage(ws, msg) {
           .map((text) => ({ id: crypto.randomUUID(), text, done: false, doneBy: '' }));
       }
       const sort = q.maxSort.get(code).m + 1;
-      q.insertCard.run(id, code, c.type, title, emoji, JSON.stringify(config), JSON.stringify(state), sort, now);
+      store.insertCard(id, code, c.type, title, emoji, JSON.stringify(config), JSON.stringify(state), sort, now);
       broadcastCard(code, id, by, 'card:add');
       pushToRoom(code, 'cardAdd', [ws.meta.name, `${emoji || ''} ${title}`.trim()], ws.meta.cid);
       return;
     }
 
     case 'card:edit': {
-      const row = q.getCard.get(clampStr(msg.id, 40), code);
+      const row = store.getCard(clampStr(msg.id, 40), code);
       if (!row) return;
       const title = clampStr(msg.title ?? row.title, 60) || row.title;
       const emoji = clampStr(msg.emoji ?? row.emoji, 8);
       const config = msg.config !== undefined ? sanitizeConfig(row.type, msg.config) : JSON.parse(row.config);
-      q.updateCardMeta.run(title, emoji, JSON.stringify(config), row.id);
+      store.updateCardMeta(title, emoji, JSON.stringify(config), row.id);
       if (row.type === 'streak' && msg.config?.startAt !== undefined) {
         const state = JSON.parse(row.state);
         state.startAt = toInt(msg.config.startAt, 0, now, state.startAt) || state.startAt;
-        q.updateCardState.run(JSON.stringify(state), row.id);
+        store.updateCardState(JSON.stringify(state), row.id);
       }
       broadcastCard(code, row.id, by, 'card:edit');
       return;
     }
 
     case 'card:delete': {
-      const row = q.getCard.get(clampStr(msg.id, 40), code);
+      const row = store.getCard(clampStr(msg.id, 40), code);
       if (!row) return;
       const cfg = JSON.parse(row.config);
       if (cfg.photo) fs.unlink(path.join(UPLOAD_DIR, path.basename(cfg.photo)), () => {});
@@ -783,12 +892,12 @@ function handleMessage(ws, msg) {
     }
 
     case 'tally': {
-      const row = q.getCard.get(clampStr(msg.id, 40), code);
+      const row = store.getCard(clampStr(msg.id, 40), code);
       if (!row || row.type !== 'tally') return;
       const delta = msg.delta === -1 ? -1 : 1;
       const state = JSON.parse(row.state);
       state.count = Math.max(0, (state.count || 0) + delta);
-      q.updateCardState.run(JSON.stringify(state), row.id);
+      store.updateCardState(JSON.stringify(state), row.id);
       broadcastCard(code, row.id, by, delta > 0 ? 'tally+' : 'tally-');
       if (delta > 0) {
         // one nudge per card per minute, however fast they tap
@@ -801,20 +910,20 @@ function handleMessage(ws, msg) {
     }
 
     case 'streak:reset': {
-      const row = q.getCard.get(clampStr(msg.id, 40), code);
+      const row = store.getCard(clampStr(msg.id, 40), code);
       if (!row || row.type !== 'streak') return;
       const state = JSON.parse(row.state);
       const days = Math.floor((now - (state.startAt || now)) / 86400000);
       state.best = Math.max(state.best || 0, days);
       state.startAt = now;
-      q.updateCardState.run(JSON.stringify(state), row.id);
+      store.updateCardState(JSON.stringify(state), row.id);
       broadcastCard(code, row.id, by, 'streak:reset');
       pushToRoom(code, 'streakReset', [ws.meta.name, row.title], ws.meta.cid);
       return;
     }
 
     case 'timer': {
-      const row = q.getCard.get(clampStr(msg.id, 40), code);
+      const row = store.getCard(clampStr(msg.id, 40), code);
       if (!row || row.type !== 'timer') return;
       const state = JSON.parse(row.state);
       if (msg.op === 'start' && !state.running) {
@@ -831,7 +940,7 @@ function handleMessage(ws, msg) {
       } else {
         return;
       }
-      q.updateCardState.run(JSON.stringify(state), row.id);
+      store.updateCardState(JSON.stringify(state), row.id);
       broadcastCard(code, row.id, by, `timer:${msg.op}`);
       if (msg.op === 'start') pushToRoom(code, 'timerStart', [ws.meta.name, row.title], ws.meta.cid);
       if (msg.op === 'pause') pushToRoom(code, 'timerPause', [ws.meta.name, row.title], ws.meta.cid);
@@ -839,7 +948,7 @@ function handleMessage(ws, msg) {
     }
 
     case 'money': {
-      const row = q.getCard.get(clampStr(msg.id, 40), code);
+      const row = store.getCard(clampStr(msg.id, 40), code);
       if (!row || row.type !== 'money') return;
       const amount = toInt(msg.amount, -100000000, 100000000, 0);
       if (!amount) return;
@@ -847,7 +956,7 @@ function handleMessage(ws, msg) {
       const before = state.total || 0;
       state.total = Math.max(0, before + amount);
       state.log = [{ a: amount, by: ws.meta.name, at: now }, ...(state.log || [])].slice(0, 20);
-      q.updateCardState.run(JSON.stringify(state), row.id);
+      store.updateCardState(JSON.stringify(state), row.id);
       broadcastCard(code, row.id, by, amount > 0 ? 'money+' : 'money-');
 
       const cfg = JSON.parse(row.config);
@@ -866,7 +975,7 @@ function handleMessage(ws, msg) {
     }
 
     case 'checkin': {
-      const row = q.getCard.get(clampStr(msg.id, 40), code);
+      const row = store.getCard(clampStr(msg.id, 40), code);
       if (!row || row.type !== 'checkin') return;
       const day = validDay(msg.day);
       if (!day) return;
@@ -915,7 +1024,7 @@ function handleMessage(ws, msg) {
       for (const k of Object.keys(state.days)) if (k < cutoff) delete state.days[k];
 
       state.best = Math.max(state.best || 0, computeStreak(state, mode));
-      q.updateCardState.run(JSON.stringify(state), row.id);
+      store.updateCardState(JSON.stringify(state), row.id);
       broadcastCard(code, row.id, by, `checkin:${msg.op}`);
 
       if (msg.op === 'cover') {
@@ -941,7 +1050,7 @@ function handleMessage(ws, msg) {
     }
 
     case 'list': {
-      const row = q.getCard.get(clampStr(msg.id, 40), code);
+      const row = store.getCard(clampStr(msg.id, 40), code);
       if (!row || row.type !== 'list') return;
       const state = JSON.parse(row.state);
       state.items = Array.isArray(state.items) ? state.items : [];
@@ -967,7 +1076,7 @@ function handleMessage(ws, msg) {
         return;
       }
 
-      q.updateCardState.run(JSON.stringify(state), row.id);
+      store.updateCardState(JSON.stringify(state), row.id);
       broadcastCard(code, row.id, by, `list:${msg.op}`);
 
       const allDone = state.items.length && state.items.every((i) => i.done);
@@ -1004,7 +1113,7 @@ function handleMessage(ws, msg) {
         photo,
         createdAt: now,
       };
-      q.insertMsg.run(m.id, code, m.cid, m.author, m.avatar, m.text, m.photo, m.createdAt);
+      store.insertMsg(m, code);
       for (const old of q.oldMsgs.all(code, code)) {
         if (old.photo) fs.unlink(path.join(UPLOAD_DIR, path.basename(old.photo)), () => {});
         q.delMsg.run(old.id);
@@ -1015,13 +1124,13 @@ function handleMessage(ws, msg) {
     }
 
     case 'note:set': {
-      const row = q.getCard.get(clampStr(msg.id, 40), code);
+      const row = store.getCard(clampStr(msg.id, 40), code);
       if (!row || row.type !== 'note') return;
       const state = JSON.parse(row.state);
       state.text = clampStr(msg.text, 500);
       state.author = ws.meta.name;
       state.updatedAt = now;
-      q.updateCardState.run(JSON.stringify(state), row.id);
+      store.updateCardState(JSON.stringify(state), row.id);
       broadcastCard(code, row.id, by, 'note:set');
       pushToRoom(code, 'note', [ws.meta.name, state.text.slice(0, 90)], ws.meta.cid);
       return;
