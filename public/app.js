@@ -774,15 +774,6 @@
         if (msg.now) clockOffset = msg.now - Date.now();
         renderCard(msg.card, { prev, verb: msg.verb, by: msg.by });
         handleCardToasts(msg);
-        // everyone celebrates when the piggy bank crosses its goal
-        if (msg.verb === 'money+' && msg.card.config.goal) {
-          const before = prev?.state?.total || 0;
-          const after = msg.card.state.total || 0;
-          if (before < msg.card.config.goal && after >= msg.card.config.goal) {
-            confetti();
-            centerCheer(t('moneyReached'));
-          }
-        }
         updateEmptyHint();
         return;
       }
@@ -798,6 +789,17 @@
         seenList = msg.seen || [];
         renderSeen();
         return;
+
+      case 'money:goal': {
+        confetti();
+        centerCheer(msg.goal?.title ? t('goalReachedCheer', { name: msg.goal.title }) : t('moneyReached'));
+        const step = $(`.card[data-id="${msg.id}"] .goal-step[data-i="${msg.index}"]`);
+        if (step) {
+          step.classList.add('just-won');
+          setTimeout(() => step.classList.remove('just-won'), 1400);
+        }
+        return;
+      }
 
       case 'list:done':
         confetti();
@@ -1086,10 +1088,27 @@
   }
 
   // ---- money pot
+  /**
+   * Goals are thresholds on the running total, smallest first. Cards made
+   * before multi-goal existed carry a single flat goal — read them as a
+   * one-step ladder so nothing about them changes.
+   */
+  function goalsOf(card) {
+    const cfg = card.config || {};
+    if (Array.isArray(cfg.goals) && cfg.goals.length) return cfg.goals;
+    if (cfg.goal) return [{ amount: cfg.goal, title: '', photo: cfg.photo }];
+    return [];
+  }
+
   function renderMoneyBody(body, card, opts = {}) {
     const total = card.state.total || 0;
-    const goal = card.config.goal || 0;
     const cur = card.config.cur || '₺';
+    const goals = goalsOf(card);
+    const doneCount = goals.filter((g) => total >= g.amount).length;
+    const allDone = goals.length > 0 && doneCount === goals.length;
+    // what we're saving for right now
+    const active = goals.find((g) => total < g.amount) || goals[goals.length - 1];
+    const goal = active?.amount || 0;
     const pct = goal ? (total / goal) * 100 : 0;
 
     const milestones = goal
@@ -1099,9 +1118,37 @@
              <span class="ms-star">${pct >= m ? '⭐' : '☆'}</span>${lang === 'tr' ? '%' + m : m + '%'}
            </div>`)
            .join('')}</div>
-         <div class="sub-label">${total >= goal
-           ? esc(t('moneyReached'))
-           : esc(t('moneyLeft', { n: fmtNum(goal - total) + cur }))} · ${esc(t('goal', { n: fmtNum(goal) + cur }))}</div>`
+         <div class="sub-label">${allDone
+           ? esc(goals.length > 1 ? t('allGoalsDone') : t('moneyReached'))
+           : `${esc(t('moneyLeft', { n: fmtNum(goal - total) + cur }))} · ${esc(
+               goals.length > 1 && active.title
+                 ? t('nextGoal', { name: active.title, n: fmtNum(goal) + cur })
+                 : t('goal', { n: fmtNum(goal) + cur })
+             )}`}</div>`
+      : '';
+
+    // The ladder only appears once there is more than one rung — single-goal
+    // cards keep exactly the look they had.
+    const strip = goals.length > 1
+      ? `<div class="goal-head">${esc(t('goalsTitle'))} · ${esc(t('goalsDone', { done: doneCount, total: goals.length }))}</div>
+         <div class="goal-strip">
+           ${goals
+             .map((g, i) => {
+               const done = total >= g.amount;
+               const isActive = !done && g === active;
+               const fill = Math.max(0, Math.min(100, (total / g.amount) * 100));
+               return `<div class="goal-step ${done ? 'done' : ''} ${isActive ? 'active' : ''}" data-i="${i}">
+                 <div class="gs-photo">
+                   ${g.photo ? `<img src="${esc(g.photo)}" alt="" loading="lazy">` : '<span class="gs-blank">💰</span>'}
+                   <span class="gs-star">${done ? '⭐' : '☆'}</span>
+                 </div>
+                 <span class="gs-name">${esc(g.title || `${i + 1}. ${t('goalWord')}`)}</span>
+                 <span class="gs-amt">${fmtNum(g.amount)}${esc(cur)}</span>
+                 <span class="gs-bar"><i style="width:${fill}%"></i></span>
+               </div>`;
+             })
+             .join('')}
+         </div>`
       : '';
 
     const log = (card.state.log || []).slice(0, 4)
@@ -1109,11 +1156,13 @@
       .join('');
 
     const race = renderRace(card.state.by, cur);
+    const heroPhoto = goals.length > 1 ? '' : goals[0]?.photo || card.config.photo;
 
     body.innerHTML = `
-      ${card.config.photo ? `<img class="money-photo" src="${esc(card.config.photo)}" alt="">` : ''}
+      ${heroPhoto ? `<img class="money-photo" src="${esc(heroPhoto)}" alt="">` : ''}
       <div class="money-total">${fmtNum(total)}<small>${esc(cur)}</small></div>
       ${milestones}
+      ${strip}
       ${race}
       <div class="money-form">
         <input type="number" inputmode="numeric" class="money-input js-amt" placeholder="${esc(t('amountPh'))}">
@@ -1123,7 +1172,18 @@
       ${log ? `<div class="money-log">${log}</div>` : ''}`;
 
     const photoEl = $('.money-photo', body);
-    if (photoEl) photoEl.onclick = () => openLightbox(card.config.photo);
+    if (photoEl) photoEl.onclick = () => openLightbox(heroPhoto);
+
+    $$('.goal-step', body).forEach((step) => {
+      const g = goals[Number(step.dataset.i)];
+      if (g?.photo) step.onclick = () => openLightbox(g.photo);
+    });
+
+    // keep the rung you're working on in view
+    const activeStep = $('.goal-step.active', body) || $('.goal-step.done:last-of-type', body);
+    if (activeStep) {
+      activeStep.scrollIntoView({ block: 'nearest', inline: 'center' });
+    }
 
     const amtInput = $('.js-amt', body);
     const sendAmount = (sign) => {
@@ -1656,22 +1716,16 @@
       const curNow = existing?.config?.cur || '₺';
       extraFields = `
         <div class="field">
-          <label>${esc(t('fieldMoneyGoal'))}</label>
-          <input id="cf-mgoal" type="number" inputmode="numeric" min="0" placeholder="${esc(t('fieldGoalPh'))}"
-            value="${existing?.config?.goal || ''}">
-        </div>
-        <div class="field">
           <label>${esc(t('fieldCurrency'))}</label>
           <div class="emoji-row">
             ${curs.map((c) => `<button type="button" class="emoji-opt cur-opt ${c === curNow ? 'selected' : ''}" data-c="${c}">${c}</button>`).join('')}
           </div>
         </div>
         <div class="field">
-          <label>${esc(t('fieldMoneyPhoto'))}</label>
-          <button type="button" class="small-btn js-mphoto">📷 ${esc(t('choosePhoto'))}</button>
-          <input type="file" class="js-mfile" accept="image/*" hidden>
-          <img class="js-mpreview money-photo" style="margin-top:10px; ${existing?.config?.photo ? '' : 'display:none'}"
-            src="${esc(existing?.config?.photo || '')}" alt="">
+          <label>${esc(t('fieldMoneyGoal'))}</label>
+          <p class="sub-label" style="text-align:left; margin:-2px 0 10px">${esc(t('multiGoalHint'))}</p>
+          <div class="goal-rows js-goalrows"></div>
+          <button type="button" class="small-btn js-addgoal">➕ ${esc(t('addGoal'))}</button>
         </div>`;
     }
 
@@ -1719,6 +1773,74 @@
         $$('.cur-opt', box).forEach((b) => b.classList.toggle('selected', b === btn));
       };
     });
+    // ---- goal ladder editor (money cards)
+    const goalRows = $('.js-goalrows', box);
+    let goalDraft = [];
+    if (goalRows) {
+      goalDraft = (goalsOf({ config: existing?.config || {} }) || []).map((g) => ({
+        amount: g.amount,
+        title: g.title || '',
+        photo: g.photo || '',
+        file: null,
+      }));
+      if (!goalDraft.length) goalDraft.push({ amount: '', title: '', photo: '', file: null });
+
+      const drawGoals = () => {
+        goalRows.innerHTML = goalDraft
+          .map(
+            (g, i) => `
+            <div class="goal-row" data-i="${i}">
+              <div class="gr-photo js-grphoto">
+                ${g.photo || g.file
+                  ? `<img src="${esc(g.photo)}" alt="">`
+                  : `<span>📷</span>`}
+              </div>
+              <input type="file" class="js-grfile" accept="image/*" hidden>
+              <div class="gr-fields">
+                <input type="text" class="js-grtitle" maxlength="40"
+                  placeholder="${esc(t('goalNamePh'))}" value="${esc(g.title)}" autocomplete="off">
+                <input type="number" inputmode="numeric" min="1" class="js-gramount"
+                  placeholder="${esc(t('goalAmount'))}" value="${g.amount || ''}">
+              </div>
+              ${goalDraft.length > 1
+                ? `<button type="button" class="icon-btn js-grdel" title="${esc(t('removeGoal'))}">✕</button>`
+                : ''}
+            </div>`
+          )
+          .join('');
+
+        $$('.goal-row', goalRows).forEach((row) => {
+          const i = Number(row.dataset.i);
+          const file = $('.js-grfile', row);
+          $('.js-grphoto', row).onclick = () => file.click();
+          file.onchange = () => {
+            const picked = file.files[0];
+            if (!picked) return;
+            goalDraft[i].file = picked;
+            goalDraft[i].photo = URL.createObjectURL(picked);
+            drawGoals();
+          };
+          $('.js-grtitle', row).oninput = (e) => (goalDraft[i].title = e.target.value);
+          $('.js-gramount', row).oninput = (e) => (goalDraft[i].amount = e.target.value);
+          const del = $('.js-grdel', row);
+          if (del) {
+            del.onclick = () => {
+              goalDraft.splice(i, 1);
+              drawGoals();
+            };
+          }
+        });
+      };
+
+      drawGoals();
+      $('.js-addgoal', box).onclick = (e) => {
+        if (goalDraft.length >= 6) return;
+        goalDraft.push({ amount: '', title: '', photo: '', file: null });
+        drawGoals();
+        if (goalDraft.length >= 6) e.currentTarget.disabled = true;
+      };
+    }
+
     const mPhotoBtn = $('.js-mphoto', box);
     if (mPhotoBtn) {
       const fileInput = $('.js-mfile', box);
@@ -1760,22 +1882,39 @@
         config.text = $('#cf-note', box)?.value.trim() || '';
       }
       if (type === 'money') {
-        config.goal = Math.max(0, Math.round(Number($('#cf-mgoal', box)?.value))) || 0;
         config.cur = cur;
-        if (existing?.config?.photo) config.photo = existing.config.photo;
-        if (photoFile) {
-          const saveBtn = $('.js-save', box);
+        const filled = goalDraft.filter((g) => Math.round(Number(g.amount)) > 0);
+        const saveBtn = $('.js-save', box);
+        const restore = () => {
+          saveBtn.disabled = false;
+          saveBtn.textContent = isEdit ? t('save') : t('create');
+        };
+
+        if (filled.some((g) => g.file)) {
           saveBtn.disabled = true;
           saveBtn.textContent = '⏳';
-          try {
-            config.photo = await uploadPhoto(photoFile);
-          } catch {
-            toast(t('photoFailed'));
-            saveBtn.disabled = false;
-            saveBtn.textContent = isEdit ? t('save') : t('create');
-            return;
-          }
         }
+        const goals = [];
+        for (const g of filled) {
+          let photo = g.file ? '' : g.photo;
+          if (g.file) {
+            try {
+              photo = await uploadPhoto(g.file);
+            } catch {
+              toast(t('photoFailed'));
+              restore();
+              return;
+            }
+          }
+          goals.push({
+            amount: Math.round(Number(g.amount)),
+            title: g.title.trim(),
+            ...(photo ? { photo } : {}),
+          });
+        }
+        goals.sort((a, b) => a.amount - b.amount);
+        config.goals = goals;
+        restore();
       }
       if (isEdit) {
         send({ t: 'card:edit', id: existing.id, title, emoji, config });

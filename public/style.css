@@ -1426,6 +1426,181 @@ textarea {
 .milestone.reached { opacity: 1; color: var(--peach); }
 .milestone.reached .ms-star { filter: none; text-shadow: 0 0 12px rgba(255, 215, 168, 0.7); }
 
+/* goal ladder */
+
+.goal-head {
+  width: 100%;
+  font-size: var(--t-caption);
+  font-weight: 700;
+  color: var(--ink-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.goal-strip {
+  display: flex;
+  gap: 9px;
+  width: 100%;
+  overflow-x: auto;
+  padding-bottom: 3px;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-x: contain;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.18) transparent;
+  scroll-snap-type: x proximity;
+}
+
+.goal-step {
+  flex: 0 0 108px;
+  scroll-snap-align: center;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 7px;
+  border-radius: var(--r-sm);
+  background: rgba(255, 255, 255, 0.045);
+  border: 1px solid var(--hairline);
+  box-shadow: var(--specular-soft);
+  cursor: pointer;
+  opacity: 0.62;
+  transition: opacity 0.25s var(--ease), border-color 0.25s var(--ease),
+    transform 0.2s var(--spring-soft), box-shadow 0.25s var(--ease);
+}
+
+.goal-step.active {
+  opacity: 1;
+  border-color: color-mix(in srgb, var(--accent) 55%, transparent);
+  box-shadow: var(--specular-soft), 0 0 18px -4px color-mix(in srgb, var(--accent) 55%, transparent);
+}
+
+.goal-step.done {
+  opacity: 1;
+  border-color: rgba(255, 215, 168, 0.5);
+  background: rgba(255, 215, 168, 0.09);
+}
+
+.goal-step.just-won { animation: goal-won 1.3s var(--spring); }
+
+@keyframes goal-won {
+  0% { transform: scale(1); }
+  25% { transform: scale(1.14) rotate(-2deg); }
+  55% { transform: scale(1.04) rotate(1deg); }
+  100% { transform: scale(1); }
+}
+
+.gs-photo {
+  position: relative;
+  width: 100%;
+  height: 62px;
+  border-radius: var(--r-xs);
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.06);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.gs-photo img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.goal-step:not(.done):not(.active) .gs-photo img { filter: grayscale(0.55) brightness(0.8); }
+
+.gs-blank { font-size: 1.5rem; opacity: 0.4; }
+
+.gs-star {
+  position: absolute;
+  top: 3px;
+  right: 4px;
+  font-size: 0.95rem;
+  filter: drop-shadow(0 1px 3px rgba(0, 0, 0, 0.6));
+}
+
+.goal-step.done .gs-star { text-shadow: 0 0 12px rgba(255, 215, 168, 0.9); }
+
+.gs-name {
+  font-size: var(--t-caption);
+  font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gs-amt {
+  font-size: var(--t-caption);
+  color: var(--ink-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+.gs-bar {
+  display: block;
+  height: 4px;
+  border-radius: var(--r-pill);
+  background: rgba(255, 255, 255, 0.09);
+  overflow: hidden;
+}
+
+.gs-bar i {
+  display: block;
+  height: 100%;
+  border-radius: var(--r-pill);
+  background: linear-gradient(90deg, var(--amber), var(--pink));
+  transition: width 0.55s var(--spring-soft);
+}
+
+.goal-step.done .gs-bar i { background: var(--peach); }
+
+/* goal ladder editor */
+
+.goal-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  margin-bottom: 11px;
+}
+
+.goal-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 9px;
+  border-radius: var(--r-sm);
+  background: rgba(255, 255, 255, 0.045);
+  border: 0.5px solid var(--hairline);
+}
+
+.gr-photo {
+  flex: 0 0 auto;
+  width: 52px;
+  height: 52px;
+  border-radius: var(--r-xs);
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px dashed var(--hairline-strong);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.2rem;
+  overflow: hidden;
+  cursor: pointer;
+  transition: border-color 0.18s var(--ease);
+}
+
+.gr-photo img { width: 100%; height: 100%; object-fit: cover; }
+.gr-photo:active { border-color: var(--amber); }
+
+.gr-fields {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.gr-fields input { padding: 9px 12px; }
+
 /* contribution race */
 
 .race {

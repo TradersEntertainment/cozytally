@@ -167,6 +167,8 @@ const PUSH_STR = {
     moneyOut: (n, c, amt, total, cur) =>
       `${n} kumbaradan −${nf('tr', amt)}${cur} çıkardı 🍃 · ${c}: ${nf('tr', total)}${cur}`,
     moneyGoal: (c, total, cur) => `Hedefe ulaştınız! ${c} · ${nf('tr', total)}${cur} 🎉💰`,
+    moneyGoalNamed: (g, c, amt, cur) =>
+      `“${g}” hedefine ulaştınız! ⭐ ${c} · ${nf('tr', amt)}${cur} 🎉`,
     cardAdd: (n, c) => `${n} yeni kart ekledi: ${c}`,
     cardDelete: (n, c) => `${n} bir kartı sildi: ${c} 🗑️`,
     tally: (n, c, v) => `${n}: ${c} → ${v} ✨`,
@@ -191,6 +193,8 @@ const PUSH_STR = {
     moneyOut: (n, c, amt, total, cur) =>
       `${n} took −${nf('en', amt)}${cur} out 🍃 · ${c}: ${nf('en', total)}${cur}`,
     moneyGoal: (c, total, cur) => `Goal reached! ${c} · ${nf('en', total)}${cur} 🎉💰`,
+    moneyGoalNamed: (g, c, amt, cur) =>
+      `“${g}” reached! ⭐ ${c} · ${nf('en', amt)}${cur} 🎉`,
     cardAdd: (n, c) => `${n} added a card: ${c}`,
     cardDelete: (n, c) => `${n} deleted a card: ${c} 🗑️`,
     tally: (n, c, v) => `${n}: ${c} → ${v} ✨`,
@@ -426,6 +430,7 @@ function newRoomCode() {
 
 const CARD_TYPES = new Set(['tally', 'streak', 'timer', 'countdown', 'note', 'money', 'list', 'checkin']);
 const MAX_LIST_ITEMS = 60;
+const MAX_GOALS = 6;
 const KEEP_DAYS = 90;
 const COVER_TOKENS_PER_MONTH = 2;
 
@@ -479,10 +484,34 @@ function sanitizeConfig(type, raw) {
   if (type === 'countdown') out.targetAt = toInt(src.targetAt, 0, 4102444800000, 0);
   if (type === 'checkin') out.mode = src.mode === 'any' ? 'any' : 'all';
   if (type === 'money') {
-    out.goal = toInt(src.goal, 0, 1000000000, 0);
     out.cur = clampStr(src.cur, 4) || '₺';
-    if (typeof src.photo === 'string' && /^\/u\/[\w-]+\.(jpg|png|webp|gif)$/.test(src.photo))
-      out.photo = src.photo;
+    const photoOf = (v) =>
+      typeof v === 'string' && /^\/u\/[\w-]+\.(jpg|png|webp|gif)$/.test(v) ? v : undefined;
+
+    if (Array.isArray(src.goals)) {
+      const seen = new Set();
+      out.goals = src.goals
+        .map((g) => ({
+          amount: toInt(g?.amount, 0, 1000000000, 0),
+          title: clampStr(g?.title, 40),
+          photo: photoOf(g?.photo),
+        }))
+        .filter((g) => {
+          if (g.amount <= 0 || seen.has(g.amount)) return false;
+          seen.add(g.amount);
+          return true;
+        })
+        .sort((a, b) => a.amount - b.amount)
+        .slice(0, MAX_GOALS);
+      // keep the flat fields in step, so anything still reading them stays right
+      out.goal = out.goals.length ? out.goals[out.goals.length - 1].amount : 0;
+      const firstPhoto = out.goals.find((g) => g.photo)?.photo;
+      if (firstPhoto) out.photo = firstPhoto;
+    } else {
+      out.goal = toInt(src.goal, 0, 1000000000, 0);
+      const photo = photoOf(src.photo);
+      if (photo) out.photo = photo;
+    }
   }
   return out;
 }
@@ -958,7 +987,11 @@ function handleMessage(ws, msg) {
       const row = store.getCard(clampStr(msg.id, 40), code);
       if (!row) return;
       const cfg = JSON.parse(row.config);
-      if (cfg.photo) fs.unlink(path.join(UPLOAD_DIR, path.basename(cfg.photo)), () => {});
+      // drop every picture the card owned, not just the legacy single one
+      const orphans = new Set(
+        [cfg.photo, ...(Array.isArray(cfg.goals) ? cfg.goals.map((g) => g?.photo) : [])].filter(Boolean)
+      );
+      for (const p of orphans) fs.unlink(path.join(UPLOAD_DIR, path.basename(p)), () => {});
       q.deleteCard.run(row.id);
       broadcast(code, { t: 'card:delete', id: row.id, title: row.title, by });
       pushToRoom(code, 'cardDelete', [ws.meta.name, row.title], ws.meta.cid);
@@ -1057,10 +1090,30 @@ function handleMessage(ws, msg) {
         [ws.meta.name, row.title, Math.abs(amount), state.total, cur],
         ws.meta.cid
       );
-      // crossing the finish line deserves its own nudge
-      if (cfg.goal && before < cfg.goal && state.total >= cfg.goal) {
-        pushToRoom(code, 'moneyGoal', [row.title, state.total, cur], ws.meta.cid);
-      }
+      // every milestone crossed by this entry gets its own celebration
+      const goals = Array.isArray(cfg.goals) && cfg.goals.length
+        ? cfg.goals
+        : cfg.goal
+          ? [{ amount: cfg.goal, title: '', photo: cfg.photo }]
+          : [];
+      goals.forEach((g, i) => {
+        if (before >= g.amount || state.total < g.amount) return;
+        broadcast(code, {
+          t: 'money:goal',
+          id: row.id,
+          card: row.title,
+          goal: g,
+          index: i,
+          of: goals.length,
+          last: i === goals.length - 1,
+        });
+        pushToRoom(
+          code,
+          g.title ? 'moneyGoalNamed' : 'moneyGoal',
+          g.title ? [g.title, row.title, g.amount, cur] : [row.title, state.total, cur],
+          ws.meta.cid
+        );
+      });
       return;
     }
 
