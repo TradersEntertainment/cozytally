@@ -700,6 +700,7 @@
   // relying on the in-app toast nobody is there to see.
   document.addEventListener('visibilitychange', () => {
     send({ t: 'vis', hidden: document.hidden });
+    if (!document.hidden) markSeen();
   });
 
   function handleServer(msg) {
@@ -719,6 +720,8 @@
         room = msg.room;
         cards = new Map(msg.cards.map((c) => [c.id, c]));
         chatMsgs = msg.chat || [];
+        seenList = msg.seen || [];
+        lastSeenSent = 0;
         rememberRoom(room.code, room.name);
         renderRoomHeader();
         renderMembers(msg.members);
@@ -791,6 +794,11 @@
         updateEmptyHint();
         return;
 
+      case 'seen':
+        seenList = msg.seen || [];
+        renderSeen();
+        return;
+
       case 'list:done':
         confetti();
         centerCheer(t('toastListAllDone', { card: msg.title }));
@@ -817,6 +825,8 @@
   let chatMsgs = [];
   let chatOpen = false;
   let chatUnread = 0;
+  let seenList = [];
+  let lastSeenSent = 0;
 
   function handleCardToasts(msg) {
     const { by, verb, card } = msg;
@@ -837,6 +847,7 @@
       'streak:reset': 'toastStreakReset',
       'card:add': 'toastCardAdd',
       'note:set': 'toastNote',
+      'note:comment': 'toastNoteComment',
       'list:add': 'toastListAdd',
       'list:toggle': 'toastListDone',
       'checkin:tick': 'toastCheckin',
@@ -1215,12 +1226,62 @@
   // ---- sticky note
   function renderNoteBody(body, card) {
     const text = card.state.text || '';
+    const comments = card.state.comments || [];
+    const me = myKey();
+
     body.innerHTML = `
       <div class="note-paper">
-        ${text ? esc(text) : `<span class="note-empty">${esc(t('noteEmpty'))}</span>`}
+        <div class="note-scroll">${text
+          ? esc(text)
+          : `<span class="note-empty">${esc(t('noteEmpty'))}</span>`}</div>
         ${text && card.state.author ? `<span class="note-author">— ${esc(card.state.author)}</span>` : ''}
-      </div>`;
-    $('.note-paper', body).onclick = () => openNoteEditor(card);
+      </div>
+      ${comments.length
+        ? `<div class="note-comments">
+            ${comments
+              .map(
+                (c) => `<div class="ncom" data-id="${esc(c.id)}">
+                  <span class="ncom-av">${esc(c.avatar || '🐻')}</span>
+                  <div class="ncom-body">
+                    <b>${esc(c.by)}</b>
+                    <span>${esc(c.text)}</span>
+                  </div>
+                  ${c.key === me ? '<button class="ncom-del icon-btn">✕</button>' : ''}
+                </div>`
+              )
+              .join('')}
+          </div>`
+        : ''}
+      <form class="ncom-add">
+        <input type="text" maxlength="300" class="js-ncom" placeholder="${esc(t('commentPh'))}" autocomplete="off">
+        <button type="submit" class="small-btn accent">💬</button>
+      </form>`;
+
+    // tapping the paper edits the note, but not while scrolling through it
+    const paper = $('.note-paper', body);
+    let downY = null;
+    paper.addEventListener('pointerdown', (e) => (downY = e.clientY));
+    paper.addEventListener('pointerup', (e) => {
+      if (downY !== null && Math.abs(e.clientY - downY) < 8) openNoteEditor(card);
+      downY = null;
+    });
+
+    $$('.ncom-del', body).forEach((btn) => {
+      btn.onclick = () =>
+        send({ t: 'note:comment', id: card.id, op: 'remove', commentId: btn.closest('.ncom').dataset.id });
+    });
+
+    $('.ncom-add', body).addEventListener('submit', (e) => {
+      e.preventDefault();
+      const input = $('.js-ncom', body);
+      const value = input.value.trim();
+      if (!value) return;
+      send({ t: 'note:comment', id: card.id, text: value });
+      input.value = '';
+    });
+
+    const list = $('.note-comments', body);
+    if (list) list.scrollTop = list.scrollHeight;
   }
 
   function openNoteEditor(card) {
@@ -1773,16 +1834,38 @@
   function chatMsgEl(m) {
     const el = document.createElement('div');
     el.className = 'msg' + (m.cid === myCid ? ' mine' : '');
+    el.dataset.at = m.createdAt;
     const time = new Date(m.createdAt).toLocaleTimeString(lang === 'tr' ? 'tr-TR' : 'en-US', {
       hour: '2-digit',
       minute: '2-digit',
     });
     el.innerHTML = `
       <div class="msg-meta">${esc(m.avatar || '')} ${esc(m.author)} · ${time}</div>
-      <div class="msg-bubble">${esc(m.text)}${m.photo ? `<img class="msg-photo" src="${esc(m.photo)}" alt="" loading="lazy">` : ''}</div>`;
+      <div class="msg-bubble">${esc(m.text)}${m.photo ? `<img class="msg-photo" src="${esc(m.photo)}" alt="" loading="lazy">` : ''}</div>
+      <div class="msg-seen"></div>`;
     const img = $('.msg-photo', el);
     if (img) img.onclick = () => openLightbox(m.photo);
     return el;
+  }
+
+  /** Read receipts sit under the newest message each person has actually seen. */
+  function renderSeen() {
+    const mine = $$('#chat-list .msg.mine');
+    $$('#chat-list .msg-seen').forEach((el) => (el.textContent = ''));
+    if (!mine.length) return;
+
+    for (const watcher of seenList) {
+      if (watcher.person === myKey()) continue;
+      // the last message of mine they have seen
+      let target = null;
+      for (const el of mine) {
+        if (Number(el.dataset.at) <= watcher.at) target = el;
+      }
+      if (!target) continue;
+      const slot = $('.msg-seen', target);
+      slot.textContent = `${slot.textContent} ${watcher.avatar}`.trim();
+      slot.title = t('seenBy', { name: watcher.name });
+    }
   }
 
   function renderChat() {
@@ -1794,6 +1877,8 @@
     }
     for (const m of chatMsgs) list.appendChild(chatMsgEl(m));
     list.scrollTop = list.scrollHeight;
+    renderSeen();
+    markSeen();
   }
 
   function appendChatMsg(m) {
@@ -1802,6 +1887,17 @@
     const nearBottom = list.scrollHeight - list.scrollTop - list.clientHeight < 140;
     list.appendChild(chatMsgEl(m));
     if (nearBottom || m.cid === myCid) list.scrollTop = list.scrollHeight;
+    renderSeen();
+    markSeen();
+  }
+
+  /** Only claim to have seen things while the chat is actually open and on screen. */
+  function markSeen() {
+    if (!chatOpen || document.hidden || !chatMsgs.length) return;
+    const newest = chatMsgs[chatMsgs.length - 1].createdAt;
+    if (newest <= lastSeenSent) return;
+    lastSeenSent = newest;
+    send({ t: 'chat:seen', at: newest });
   }
 
   function setChatOpen(open) {
@@ -1814,6 +1910,7 @@
       const list = $('#chat-list');
       list.scrollTop = list.scrollHeight;
       $('#chat-input').focus();
+      markSeen();
     }
   }
 

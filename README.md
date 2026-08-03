@@ -11,7 +11,7 @@ ikiniz de aynı panoyu **canlı** görürsünüz. Panoya istediğiniz kadar kart
 | 🔥 **Gün Sayacı** | "Kaç gündür?" — seriyi takip eder, en iyi seriyi saklar |
 | ⏳ **Ortak Kronometre** | Birlikte süre sayarsınız; başlat/durdur herkeste senkron |
 | 🎈 **Geri Sayım** | Özel bir güne kalan süreyi sayar, vakti gelince konfeti 🎉 |
-| 💌 **Not** | Birbirinize yapışkan notlar bırakırsınız — kim yazdıysa imzası düşer |
+| 💌 **Not** | Birbirinize yapışkan notlar bırakırsınız — kim yazdıysa imzası düşer. Uzun notlar kâğıdın içinde kaydırılır, altına yorum yazılabilir |
 | 💰 **Kumbara** | Birlikte para biriktirin: hedef tutar, %25/50/75/100 seviye yıldızları, hedef fotoğrafı, kim ne kadar koydu gösteren katkı yarışı, +/− işlem geçmişi ve para atınca 🪙 yağmuru |
 | 📝 **Liste** | Ortak yapılacaklar — herkes madde ekler ve işaretler, hepsi bitince konfeti |
 | 🤝 **Beraber** | Ortak seri: herkesin kendi günlük tiki var ama seri odanın. “Herkes” ya da “biri yeter” modu, son 7 günün ızgarası ve birbirinize hediye edebildiğiniz **pas hakkı** — biri günü kaçırdıysa pasını harcayıp onun için örtebilirsin, seri bozulmaz |
@@ -24,7 +24,8 @@ o zaman odalar sadece o cihazda durur.
 
 Ayrıca her odada:
 
-- 💬 **Kalıcı sohbet** — mesajlar veritabanında saklanır, sonra girince de durur; 📷 fotoğraf da atabilirsiniz
+- 💬 **Kalıcı sohbet** — mesajlar veritabanında saklanır, sonra girince de durur; 📷 fotoğraf da atabilir,
+  kimin gördüğünü mesajın altındaki avatardan anlayabilirsiniz
 - 🔔 **Push bildirimleri** — odadaki 🔔 düğmesiyle açılır. Kart eklenince/silinince, çetele
   artınca, kumbaraya para girince, listeye madde eklenince, kronometre başlayınca, not
   bırakılınca, mesaj gelince ve kalp gönderilince haber verir. Uygulamaya bakan kişiye

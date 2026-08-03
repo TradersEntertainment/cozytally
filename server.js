@@ -56,6 +56,14 @@ db.exec(`
     created_at INTEGER NOT NULL
   );
   CREATE INDEX IF NOT EXISTS idx_subs_room ON push_subs(room_code);
+  CREATE TABLE IF NOT EXISTS chat_seen (
+    room_code TEXT NOT NULL,
+    person    TEXT NOT NULL,
+    name      TEXT NOT NULL,
+    avatar    TEXT NOT NULL DEFAULT '🐻',
+    seen_at   INTEGER NOT NULL,
+    PRIMARY KEY (room_code, person)
+  );
   CREATE TABLE IF NOT EXISTS schema_meta (k TEXT PRIMARY KEY, v TEXT);
   CREATE TABLE IF NOT EXISTS users (
     id         TEXT PRIMARY KEY,
@@ -164,6 +172,7 @@ const PUSH_STR = {
     tally: (n, c, v) => `${n}: ${c} → ${v} ✨`,
     money: (n, c, v) => `${n} 💰 ${v} · ${c}`,
     note: (n, t) => `${n} 💌 ${t}`,
+    noteComment: (n, c, t) => `${n} “${c}” notuna yorum yaptı 💬 ${t}`,
     chat: (n, t) => `${n}: ${t}`,
     cheer: (n) => `${n} 💖✨`,
     timerStart: (n, c) => `${n} başlattı: ${c} ⏳`,
@@ -187,6 +196,7 @@ const PUSH_STR = {
     tally: (n, c, v) => `${n}: ${c} → ${v} ✨`,
     money: (n, c, v) => `${n} 💰 ${v} · ${c}`,
     note: (n, t) => `${n} 💌 ${t}`,
+    noteComment: (n, c, t) => `${n} commented on “${c}” 💬 ${t}`,
     chat: (n, t) => `${n}: ${t}`,
     cheer: (n) => `${n} 💖✨`,
     timerStart: (n, c) => `${n} started: ${c} ⏳`,
@@ -235,6 +245,12 @@ const q = {
     'INSERT INTO messages (id, room_code, cid, author, avatar, text, photo, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
   ),
   recentMsgs: db.prepare('SELECT * FROM messages WHERE room_code = ? ORDER BY created_at DESC LIMIT ?'),
+  setSeen: db.prepare(
+    `INSERT INTO chat_seen (room_code, person, name, avatar, seen_at) VALUES (?, ?, ?, ?, ?)
+     ON CONFLICT(room_code, person) DO UPDATE SET name = excluded.name, avatar = excluded.avatar,
+       seen_at = MAX(seen_at, excluded.seen_at)`
+  ),
+  seenForRoom: db.prepare('SELECT person, name, avatar, seen_at FROM chat_seen WHERE room_code = ?'),
   oldMsgs: db.prepare(
     'SELECT id, photo FROM messages WHERE room_code = ? AND id NOT IN (SELECT id FROM messages WHERE room_code = ? ORDER BY created_at DESC LIMIT 500)'
   ),
@@ -329,6 +345,14 @@ const store = {
   insertMsg: (m, code) =>
     q.insertMsg.run(m.id, code, m.cid, enc(m.author), m.avatar, enc(m.text), m.photo, m.createdAt),
   recentMsgs: (code, n) => q.recentMsgs.all(code, n).map(readMsgRow),
+  setSeen: (code, person, name, avatar, at) => q.setSeen.run(code, person, enc(name), avatar, at),
+  seenForRoom: (code) =>
+    q.seenForRoom.all(code).map((r) => ({
+      person: r.person,
+      name: dec(r.name, '???'),
+      avatar: r.avatar,
+      at: r.seen_at,
+    })),
 
   userRooms: (userId) => q.userRooms.all(userId).map((r) => ({ ...r, name: dec(r.name, '???') })),
 };
@@ -467,7 +491,7 @@ function defaultState(type, now) {
   if (type === 'tally') return { count: 0 };
   if (type === 'streak') return { startAt: now, best: 0 };
   if (type === 'timer') return { running: false, startedAt: 0, accumulated: 0 };
-  if (type === 'note') return { text: '', author: '', updatedAt: 0 };
+  if (type === 'note') return { text: '', author: '', updatedAt: 0, comments: [] };
   if (type === 'money') return { total: 0, log: [], by: {} };
   if (type === 'list') return { items: [] };
   if (type === 'checkin')
@@ -852,6 +876,7 @@ function handleMessage(ws, msg) {
       cards: store.roomCards(code).map(rowToCard),
       members: membersOf(code),
       you: ws.meta.id,
+      seen: store.seenForRoom(code),
       chat: store
         .recentMsgs(code, 60)
         .reverse()
@@ -1185,6 +1210,49 @@ function handleMessage(ws, msg) {
       }
       broadcast(code, { t: 'chat:new', msg: m });
       pushToRoom(code, 'chat', [m.author, `${photo ? '📷 ' : ''}${text.slice(0, 90)}`.trim()], ws.meta.cid);
+      return;
+    }
+
+    case 'chat:seen': {
+      const at = toInt(msg.at, 0, now + 60000, 0);
+      if (!at) return;
+      const person = ws.meta.userId || ws.meta.cid || ws.meta.id;
+      store.setSeen(code, person, ws.meta.name, ws.meta.avatar, at);
+      broadcast(code, { t: 'seen', seen: store.seenForRoom(code) });
+      return;
+    }
+
+    case 'note:comment': {
+      const row = store.getCard(clampStr(msg.id, 40), code);
+      if (!row || row.type !== 'note') return;
+      const state = JSON.parse(row.state);
+      state.comments = Array.isArray(state.comments) ? state.comments : [];
+
+      if (msg.op === 'remove') {
+        const before = state.comments.length;
+        // you can only take back your own words
+        state.comments = state.comments.filter(
+          (c) => !(c.id === msg.commentId && c.key === (ws.meta.userId || ws.meta.cid))
+        );
+        if (state.comments.length === before) return;
+      } else {
+        const text = clampStr(msg.text, 300);
+        if (!text || state.comments.length >= 100) return;
+        state.comments.push({
+          id: crypto.randomUUID(),
+          key: ws.meta.userId || ws.meta.cid || ws.meta.id,
+          by: ws.meta.name,
+          avatar: ws.meta.avatar,
+          text,
+          at: now,
+        });
+      }
+
+      store.updateCardState(JSON.stringify(state), row.id);
+      broadcastCard(code, row.id, by, `note:${msg.op === 'remove' ? 'uncomment' : 'comment'}`);
+      if (msg.op !== 'remove') {
+        pushToRoom(code, 'noteComment', [ws.meta.name, row.title, clampStr(msg.text, 70)], ws.meta.cid);
+      }
       return;
     }
 
