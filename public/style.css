@@ -973,6 +973,48 @@ textarea {
 
 .card-emoji { font-size: 1.3rem; }
 
+/* the only place a drag can start, so nothing inside a card is ambiguous */
+.card-grip {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 34px;
+  min-height: 34px;
+  border-radius: var(--r-pill);
+  font-size: 1.05rem;
+  line-height: 1;
+  color: var(--ink-dim);
+  opacity: 0.4;
+  cursor: grab;
+  touch-action: none; /* the grip owns the gesture; the page must not scroll */
+  transition: opacity 0.16s var(--ease), background 0.18s var(--ease);
+}
+
+.card-grip:active { cursor: grabbing; opacity: 1; }
+.card-grip:focus-visible { opacity: 1; }
+
+.card.dragging {
+  z-index: 70;
+  pointer-events: none;
+  transform: scale(1.03) rotate(-0.6deg);
+  box-shadow: var(--specular), var(--shadow-3), 0 0 40px -10px var(--accent, var(--amber));
+  transition: none;
+  cursor: grabbing;
+}
+
+.card-placeholder {
+  border-radius: var(--r-lg);
+  border: 1.5px dashed var(--hairline-strong);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+body.reordering {
+  cursor: grabbing;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
 .card-title {
   font-weight: 700;
   font-size: var(--t-headline);
@@ -2391,6 +2433,7 @@ textarea {
   .btn:hover { transform: translateY(-2px); filter: brightness(1.06); }
   .chip-btn:hover { background: rgba(255, 255, 255, 0.16); transform: translateY(-1px); }
   .icon-btn:hover { opacity: 1; background: rgba(255, 255, 255, 0.09); }
+  .card-grip:hover { opacity: 1; background: rgba(255, 255, 255, 0.09); }
   .small-btn:hover { background: rgba(255, 255, 255, 0.15); }
   .small-btn.accent:hover { filter: brightness(1.07); }
   .round-btn:hover { filter: brightness(1.1); }

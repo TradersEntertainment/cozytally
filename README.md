@@ -16,6 +16,10 @@ ikiniz de aynı panoyu **canlı** görürsünüz. Panoya istediğiniz kadar kart
 | 📝 **Liste** | Ortak yapılacaklar — herkes madde ekler ve işaretler, hepsi bitince konfeti |
 | 🤝 **Beraber** | Ortak seri: herkesin kendi günlük tiki var ama seri odanın. “Herkes” ya da “biri yeter” modu, son 7 günün ızgarası ve birbirinize hediye edebildiğiniz **pas hakkı** — biri günü kaçırdıysa pasını harcayıp onun için örtebilirsin, seri bozulmaz |
 
+**Sıralama:** Kartlar başlıklarındaki ≡ tutamağından basılı tutulup sürüklenerek istediğin
+sıraya dizilir (klavyede tutamağa odaklanıp ↑/↓ de olur). Yeni eklenen kartlar panonun
+en üstüne gelir.
+
 **Hazır paketler:** Tek tıkla birden fazla kart kuran şablonlar — 🏖️ *Tatil planı* (geri sayım + bütçe kumbarası + hazırlık listesi), 📦 *Ev taşınma*, 💪 *Sağlıklı yaşam*.
 
 **Hesap (isteğe bağlı):** Kullanıcı adı + şifre ile kayıt olursan odaların hesabına bağlanır ve

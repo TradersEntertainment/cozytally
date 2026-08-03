@@ -245,6 +245,9 @@ const q = {
   updateCardState: db.prepare('UPDATE cards SET state = ? WHERE id = ?'),
   deleteCard: db.prepare('DELETE FROM cards WHERE id = ?'),
   maxSort: db.prepare('SELECT COALESCE(MAX(sort), 0) AS m FROM cards WHERE room_code = ?'),
+  minSort: db.prepare('SELECT COALESCE(MIN(sort), 0) AS m FROM cards WHERE room_code = ?'),
+  cardIds: db.prepare('SELECT id FROM cards WHERE room_code = ?'),
+  setCardSort: db.prepare('UPDATE cards SET sort = ? WHERE id = ? AND room_code = ?'),
   insertMsg: db.prepare(
     'INSERT INTO messages (id, room_code, cid, author, avatar, text, photo, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
   ),
@@ -409,6 +412,15 @@ try {
 } catch (err) {
   console.error('money backfill skipped:', err.message);
 }
+
+const reorderCards = db.transaction((code, ids) => {
+  ids.forEach((id, i) => q.setCardSort.run(i, id, code));
+  // cards the client never saw sink below the explicitly ordered ones
+  const placed = new Set(ids);
+  for (const row of q.cardIds.all(code)) {
+    if (!placed.has(row.id)) q.setCardSort.run(ids.length, row.id, code);
+  }
+});
 
 // ---------------------------------------------------------------- room codes
 const CODE_WORDS = [
@@ -960,7 +972,8 @@ function handleMessage(ws, msg) {
           .filter(Boolean)
           .map((text) => ({ id: crypto.randomUUID(), text, done: false, doneBy: '' }));
       }
-      const sort = q.maxSort.get(code).m + 1;
+      // new cards land at the top of the board
+      const sort = q.minSort.get(code).m - 1;
       store.insertCard(id, code, c.type, title, emoji, JSON.stringify(config), JSON.stringify(state), sort, now);
       broadcastCard(code, id, by, 'card:add');
       pushToRoom(code, 'cardAdd', [ws.meta.name, `${emoji || ''} ${title}`.trim()], ws.meta.cid);
@@ -980,6 +993,23 @@ function handleMessage(ws, msg) {
         store.updateCardState(JSON.stringify(state), row.id);
       }
       broadcastCard(code, row.id, by, 'card:edit');
+      return;
+    }
+
+    case 'card:reorder': {
+      if (!Array.isArray(msg.ids)) return;
+      const known = new Set(q.cardIds.all(code).map((r) => r.id));
+      const seen = new Set();
+      const ordered = msg.ids
+        .slice(0, 200)
+        .map((id) => clampStr(id, 40))
+        .filter((id) => known.has(id) && !seen.has(id) && seen.add(id));
+      if (!ordered.length) return;
+
+      // anything the sender didn't know about (a card added mid-drag) keeps
+      // its place after the ones they did order
+      reorderCards(code, ordered);
+      broadcast(code, { t: 'cards:order', ids: ordered, by });
       return;
     }
 

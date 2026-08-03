@@ -178,6 +178,8 @@ window.I18N = {
     cancel: 'Vazgeç',
     back: '← Geri',
 
+    moveCard: 'Taşı (basılı tutup sürükle)',
+    toastReordered: '{name} kartları yeniden sıraladı 🔀',
     edit: 'Düzenle',
     del: 'Sil',
     confirmDeleteTitle: 'Kart silinsin mi? 🗑️',
@@ -420,6 +422,8 @@ window.I18N = {
     cancel: 'Cancel',
     back: '← Back',
 
+    moveCard: 'Move (press and drag)',
+    toastReordered: '{name} reordered the cards 🔀',
     edit: 'Edit',
     del: 'Delete',
     confirmDeleteTitle: 'Delete this card? 🗑️',

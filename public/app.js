@@ -772,7 +772,8 @@
         const prev = cards.get(msg.card.id);
         cards.set(msg.card.id, msg.card);
         if (msg.now) clockOffset = msg.now - Date.now();
-        renderCard(msg.card, { prev, verb: msg.verb, by: msg.by });
+        if (msg.verb === 'card:add' && !prev) renderAllCards();
+        else renderCard(msg.card, { prev, verb: msg.verb, by: msg.by });
         handleCardToasts(msg);
         updateEmptyHint();
         return;
@@ -789,6 +790,18 @@
         seenList = msg.seen || [];
         renderSeen();
         return;
+
+      case 'cards:order': {
+        msg.ids.forEach((id, i) => {
+          const c = cards.get(id);
+          if (c) c.sort = i;
+        });
+        if (msg.by?.id !== myId) {
+          renderAllCards();
+          toast(t('toastReordered', { name: msg.by.name }));
+        }
+        return;
+      }
 
       case 'money:goal': {
         confetti();
@@ -880,6 +893,208 @@
     $('#empty-hint').hidden = cards.size > 0;
   }
 
+  /* ------------------------------------------------------------------
+     Reordering. Dragging starts only from the ≡ grip, so nothing inside a
+     card can ever be mistaken for a drag. Arrow keys on a focused grip do
+     the same thing without a pointer.
+     ------------------------------------------------------------------ */
+  const EDGE = 90;        // how close to the screen edge before we auto-scroll
+  const EDGE_SPEED = 900; // px per second at the very edge, tapering to 0
+
+  function currentOrder() {
+    return $$('#board .card').map((el) => el.dataset.id);
+  }
+
+  function commitOrder() {
+    const ids = currentOrder();
+    ids.forEach((id, i) => {
+      const c = cards.get(id);
+      if (c) c.sort = i;
+    });
+    send({ t: 'card:reorder', ids });
+  }
+
+  /** Slide the cards that shifted, from where they were to where they are. */
+  function flip(before) {
+    for (const [el, prev] of before) {
+      if (!el.isConnected || el.classList.contains('dragging')) continue;
+      const now = el.getBoundingClientRect();
+      const dx = prev.left - now.left;
+      const dy = prev.top - now.top;
+      if (!dx && !dy) continue;
+      el.style.transition = 'none';
+      el.style.transform = `translate(${dx}px, ${dy}px)`;
+      requestAnimationFrame(() => {
+        el.style.transition = 'transform 0.24s cubic-bezier(0.34, 1.3, 0.64, 1)';
+        el.style.transform = '';
+      });
+    }
+  }
+
+  const snapshot = () =>
+    new Map($$('#board .card').map((el) => [el, el.getBoundingClientRect()]));
+
+  function initReorder() {
+    const board = $('#board');
+    let drag = null;
+
+    const cleanup = () => {
+      if (!drag) return;
+      clearTimeout(drag.holdTimer);
+      cancelAnimationFrame(drag.raf);
+      const { card, placeholder } = drag;
+      card.classList.remove('dragging');
+      card.style.cssText = '';
+      if (placeholder) placeholder.replaceWith(card);
+      document.body.classList.remove('reordering');
+      $$('#board .card').forEach((el) => (el.style.transition = ''));
+      drag = null;
+    };
+
+    const lift = (e) => {
+      const rect = drag.card.getBoundingClientRect();
+      drag.lifted = true;
+      drag.grabX = drag.startX - rect.left;
+      drag.grabY = drag.startY - rect.top;
+
+      drag.placeholder = document.createElement('div');
+      drag.placeholder.className = 'card-placeholder';
+      drag.placeholder.style.height = rect.height + 'px';
+      drag.card.after(drag.placeholder);
+
+      Object.assign(drag.card.style, {
+        position: 'fixed',
+        left: rect.left + 'px',
+        top: rect.top + 'px',
+        width: rect.width + 'px',
+        height: rect.height + 'px',
+        margin: '0',
+      });
+      drag.card.classList.add('dragging');
+      document.body.classList.add('reordering');
+      if (navigator.vibrate) navigator.vibrate(15);
+      moveTo(e.clientX, e.clientY);
+    };
+
+    function moveTo(x, y) {
+      drag.card.style.left = x - drag.grabX + 'px';
+      drag.card.style.top = y - drag.grabY + 'px';
+
+      // slot the placeholder next to whichever card the pointer is over
+      const others = $$('#board .card:not(.dragging)');
+      let target = null;
+      for (const el of others) {
+        const r = el.getBoundingClientRect();
+        if (y < r.top + r.height / 2 || (y < r.bottom && x < r.left + r.width / 2)) {
+          target = el;
+          break;
+        }
+      }
+      const before = snapshot();
+      if (target) {
+        if (drag.placeholder.nextElementSibling !== target) target.before(drag.placeholder);
+        else return;
+      } else if (board.lastElementChild !== drag.placeholder) {
+        board.appendChild(drag.placeholder);
+      } else return;
+      flip(before);
+    }
+
+    const autoScroll = (ts) => {
+      if (!drag) return;
+      // measured in px per second, so a 120 Hz phone doesn't fly twice as fast
+      // as a 60 Hz one; a long frame is capped so a hiccup can't jump the page
+      const dt = Math.min(50, ts - (drag.lastTs ?? ts));
+      drag.lastTs = ts;
+      // keep the loop alive while the press is still deciding — bailing out
+      // before the lift would kill it for the whole drag
+      if (drag.lifted) {
+        const { y } = drag;
+        let speed = 0;
+        if (y < EDGE) speed = -EDGE_SPEED * (1 - y / EDGE);
+        else if (y > innerHeight - EDGE) speed = EDGE_SPEED * (1 - (innerHeight - y) / EDGE);
+        if (speed) {
+          // carry the leftover fraction so slow crawls near the edge still move
+          drag.scrollLeft = (drag.scrollLeft || 0) + (speed * dt) / 1000;
+          const whole = Math.trunc(drag.scrollLeft);
+          if (whole) {
+            drag.scrollLeft -= whole;
+            scrollBy(0, whole);
+            moveTo(drag.x, drag.y);
+          }
+        }
+      }
+      drag.raf = requestAnimationFrame(autoScroll);
+    };
+
+    board.addEventListener('pointerdown', (e) => {
+      const grip = e.target.closest('.card-grip');
+      if (!grip || e.button > 0) return;
+      const card = grip.closest('.card');
+      if (!card) return;
+      e.preventDefault();
+      grip.setPointerCapture(e.pointerId);
+
+      drag = {
+        card,
+        grip,
+        pointerId: e.pointerId,
+        startX: e.clientX,
+        startY: e.clientY,
+        x: e.clientX,
+        y: e.clientY,
+        lifted: false,
+        placeholder: null,
+        raf: 0,
+        holdTimer: setTimeout(() => drag && !drag.lifted && lift(e), 150),
+      };
+      drag.raf = requestAnimationFrame(autoScroll);
+    });
+
+    board.addEventListener('pointermove', (e) => {
+      if (!drag || e.pointerId !== drag.pointerId) return;
+      drag.x = e.clientX;
+      drag.y = e.clientY;
+      // a decisive move lifts it without waiting out the hold
+      if (!drag.lifted) {
+        if (Math.hypot(e.clientX - drag.startX, e.clientY - drag.startY) < 6) return;
+        clearTimeout(drag.holdTimer);
+        lift(e);
+        return;
+      }
+      moveTo(e.clientX, e.clientY);
+    });
+
+    const finish = (e) => {
+      if (!drag || (e && e.pointerId !== drag.pointerId)) return;
+      const moved = drag.lifted;
+      cleanup();
+      if (moved) commitOrder();
+    };
+
+    board.addEventListener('pointerup', finish);
+    board.addEventListener('pointercancel', () => {
+      if (drag?.lifted) renderAllCards();
+      cleanup();
+    });
+
+    // keyboard: focus a grip and nudge the card up or down
+    board.addEventListener('keydown', (e) => {
+      const grip = e.target.closest?.('.card-grip');
+      if (!grip || (e.key !== 'ArrowUp' && e.key !== 'ArrowDown')) return;
+      e.preventDefault();
+      const card = grip.closest('.card');
+      const sibling = e.key === 'ArrowUp' ? card.previousElementSibling : card.nextElementSibling;
+      if (!sibling) return;
+      const before = snapshot();
+      if (e.key === 'ArrowUp') sibling.before(card);
+      else sibling.after(card);
+      flip(before);
+      grip.focus();
+      commitOrder();
+    });
+  }
+
   function renderAllCards() {
     const board = $('#board');
     board.innerHTML = '';
@@ -907,6 +1122,7 @@
       <div class="card-head">
         <span class="card-emoji">${esc(card.emoji || TYPE_META[card.type].emoji)}</span>
         <span class="card-title">${esc(card.title)}</span>
+        <button class="card-grip" title="${esc(t('moveCard'))}" aria-label="${esc(t('moveCard'))}">≡</button>
         <button class="icon-btn js-edit" title="${esc(t('edit'))}">✏️</button>
         <button class="icon-btn js-del" title="${esc(t('del'))}">🗑️</button>
       </div>
@@ -1612,7 +1828,10 @@
       const budget = Math.max(0, Math.round(Number($('#pk-budget', box)?.value))) || 0;
       const targetAt = dateEl?.value ? new Date(dateEl.value).getTime() : 0;
 
-      const add = (card) => send({ t: 'card:add', card });
+      // collected first, sent last-to-first: each new card lands on top, so
+      // reversing puts the pack on the board in the order written here
+      const batch = [];
+      const add = (card) => batch.push(card);
 
       if (pack === 'trip' || pack === 'move') {
         if (targetAt) {
@@ -1642,6 +1861,7 @@
         add({ type: 'streak', title: name, emoji: '💪', config: { startAt: Date.now() } });
         add({ type: 'list', title: name, emoji: '📝', config: { items: [] } });
       }
+      batch.reverse().forEach((card) => send({ t: 'card:add', card }));
       closeModal();
     };
 
@@ -2238,6 +2458,7 @@
     connect();
     initChat();
     initPushUI();
+    initReorder();
 
     if (!localStorage.getItem('ct:toured')) showTour(0);
     $('#replay-tour').onclick = () => showTour(0);
