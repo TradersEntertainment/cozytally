@@ -333,6 +333,55 @@ const store = {
   userRooms: (userId) => q.userRooms.all(userId).map((r) => ({ ...r, name: dec(r.name, '???') })),
 };
 
+/* Piggy banks predate per-person totals, so their contributions are empty.
+   Rebuild what we can from the transaction log they already carry. The log
+   keeps the last 20 entries, so anything older stays unattributed rather
+   than being guessed at — it shows up as its own "earlier" slice. */
+const LEGACY_PREFIX = 'name:';
+const backfillMoney = db.transaction(() => {
+  const rows = db.prepare("SELECT id, state FROM cards WHERE type = 'money'").all();
+  let touched = 0;
+  for (const row of rows) {
+    let state;
+    try {
+      state = JSON.parse(dec(row.state, '{}'));
+    } catch {
+      continue;
+    }
+    if (state.by && Object.keys(state.by).length) continue;
+    const log = Array.isArray(state.log) ? state.log : [];
+    if (!log.length) continue;
+
+    const by = {};
+    let attributed = 0;
+    for (const e of log) {
+      const name = typeof e.by === 'string' ? e.by : '';
+      const amount = Number(e.a) || 0;
+      if (!name || !amount) continue;
+      const key = LEGACY_PREFIX + name;
+      by[key] = by[key] || { name, avatar: '👤', net: 0 };
+      by[key].net += amount;
+      attributed += amount;
+    }
+    if (!Object.keys(by).length) continue;
+
+    const older = Math.max(0, (state.total || 0) - attributed);
+    if (older > 0) by['legacy:earlier'] = { name: 'önceki', avatar: '🕰️', net: older };
+
+    state.by = by;
+    db.prepare('UPDATE cards SET state = ? WHERE id = ?').run(enc(JSON.stringify(state)), row.id);
+    touched++;
+  }
+  return touched;
+});
+
+try {
+  const n = backfillMoney();
+  if (n) console.log(`Backfilled contributions on ${n} piggy bank(s) from their history`);
+} catch (err) {
+  console.error('money backfill skipped:', err.message);
+}
+
 // ---------------------------------------------------------------- room codes
 const CODE_WORDS = [
   'luna', 'mocha', 'panda', 'koala', 'boba', 'nova', 'suki', 'momo',
@@ -964,6 +1013,14 @@ function handleMessage(ws, msg) {
       mine.name = ws.meta.name;
       mine.avatar = ws.meta.avatar;
       mine.net = (mine.net || 0) + amount;
+
+      // fold any history that was reconstructed under this person's name
+      // into their real entry, so they don't show up twice
+      const legacy = LEGACY_PREFIX + ws.meta.name;
+      if (legacy !== who && state.by[legacy]) {
+        mine.net += state.by[legacy].net || 0;
+        delete state.by[legacy];
+      }
       store.updateCardState(JSON.stringify(state), row.id);
       broadcastCard(code, row.id, by, amount > 0 ? 'money+' : 'money-');
 

@@ -1132,11 +1132,28 @@
   // Who put in what. Always on the card — the whole point of a shared pot is
   // seeing it fill up together, and hiding that behind a tap kills the feeling.
   const RACER_COLORS = ['#ffb86b', '#8be9c9', '#ff9eb5', '#b7a4ff', '#9fd8ff', '#ffe08a'];
-  const racerColor = (key) => {
-    let h = 0;
-    for (let i = 0; i < key.length; i++) h = (h * 31 + key.charCodeAt(i)) >>> 0;
-    return RACER_COLORS[h % RACER_COLORS.length];
-  };
+  const LEGACY_GREY = '#8d86a8'; // the pre-tracking remainder isn't a person
+
+  /** Stable colour per person, nudged along when two would collide. */
+  function assignColors(racers) {
+    const used = new Set();
+    const out = {};
+    for (const r of racers) {
+      if (r.key === 'legacy:earlier') {
+        out[r.key] = LEGACY_GREY;
+        continue;
+      }
+      let h = 0;
+      for (let i = 0; i < r.key.length; i++) h = (h * 31 + r.key.charCodeAt(i)) >>> 0;
+      let idx = h % RACER_COLORS.length;
+      for (let n = 0; n < RACER_COLORS.length && used.has(idx); n++) {
+        idx = (idx + 1) % RACER_COLORS.length;
+      }
+      used.add(idx);
+      out[r.key] = RACER_COLORS[idx];
+    }
+    return out;
+  }
 
   function renderRace(by, cur) {
     const racers = Object.entries(by || {})
@@ -1146,9 +1163,11 @@
     if (!racers.length) return '';
 
     const sum = racers.reduce((n, r) => n + r.net, 0);
-    const lead = racers[0].net;
+    const people = racers.filter((r) => r.key !== 'legacy:earlier');
+    const lead = people[0]?.net ?? 0;
     // a real tie shouldn't crown just one of them
-    const crowned = racers.filter((r) => r.net === lead).length === 1;
+    const crowned = people.filter((r) => r.net === lead).length === 1;
+    const colors = assignColors(racers);
 
     return `
       <div class="race">
@@ -1157,17 +1176,17 @@
           ${racers
             .map(
               (r) => `<span class="race-seg" title="${esc(r.name)}"
-                style="width:${(r.net / sum) * 100}%; background:${racerColor(r.key)}"></span>`
+                style="width:${(r.net / sum) * 100}%; background:${colors[r.key]}"></span>`
             )
             .join('')}
         </div>
         <div class="race-legend">
           ${racers
             .map(
-              (r, i) => `<div class="racer">
-                <span class="racer-dot" style="background:${racerColor(r.key)}"></span>
+              (r) => `<div class="racer">
+                <span class="racer-dot" style="background:${colors[r.key]}"></span>
                 <span class="racer-av">${esc(r.avatar)}</span>
-                <span class="racer-name">${esc(r.name)}${crowned && i === 0 ? ' 👑' : ''}</span>
+                <span class="racer-name">${esc(r.name)}${crowned && r === people[0] ? ' 👑' : ''}</span>
                 <span class="racer-amt">${fmtNum(r.net)}${esc(cur)}</span>
                 <span class="racer-pct">%${Math.round((r.net / sum) * 100)}</span>
               </div>`
