@@ -819,10 +819,12 @@ function sendTo(ws, msg) {
   if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(msg));
 }
 
-function broadcastCard(code, cardId, by, verb) {
+function broadcastCard(code, cardId, by, verb, ref) {
   const row = store.getCard(cardId, code);
   if (!row) return;
-  broadcast(code, { t: 'card:update', card: rowToCard(row), by, verb, now: Date.now() });
+  // `ref` is echoed straight back from the sender's card:add so they can
+  // recognise the card they just made and finish filling it in
+  broadcast(code, { t: 'card:update', card: rowToCard(row), by, verb, ref, now: Date.now() });
 }
 
 wss.on('connection', (ws) => {
@@ -973,7 +975,7 @@ function handleMessage(ws, msg) {
       // new cards land at the top of the board
       const sort = q.minSort.get(code).m - 1;
       store.insertCard(id, code, c.type, title, emoji, JSON.stringify(config), JSON.stringify(state), sort, now);
-      broadcastCard(code, id, by, 'card:add');
+      broadcastCard(code, id, by, 'card:add', clampStr(msg.ref, 40) || undefined);
       pushToRoom(code, 'cardAdd', [ws.meta.name, `${emoji || ''} ${title}`.trim()], ws.meta.cid);
       return;
     }

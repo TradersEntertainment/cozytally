@@ -86,6 +86,13 @@ Lokalde veriler `./data/` klasörüne yazılır.
 - **İstemci:** Bağımlılıksız vanilla JS — build adımı yok
 - Kronometre ve geri sayımlar sunucu saatine göre senkronlanır
   (istemciler saat farkını `ping/pong` ile düzeltir)
+- **Cam iki türlü:** Yerinde duran yüzeyler (başlık, alt çubuk, kâğıtlar, sohbet)
+  gerçek `backdrop-filter` kullanır; kaydırılan kartlar aynı görüntüyü veren
+  hazır bir malzeme kullanır. Kartlarda canlı bulanıklık varken telefonda pano
+  ~30 FPS'te kayıyordu, malzemeyle 60 FPS'te kayıyor
+- **Fotoğraflar seçilir seçilmez** küçültülüp sunucuya gider (sırayla, tek tek);
+  kaydete basınca kart beklemeden oluşur, geciken fotoğraflar hazır oldukça
+  kartın üstüne oturur
 
 ---
 

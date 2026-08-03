@@ -50,7 +50,10 @@
   // ------------------------------------------------------------ night sky
   function buildSky() {
     const sky = $('#sky');
-    for (let i = 0; i < 70; i++) {
+    // a phone screen doesn't need a desktop's worth of stars, and every one
+    // of them is an element the compositor animates forever
+    const stars = Math.round(Math.min(70, Math.max(28, (innerWidth * innerHeight) / 15000)));
+    for (let i = 0; i < stars; i++) {
       const s = document.createElement('div');
       s.className = 'star';
       s.style.left = Math.random() * 100 + '%';
@@ -89,6 +92,10 @@
       f.style.animationDelay = (Math.random() * 11).toFixed(2) + 's';
       sky.appendChild(f);
     }
+    // the sky keeps twinkling in a backgrounded tab otherwise — pure battery
+    document.addEventListener('visibilitychange', () =>
+      document.body.classList.toggle('away', document.hidden)
+    );
   }
 
   // ------------------------------------------------------------ shared state
@@ -776,6 +783,12 @@
         else renderCard(msg.card, { prev, verb: msg.verb, by: msg.by });
         handleCardToasts(msg);
         updateEmptyHint();
+        // our own card, saved before its photos finished uploading
+        if (msg.ref && photoJobs.has(msg.ref)) {
+          const job = photoJobs.get(msg.ref);
+          photoJobs.delete(msg.ref);
+          attachPhotosLater(msg.card.id, job);
+        }
         return;
       }
 
@@ -900,6 +913,7 @@
      ------------------------------------------------------------------ */
   const EDGE = 90;        // how close to the screen edge before we auto-scroll
   const EDGE_SPEED = 900; // px per second at the very edge, tapering to 0
+  const MAX_GOALS = 6;    // matches the server's cap
 
   function currentOrder() {
     return $$('#board .card').map((el) => el.dataset.id);
@@ -2005,7 +2019,6 @@
 
     // money extras: currency picker + goal photo
     let cur = existing?.config?.cur || '₺';
-    let photoFile = null;
     $$('.cur-opt', box).forEach((btn) => {
       btn.onclick = () => {
         cur = btn.dataset.c;
@@ -2024,15 +2037,62 @@
       }));
       if (!goalDraft.length) goalDraft.push({ amount: '', title: '', photo: '', file: null });
 
+      const thumbOf = (g) =>
+        g.preview || g.photo
+          ? `<img src="${esc(g.preview || g.photo)}" alt="">`
+          : '<span>📷</span>';
+
+      /* Repaint one thumbnail instead of the whole list. A shrink or an
+         upload finishing must not tear down the row someone is typing in. */
+      const paintPhoto = (i) => {
+        const cell = $(`.goal-row[data-i="${i}"] .js-grphoto`, goalRows);
+        if (!cell) return;
+        const g = goalDraft[i];
+        cell.innerHTML = thumbOf(g);
+        cell.classList.toggle('busy', !!g.busy);
+        cell.classList.toggle('failed', !!g.failed);
+      };
+
+      /* Shrink and upload the moment a photo is picked, not at save time.
+         By the time the amounts are typed the file is already on the server,
+         so "Create" has nothing left to wait for. */
+      const startUpload = (i, picked) => {
+        const g = goalDraft[i];
+        if (g.preview) URL.revokeObjectURL(g.preview);
+        // the thumbnail appears now, straight off the picked file — shrinking
+        // first would leave an empty square for a second on a phone
+        Object.assign(g, {
+          preview: URL.createObjectURL(picked),
+          photo: '',
+          busy: true,
+          failed: false,
+        });
+        paintPhoto(i);
+
+        g.upload = (async () => {
+          const blob = await queueProcess(picked);
+          // swap in the small copy so the full-size decode can be released
+          const old = g.preview;
+          g.preview = URL.createObjectURL(blob);
+          paintPhoto(i);
+          if (old) URL.revokeObjectURL(old);
+          const url = await uploadBlob(blob);
+          g.photo = url;
+          return url;
+        })();
+
+        g.upload
+          .catch(() => { g.failed = true; })
+          .finally(() => { g.busy = false; paintPhoto(i); });
+      };
+
       const drawGoals = () => {
         goalRows.innerHTML = goalDraft
           .map(
             (g, i) => `
             <div class="goal-row" data-i="${i}">
-              <div class="gr-photo js-grphoto">
-                ${g.photo || g.file
-                  ? `<img src="${esc(g.photo)}" alt="">`
-                  : `<span>📷</span>`}
+              <div class="gr-photo js-grphoto${g.busy ? ' busy' : ''}${g.failed ? ' failed' : ''}">
+                ${thumbOf(g)}
               </div>
               <input type="file" class="js-grfile" accept="image/*" hidden>
               <div class="gr-fields">
@@ -2054,17 +2114,15 @@
           $('.js-grphoto', row).onclick = () => file.click();
           file.onchange = () => {
             const picked = file.files[0];
-            if (!picked) return;
-            goalDraft[i].file = picked;
-            goalDraft[i].photo = URL.createObjectURL(picked);
-            drawGoals();
+            if (picked) startUpload(i, picked);
           };
           $('.js-grtitle', row).oninput = (e) => (goalDraft[i].title = e.target.value);
           $('.js-gramount', row).oninput = (e) => (goalDraft[i].amount = e.target.value);
           const del = $('.js-grdel', row);
           if (del) {
             del.onclick = () => {
-              goalDraft.splice(i, 1);
+              const [gone] = goalDraft.splice(i, 1);
+              if (gone?.preview) URL.revokeObjectURL(gone.preview);
               drawGoals();
             };
           }
@@ -2073,24 +2131,10 @@
 
       drawGoals();
       $('.js-addgoal', box).onclick = (e) => {
-        if (goalDraft.length >= 6) return;
-        goalDraft.push({ amount: '', title: '', photo: '', file: null });
+        if (goalDraft.length >= MAX_GOALS) return;
+        goalDraft.push({ amount: '', title: '', photo: '', upload: null });
         drawGoals();
-        if (goalDraft.length >= 6) e.currentTarget.disabled = true;
-      };
-    }
-
-    const mPhotoBtn = $('.js-mphoto', box);
-    if (mPhotoBtn) {
-      const fileInput = $('.js-mfile', box);
-      mPhotoBtn.onclick = () => fileInput.click();
-      fileInput.onchange = () => {
-        photoFile = fileInput.files[0] || null;
-        if (photoFile) {
-          const prev = $('.js-mpreview', box);
-          prev.src = URL.createObjectURL(photoFile);
-          prev.style.display = '';
-        }
+        if (goalDraft.length >= MAX_GOALS) e.currentTarget.disabled = true;
       };
     }
 
@@ -2098,10 +2142,11 @@
     if (backBtn) backBtn.onclick = () => openTypePicker();
     $('.js-cancel', box).onclick = closeModal;
 
-    $('.js-save', box).onclick = async () => {
+    $('.js-save', box).onclick = () => {
       const title = $('#cf-title', box).value.trim();
       if (!title) return $('#cf-title', box).focus();
       const config = {};
+      let job = null; // photos still in flight when the card is saved
       if (type === 'tally') config.goal = parseInt($('#cf-goal', box)?.value) || 0;
       if (type === 'streak') {
         const v = $('#cf-start', box)?.value;
@@ -2123,42 +2168,26 @@
       if (type === 'money') {
         config.cur = cur;
         const filled = goalDraft.filter((g) => Math.round(Number(g.amount)) > 0);
-        const saveBtn = $('.js-save', box);
-        const restore = () => {
-          saveBtn.disabled = false;
-          saveBtn.textContent = isEdit ? t('save') : t('create');
-        };
-
-        if (filled.some((g) => g.file)) {
-          saveBtn.disabled = true;
-          saveBtn.textContent = '⏳';
-        }
-        const goals = [];
-        for (const g of filled) {
-          let photo = g.file ? '' : g.photo;
-          if (g.file) {
-            try {
-              photo = await uploadPhoto(g.file);
-            } catch {
-              toast(t('photoFailed'));
-              restore();
-              return;
-            }
-          }
-          goals.push({
-            amount: Math.round(Number(g.amount)),
-            title: g.title.trim(),
-            ...(photo ? { photo } : {}),
-          });
-        }
         // the order you wrote them in is the order they get paid off
-        config.goals = goals;
-        restore();
+        config.goals = filled.map((g) => ({
+          amount: Math.round(Number(g.amount)),
+          title: g.title.trim(),
+          ...(g.photo ? { photo: g.photo } : {}),
+        }));
+
+        // Photos have been uploading since they were picked, but one picked a
+        // second ago may still be in flight. Don't hold the card hostage to
+        // it: put the card on the board now and slot the pictures in as they
+        // land.
+        if (filled.some((g) => g.busy)) job = { drafts: filled };
       }
       if (isEdit) {
         send({ t: 'card:edit', id: existing.id, title, emoji, config });
+        if (job) attachPhotosLater(existing.id, job);
       } else {
-        send({ t: 'card:add', card: { type, title, emoji, config } });
+        const ref = job ? 'r' + Math.random().toString(36).slice(2, 10) : undefined;
+        if (ref) photoJobs.set(ref, job);
+        send({ t: 'card:add', card: { type, title, emoji, config }, ...(ref ? { ref } : {}) });
       }
       closeModal();
     };
@@ -2166,25 +2195,81 @@
     setTimeout(() => $('#cf-title', box)?.focus(), 60);
   }
 
+  /* Cards saved while one of their photos was still uploading, keyed by the
+     ref the server echoes back so a quick second save can't steal the first
+     one's pictures. */
+  const photoJobs = new Map();
+
+  /**
+   * Finish the job the save button refused to wait for: once every photo has
+   * landed, edit the card to point at them. Only the goals are sent, and they
+   * are re-read off the card first, so a name or amount someone changed in
+   * the meantime survives.
+   */
+  async function attachPhotosLater(cardId, job) {
+    if (!job) return;
+    await Promise.allSettled(job.drafts.map((g) => g.upload));
+    if (job.drafts.some((g) => g.failed)) toast(t('photoFailed'));
+
+    const card = cards.get(cardId);
+    if (!card) return;
+    const current = goalsOf(card);
+    const goals = current.map((g, i) => {
+      const photo = job.drafts[i]?.photo;
+      return photo && photo !== g.photo ? { ...g, photo } : g;
+    });
+    if (goals.every((g, i) => g === current[i])) return; // nothing landed
+    send({ t: 'card:edit', id: cardId, config: { ...card.config, goals } });
+  }
+
   // ------------------------------------------------------------ photos
+  /**
+   * Shrink a picked photo to something worth sending. A phone hands over a
+   * 12-megapixel file, so this is the most expensive thing the app ever does.
+   * Decode it once — the decode dwarfs everything else, so never do it twice
+   * to "measure first" — draw it down, encode.
+   *
+   * Deliberately a plain <canvas>: OffscreenCanvas looks like the right tool
+   * and benchmarks fine in isolation, but inside the live app its
+   * convertToBlob() gets starved behind other work and takes seconds where
+   * toBlob() takes a tenth of one.
+   */
+  const MAX_EDGE = 1280;
+
   async function processImage(file) {
     if (file.type === 'image/gif') {
       if (file.size > 6 * 1024 * 1024) throw new Error('too-big');
       return file;
     }
+
     const bmp = await createImageBitmap(file);
-    const scale = Math.min(1, 1280 / Math.max(bmp.width, bmp.height));
-    const canvas = document.createElement('canvas');
-    canvas.width = Math.max(1, Math.round(bmp.width * scale));
-    canvas.height = Math.max(1, Math.round(bmp.height * scale));
-    canvas.getContext('2d').drawImage(bmp, 0, 0, canvas.width, canvas.height);
-    const blob = await new Promise((r) => canvas.toBlob(r, 'image/jpeg', 0.82));
-    if (!blob) throw new Error('encode-failed');
-    return blob;
+    try {
+      const scale = Math.min(1, MAX_EDGE / Math.max(bmp.width, bmp.height));
+      const w = Math.max(1, Math.round(bmp.width * scale));
+      const h = Math.max(1, Math.round(bmp.height * scale));
+
+      const canvas = document.createElement('canvas');
+      canvas.width = w;
+      canvas.height = h;
+      canvas.getContext('2d').drawImage(bmp, 0, 0, w, h);
+      const blob = await new Promise((r) => canvas.toBlob(r, 'image/jpeg', 0.82));
+      if (!blob) throw new Error('encode-failed');
+      return blob;
+    } finally {
+      bmp.close?.();
+    }
   }
 
-  async function uploadPhoto(file) {
-    const blob = await processImage(file);
+  /* Pick four photos in a row and four full-size decodes would fight over the
+     same phone. One at a time, in the background, in pick order. */
+  let photoQueue = Promise.resolve();
+  function queueProcess(file) {
+    const mine = photoQueue.then(() => processImage(file), () => processImage(file));
+    photoQueue = mine.catch(() => {});
+    return mine;
+  }
+
+  async function uploadBlob(blob) {
     if (blob.size > 6 * 1024 * 1024) {
       toast(t('photoTooBig'));
       throw new Error('too-big');
@@ -2197,6 +2282,8 @@
     if (!res.ok) throw new Error('upload-failed');
     return (await res.json()).url;
   }
+
+  const uploadPhoto = async (file) => uploadBlob(await processImage(file));
 
   function openLightbox(url) {
     openModal(`<img class="lightbox-img" src="${esc(url)}" alt="">`);

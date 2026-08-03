@@ -36,6 +36,13 @@
   --mat-thin: linear-gradient(160deg, rgba(255, 255, 255, 0.085), rgba(255, 255, 255, 0.035));
   --mat: linear-gradient(160deg, rgba(255, 255, 255, 0.12), rgba(255, 255, 255, 0.05));
   --mat-thick: linear-gradient(160deg, rgba(46, 38, 82, 0.86), rgba(26, 21, 54, 0.92));
+  /* What the live blur resolves to over this sky — see "glass primitives".
+     Opaque enough that individual stars and the moon don't punch through as
+     hard little dots, which is the one thing the blur was really doing. */
+  --mat-frost:
+    radial-gradient(130% 90% at 15% -12%, rgba(183, 164, 255, 0.15), transparent 62%),
+    linear-gradient(160deg, rgba(255, 255, 255, 0.11), rgba(255, 255, 255, 0.045)),
+    linear-gradient(160deg, rgba(57, 47, 103, 0.93), rgba(35, 28, 73, 0.95));
 
   --hairline: rgba(255, 255, 255, 0.14);
   --hairline-strong: rgba(255, 255, 255, 0.22);
@@ -161,23 +168,46 @@ a:focus-visible {
 
 /* ============================================================
    glass primitives
+
+   Two kinds of glass, and the difference is entirely about cost.
+
+   A live `backdrop-filter` makes the browser re-sample and re-blur
+   whatever sits behind the element — every frame it moves. On a phone
+   that is fine for a handful of pinned surfaces, and ruinous for a
+   scrolling list: with the blur on cards a full board scrolled at ~30fps,
+   without it at 60, and nothing else we tried moved the needle at all.
+
+   So: things that stay put while content slides underneath them (header,
+   dock, sheets, drawer, toasts) keep the real thing, because that is
+   exactly where the effect reads. Things that scroll — cards above all —
+   get `--mat-frost`, a baked material tuned to land where the live blur
+   landed over this night sky. Side by side it is very hard to tell, and
+   it costs nothing to scroll.
    ============================================================ */
 
+/* live glass — only for surfaces that don't scroll */
 .glass,
 .panel,
-.card,
-.chip,
 .modal-box,
 .chat-drawer,
 .dock,
-.toast,
-.type-btn,
-.pack-btn,
-.step {
+.toast {
   position: relative;
   background: var(--mat);
   backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-sat));
   -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-sat));
+  border: 0.5px solid var(--hairline);
+  box-shadow: var(--specular), var(--shadow-2);
+}
+
+/* baked glass — same look, no per-frame blur */
+.card,
+.chip,
+.type-btn,
+.pack-btn,
+.step {
+  position: relative;
+  background: var(--mat-frost);
   border: 0.5px solid var(--hairline);
   box-shadow: var(--specular), var(--shadow-2);
 }
@@ -195,20 +225,15 @@ a:focus-visible {
   background: radial-gradient(120% 80% at 12% -10%, rgba(255, 255, 255, 0.13), transparent 58%);
 }
 
-/* devices without backdrop-filter get an opaque, still-pretty fallback */
+/* devices without backdrop-filter get the same baked material */
 @supports not ((backdrop-filter: blur(2px)) or (-webkit-backdrop-filter: blur(2px))) {
   .glass,
   .panel,
-  .card,
-  .chip,
   .modal-box,
   .chat-drawer,
   .dock,
-  .toast,
-  .type-btn,
-  .pack-btn,
-  .step {
-    background: linear-gradient(160deg, rgba(52, 43, 92, 0.96), rgba(30, 24, 62, 0.97));
+  .toast {
+    background: var(--mat-thick);
   }
 }
 
@@ -222,7 +247,16 @@ a:focus-visible {
   z-index: 0;
   pointer-events: none;
   overflow: hidden;
+  /* the sky can never affect anything else's layout or paint */
+  contain: strict;
 }
+
+/* nobody is looking — stop burning battery on twinkling */
+body.away .star,
+body.away .bulb,
+body.away .firefly,
+body.away .zz,
+body.away .breathe { animation-play-state: paused; }
 
 .star {
   position: absolute;
@@ -234,9 +268,11 @@ a:focus-visible {
   animation: twinkle 3s ease-in-out infinite;
 }
 
+/* opacity only. Scaling a 3px dot looks the same as fading it, but a
+   transform makes the compositor re-raster the star every frame. */
 @keyframes twinkle {
-  0%, 100% { opacity: 0.22; transform: scale(0.8); }
-  50% { opacity: 0.92; transform: scale(1.15); }
+  0%, 100% { opacity: 0.22; }
+  50% { opacity: 0.92; }
 }
 
 .moon {
@@ -279,9 +315,11 @@ a:focus-visible {
   animation: bulb-glow 2.6s ease-in-out infinite;
 }
 
+/* opacity, not `filter: brightness()` — a filter re-paints the bulb every
+   frame, opacity is handed to the compositor and costs nothing */
 @keyframes bulb-glow {
-  0%, 100% { filter: brightness(0.78); }
-  50% { filter: brightness(1.35); }
+  0%, 100% { opacity: 0.62; }
+  50% { opacity: 1; }
 }
 
 .firefly {
@@ -879,8 +917,6 @@ textarea {
   justify-content: center;
   font-size: 1.05rem;
   margin-left: -9px;
-  backdrop-filter: blur(14px);
-  -webkit-backdrop-filter: blur(14px);
   animation: member-pop 0.34s var(--spring);
 }
 
@@ -1624,6 +1660,7 @@ body.reordering {
 }
 
 .gr-photo {
+  position: relative;
   flex: 0 0 auto;
   width: 52px;
   height: 52px;
@@ -1641,6 +1678,28 @@ body.reordering {
 
 .gr-photo img { width: 100%; height: 100%; object-fit: cover; }
 .gr-photo:active { border-color: var(--amber); }
+
+/* the photo travels to the server while you keep filling the form */
+.gr-photo.busy { border-style: solid; border-color: var(--amber); }
+
+.gr-photo.busy::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: rgba(20, 16, 44, 0.45);
+  background-image: linear-gradient(
+    100deg, transparent 30%, rgba(255, 255, 255, 0.28) 50%, transparent 70%
+  );
+  background-size: 220% 100%;
+  animation: gr-shimmer 1.1s linear infinite;
+}
+
+@keyframes gr-shimmer {
+  from { background-position: 140% 0; }
+  to { background-position: -60% 0; }
+}
+
+.gr-photo.failed { border-color: var(--pink); border-style: solid; }
 
 .gr-fields {
   flex: 1;
