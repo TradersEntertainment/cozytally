@@ -1305,7 +1305,7 @@
 
   // ---- money pot
   /**
-   * Goals are thresholds on the running total, smallest first. Cards made
+   * Every goal costs its own amount and they are paid off in order. Cards made
    * before multi-goal existed carry a single flat goal — read them as a
    * one-step ladder so nothing about them changes.
    */
@@ -1316,16 +1316,32 @@
     return [];
   }
 
+  /**
+   * Pour the pot into the goals one after another: the first goal takes what it
+   * costs, only the leftover spills into the next. A goal further down the list
+   * stays at 0 until the ones before it are fully paid.
+   */
+  function fillGoals(goals, total) {
+    let left = total;
+    return goals.map((g) => {
+      const got = Math.max(0, Math.min(left, g.amount));
+      left -= got;
+      return { ...g, got, done: g.amount > 0 && got >= g.amount };
+    });
+  }
+
   function renderMoneyBody(body, card, opts = {}) {
     const total = card.state.total || 0;
     const cur = card.config.cur || '₺';
     const goals = goalsOf(card);
-    const doneCount = goals.filter((g) => total >= g.amount).length;
-    const allDone = goals.length > 0 && doneCount === goals.length;
-    // what we're saving for right now
-    const active = goals.find((g) => total < g.amount) || goals[goals.length - 1];
+    const rungs = fillGoals(goals, total);
+    const needAll = goals.reduce((s, g) => s + g.amount, 0);
+    const doneCount = rungs.filter((r) => r.done).length;
+    const allDone = rungs.length > 0 && doneCount === rungs.length;
+    // what we're saving for right now — and how far along that one goal is
+    const active = rungs.find((r) => !r.done) || rungs[rungs.length - 1];
     const goal = active?.amount || 0;
-    const pct = goal ? (total / goal) * 100 : 0;
+    const pct = goal ? ((active?.got || 0) / goal) * 100 : 0;
 
     const milestones = goal
       ? `<div class="goal-bar"><div class="goal-fill" style="width:${Math.min(100, pct)}%"></div></div>
@@ -1336,7 +1352,7 @@
            .join('')}</div>
          <div class="sub-label">${allDone
            ? esc(goals.length > 1 ? t('allGoalsDone') : t('moneyReached'))
-           : `${esc(t('moneyLeft', { n: fmtNum(goal - total) + cur }))} · ${esc(
+           : `${esc(t('moneyLeft', { n: fmtNum(goal - (active?.got || 0)) + cur }))} · ${esc(
                goals.length > 1 && active.title
                  ? t('nextGoal', { name: active.title, n: fmtNum(goal) + cur })
                  : t('goal', { n: fmtNum(goal) + cur })
@@ -1346,20 +1362,23 @@
     // The ladder only appears once there is more than one rung — single-goal
     // cards keep exactly the look they had.
     const strip = goals.length > 1
-      ? `<div class="goal-head">${esc(t('goalsTitle'))} · ${esc(t('goalsDone', { done: doneCount, total: goals.length }))}</div>
+      ? `<div class="goal-head">${esc(t('goalsTitle'))} · ${esc(t('goalsDone', { done: doneCount, total: goals.length }))} · ${esc(
+           t('goalsPot', { have: fmtNum(total) + cur, need: fmtNum(needAll) + cur })
+         )}</div>
          <div class="goal-strip">
-           ${goals
-             .map((g, i) => {
-               const done = total >= g.amount;
-               const isActive = !done && g === active;
-               const fill = Math.max(0, Math.min(100, (total / g.amount) * 100));
-               return `<div class="goal-step ${done ? 'done' : ''} ${isActive ? 'active' : ''}" data-i="${i}">
+           ${rungs
+             .map((r, i) => {
+               const isActive = r === active && !r.done;
+               const fill = r.amount ? Math.max(0, Math.min(100, (r.got / r.amount) * 100)) : 0;
+               return `<div class="goal-step ${r.done ? 'done' : ''} ${isActive ? 'active' : ''}" data-i="${i}">
                  <div class="gs-photo">
-                   ${g.photo ? `<img src="${esc(g.photo)}" alt="" loading="lazy">` : '<span class="gs-blank">💰</span>'}
-                   <span class="gs-star">${done ? '⭐' : '☆'}</span>
+                   ${r.photo ? `<img src="${esc(r.photo)}" alt="" loading="lazy">` : '<span class="gs-blank">💰</span>'}
+                   <span class="gs-star">${r.done ? '⭐' : '☆'}</span>
                  </div>
-                 <span class="gs-name">${esc(g.title || `${i + 1}. ${t('goalWord')}`)}</span>
-                 <span class="gs-amt">${fmtNum(g.amount)}${esc(cur)}</span>
+                 <span class="gs-name">${esc(r.title || `${i + 1}. ${t('goalWord')}`)}</span>
+                 <span class="gs-amt">${r.done
+                   ? fmtNum(r.amount)
+                   : `${fmtNum(r.got)}<b>/</b>${fmtNum(r.amount)}`}${esc(cur)}</span>
                  <span class="gs-bar"><i style="width:${fill}%"></i></span>
                </div>`;
              })
@@ -2132,7 +2151,7 @@
             ...(photo ? { photo } : {}),
           });
         }
-        goals.sort((a, b) => a.amount - b.amount);
+        // the order you wrote them in is the order they get paid off
         config.goals = goals;
         restore();
       }

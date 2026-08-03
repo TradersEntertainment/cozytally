@@ -501,22 +501,20 @@ function sanitizeConfig(type, raw) {
       typeof v === 'string' && /^\/u\/[\w-]+\.(jpg|png|webp|gif)$/.test(v) ? v : undefined;
 
     if (Array.isArray(src.goals)) {
-      const seen = new Set();
+      // Each goal costs its own amount and they are paid off in the order they
+      // were written — the pot fills the first one, then what is left over
+      // spills into the second, and so on. So no sorting and no de-duping:
+      // two goals may well cost the same, and the order is the plan.
       out.goals = src.goals
         .map((g) => ({
           amount: toInt(g?.amount, 0, 1000000000, 0),
           title: clampStr(g?.title, 40),
           photo: photoOf(g?.photo),
         }))
-        .filter((g) => {
-          if (g.amount <= 0 || seen.has(g.amount)) return false;
-          seen.add(g.amount);
-          return true;
-        })
-        .sort((a, b) => a.amount - b.amount)
+        .filter((g) => g.amount > 0)
         .slice(0, MAX_GOALS);
-      // keep the flat fields in step, so anything still reading them stays right
-      out.goal = out.goals.length ? out.goals[out.goals.length - 1].amount : 0;
+      // keep the flat field in step: what the whole plan costs together
+      out.goal = out.goals.reduce((s, g) => s + g.amount, 0);
       const firstPhoto = out.goals.find((g) => g.photo)?.photo;
       if (firstPhoto) out.photo = firstPhoto;
     } else {
@@ -1126,8 +1124,12 @@ function handleMessage(ws, msg) {
         : cfg.goal
           ? [{ amount: cfg.goal, title: '', photo: cfg.photo }]
           : [];
+      // A goal is paid off once the pot covers it *and* everything before it,
+      // so the line to cross is the running sum, not the goal's own price.
+      let need = 0;
       goals.forEach((g, i) => {
-        if (before >= g.amount || state.total < g.amount) return;
+        need += g.amount;
+        if (before >= need || state.total < need) return;
         broadcast(code, {
           t: 'money:goal',
           id: row.id,

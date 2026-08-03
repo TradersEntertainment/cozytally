@@ -12,7 +12,7 @@ ikiniz de aynı panoyu **canlı** görürsünüz. Panoya istediğiniz kadar kart
 | ⏳ **Ortak Kronometre** | Birlikte süre sayarsınız; başlat/durdur herkeste senkron |
 | 🎈 **Geri Sayım** | Özel bir güne kalan süreyi sayar, vakti gelince konfeti 🎉 |
 | 💌 **Not** | Birbirinize yapışkan notlar bırakırsınız — kim yazdıysa imzası düşer. Uzun notlar kâğıdın içinde kaydırılır, altına yorum yazılabilir |
-| 💰 **Kumbara** | Birlikte para biriktirin. **Kademeli hedefler:** tek kumbaraya sırayla gelen birden fazla hedef koyabilirsin (okul kirası → araba → ev), her birinin kendi adı ve fotoğrafı olur; birikim büyüdükçe hedefler tek tek yıldızlanır. Ayrıca aktif hedefe göre %25/50/75/100 yaklaşma yıldızları, kim ne kadar koydu gösteren katkı yarışı, +/− işlem geçmişi ve para atınca 🪙 yağmuru |
+| 💰 **Kumbara** | Birlikte para biriktirin. **Kademeli hedefler:** tek kumbaraya birden fazla hedef koyabilirsin (kira → okul → araba), her birinin kendi tutarı, adı ve fotoğrafı olur. Kumbara **şelale gibi sırayla dolar**: önce 1. hedef kendi tutarını alır, ancak o bittikten sonra artan para 2.'ye geçer — sıradaki hedef ödenmeden alttakine pay düşmez. Her adımda "17.250/25.000₺" gibi kendi payını görürsün. Ayrıca aktif hedefe göre %25/50/75/100 yaklaşma yıldızları, kim ne kadar koydu gösteren katkı yarışı, +/− işlem geçmişi ve para atınca 🪙 yağmuru |
 | 📝 **Liste** | Ortak yapılacaklar — herkes madde ekler ve işaretler, hepsi bitince konfeti |
 | 🤝 **Beraber** | Ortak seri: herkesin kendi günlük tiki var ama seri odanın. “Herkes” ya da “biri yeter” modu, son 7 günün ızgarası ve birbirinize hediye edebildiğiniz **pas hakkı** — biri günü kaçırdıysa pasını harcayıp onun için örtebilirsin, seri bozulmaz |
 
@@ -94,7 +94,10 @@ Lokalde veriler `./data/` klasörüne yazılır.
 CozyTally is a cozy, real-time shared tracking board. Create a **room**, get a short
 code like `luna-mocha-42`, share the link — everyone in the room sees the same board
 live. Add as many cards as you like: tallies (with optional goals), day-streak
-counters, shared stopwatches (start/pause synced for everyone) and countdowns.
+counters, shared stopwatches (start/pause synced for everyone), countdowns, notes,
+checklists and piggy banks. A piggy bank can carry several goals, each with its own
+price and photo — the pot fills them in order, so nothing spills into the next goal
+until the one before it is fully paid off.
 No accounts — just a nickname and a room code. Turkish and English UI.
 
 **Deploy on Railway:** create a service from this repo, attach a Volume mounted at

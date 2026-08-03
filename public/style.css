@@ -1577,6 +1577,15 @@ body.reordering {
   font-variant-numeric: tabular-nums;
 }
 
+/* the slash in "17.250/25.000" — quiet, so the two numbers read as a pair */
+.gs-amt b {
+  font-weight: 400;
+  opacity: 0.45;
+  padding: 0 1px;
+}
+
+.goal-step.done .gs-amt { color: rgba(255, 215, 168, 0.9); }
+
 .gs-bar {
   display: block;
   height: 4px;
