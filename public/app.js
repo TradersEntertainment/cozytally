@@ -190,6 +190,106 @@
     else localStorage.removeItem('ct:auth');
   }
 
+  /* ------------------------------------------------------------------
+     Feel — the little sound and buzz behind every action.
+
+     Sounds are synthesised, not files: a handful of soft sine tones with a
+     quick decay, so there is nothing to download and nothing to keep in
+     sync. Each one is short enough to sit under a tap rather than on top
+     of it.
+
+     Buzz is best-effort and differs wildly by platform. Android has
+     navigator.vibrate. iOS Safari has nothing — except that toggling a
+     `switch` checkbox fires the system haptic (17.4+), which is
+     undocumented and may stop working any day. So the buzz is a bonus
+     and the sound is the part that carries the feeling everywhere.
+     ------------------------------------------------------------------ */
+  const feel = (() => {
+    const KEY = 'ct:feel';
+    let audio = null;
+
+    // freqs in Hz, played in a short rising or falling run
+    const VOICES = {
+      tap: { notes: [660], step: 0, len: 0.07, vol: 0.1, buzz: 10 },
+      move: { notes: [523, 659], step: 0.045, len: 0.1, vol: 0.11, buzz: 14 },
+      // the other person: two warm notes and a double buzz, so you can tell
+      // it apart from your own tap without looking
+      theirs: { notes: [440, 554], step: 0.07, len: 0.13, vol: 0.1, buzz: [18, 45, 18] },
+      msg: { notes: [784, 988], step: 0.06, len: 0.12, vol: 0.09, buzz: [12, 60, 12] },
+      good: { notes: [659, 880], step: 0.05, len: 0.13, vol: 0.12, buzz: 24 },
+      win: { notes: [523, 659, 784, 1047], step: 0.075, len: 0.2, vol: 0.13, buzz: [25, 55, 25, 55, 45] },
+      lose: { notes: [659, 523, 392], step: 0.11, len: 0.24, vol: 0.09, buzz: 45 },
+      draw: { notes: [587, 587], step: 0.13, len: 0.18, vol: 0.09, buzz: [20, 70, 20] },
+      heart: { notes: [880, 1175], step: 0.05, len: 0.14, vol: 0.11, buzz: [10, 40, 10] },
+    };
+
+    const enabled = () => localStorage.getItem(KEY) !== '0';
+
+    /* iOS only buzzes for a `switch` checkbox being clicked. One hidden one,
+       reused; harmless everywhere it does nothing. */
+    let iosSwitch = null;
+    function iosBuzz() {
+      if (!('switch' in HTMLInputElement.prototype)) return false;
+      if (!iosSwitch) {
+        iosSwitch = document.createElement('input');
+        iosSwitch.type = 'checkbox';
+        iosSwitch.setAttribute('switch', '');
+        Object.assign(iosSwitch.style, {
+          position: 'fixed', opacity: '0', pointerEvents: 'none',
+          width: '1px', height: '1px', left: '-10px', top: '-10px',
+        });
+        iosSwitch.setAttribute('aria-hidden', 'true');
+        iosSwitch.tabIndex = -1;
+        document.body.appendChild(iosSwitch);
+      }
+      iosSwitch.click();
+      return true;
+    }
+
+    function play(voice) {
+      const Ctx = window.AudioContext || window.webkitAudioContext;
+      if (!Ctx) return;
+      // browsers only allow this after the person has touched something
+      if (!audio) audio = new Ctx();
+      if (audio.state === 'suspended') audio.resume().catch(() => {});
+      const now = audio.currentTime;
+      voice.notes.forEach((freq, i) => {
+        const at = now + i * voice.step;
+        const osc = audio.createOscillator();
+        const gain = audio.createGain();
+        osc.type = 'sine';
+        osc.frequency.value = freq;
+        gain.gain.setValueAtTime(0.0001, at);
+        gain.gain.exponentialRampToValueAtTime(voice.vol, at + 0.012);
+        gain.gain.exponentialRampToValueAtTime(0.0001, at + voice.len);
+        osc.connect(gain).connect(audio.destination);
+        osc.start(at);
+        osc.stop(at + voice.len + 0.02);
+      });
+    }
+
+    function fire(kind) {
+      const voice = VOICES[kind];
+      if (!voice || !enabled()) return;
+      // nothing to feel in a tab nobody is looking at — that is what push is for
+      if (document.hidden) return;
+      try {
+        play(voice);
+      } catch { /* audio can fail on locked-down browsers; never block on it */ }
+      if (navigator.vibrate) navigator.vibrate(voice.buzz);
+      else iosBuzz();
+    }
+
+    fire.enabled = enabled;
+    fire.toggle = () => {
+      const next = !enabled();
+      localStorage.setItem(KEY, next ? '1' : '0');
+      if (next) fire('good'); // let them hear what they just turned on
+      return next;
+    };
+    return fire;
+  })();
+
   // stable per-browser id: lets the server skip push notifications to yourself
   let myCid = localStorage.getItem('ct:cid');
   if (!myCid) {
@@ -763,6 +863,7 @@
         chatMsgs.push(msg.msg);
         if (chatMsgs.length > 200) chatMsgs.shift();
         appendChatMsg(msg.msg, true);
+        if (!isMine(msg.msg)) feel('msg');
         if (!chatOpen && !isMine(msg.msg)) {
           chatUnread++;
           updateChatBadge();
@@ -841,6 +942,7 @@
 
       case 'money:goal': {
         confetti();
+        feel('win');
         centerCheer(msg.goal?.title ? t('goalReachedCheer', { name: msg.goal.title }) : t('moneyReached'));
         const step = $(`.card[data-id="${msg.id}"] .goal-step[data-i="${msg.index}"]`);
         if (step) {
@@ -852,21 +954,25 @@
 
       case 'list:done':
         confetti();
+        feel('win');
         centerCheer(t('toastListAllDone', { card: msg.title }));
         return;
 
       case 'checkin:done':
         confetti();
+        feel('win');
         centerCheer(t('dayComplete', { n: msg.streak }));
         return;
 
       case 'checkin:cover':
         heartsRain();
+        feel('heart');
         centerCheer(t('coveredCheer', { name: msg.by }));
         return;
 
       case 'cheer':
         heartsRain();
+        feel('heart');
         if (msg.by?.id !== myId) toast(t('toastHearts', { name: msg.by.name }));
         return;
     }
@@ -879,9 +985,23 @@
   let seenList = [];
   let lastSeenSent = 0;
 
+  /* Which of the other person's actions deserve a sound of their own. Anything
+     not listed here still gets the plain "someone did something" note. */
+  const VERB_FEEL = {
+    'note:comment': 'msg',
+    'game:comment': 'msg',
+    'note:set': 'msg',
+    'list:toggle': 'good',
+    'checkin:tick': 'good',
+    'game:seat': 'good',
+  };
+
   function handleCardToasts(msg) {
     const { by, verb, card } = msg;
     if (!by || by.id === myId) return; // own actions get cheers, not toasts
+    // the whole point of the buzz: you can tell they did something without
+    // being on the card, or even on the right screen
+    if (verb !== 'game:move' || !card.state?.over) feel(VERB_FEEL[verb] || 'theirs');
     const vars = { name: by.name, card: card.title };
     if (verb === 'money+' || verb === 'money-') {
       const last = card.state.log?.[0];
@@ -1014,7 +1134,7 @@
       });
       drag.card.classList.add('dragging');
       document.body.classList.add('reordering');
-      if (navigator.vibrate) navigator.vibrate(15);
+      feel('tap'); // the card has come loose in your hand — say so
       moveTo(e.clientX, e.clientY);
     };
 
@@ -1283,7 +1403,6 @@
     $('.js-tick', body).onclick = () => {
       if (coveredForMe) return; // someone gifted this day; not yours to undo
       send({ t: 'checkin', id: card.id, op: iTicked ? 'untick' : 'tick', day: today });
-      if (!iTicked && navigator.vibrate) navigator.vibrate(12);
     };
 
     $$('.js-cover', body).forEach((btn) => {
@@ -1429,7 +1548,16 @@
     wireGameBoard(kind, body, s, myTurn, move);
     wireComments(body, card);
 
-    if (opts.verb === 'game:move' && s.over && s.over.winner === mySeat) coinRain(body.closest('.card'));
+    if (opts.verb === 'game:move' || opts.verb === 'game:next') {
+      const mine = opts.by?.id === myId;
+      if (s.over) {
+        feel(s.over.winner === 'draw' ? 'draw' : s.over.winner === mySeat ? 'win' : 'lose');
+        if (s.over.winner === mySeat) coinRain(body.closest('.card'));
+      } else if (mine) {
+        // closing a box and keeping the turn deserves better than a plain tick
+        feel(s.again ? 'good' : 'move');
+      }
+    }
   }
 
   const discOf = (v) => (v ? `<span class="g-disc p${v}"></span>` : '');
@@ -3130,6 +3258,21 @@
     $('#fab-add').onclick = openTypePicker;
     $('#fab-love').onclick = () => send({ t: 'cheer', kind: 'hearts' });
 
+    const feelBtn = $('#feel-btn');
+    const paintFeelBtn = () => {
+      const on = feel.enabled();
+      feelBtn.textContent = on ? '🔊' : '🔇';
+      feelBtn.classList.toggle('off', !on);
+      feelBtn.title = t(on ? 'soundOn' : 'soundOff');
+      feelBtn.setAttribute('aria-label', feelBtn.title);
+    };
+    feelBtn.onclick = () => {
+      feel.toggle();
+      paintFeelBtn();
+      toast(t(feel.enabled() ? 'soundOn' : 'soundOff'));
+    };
+    paintFeelBtn();
+
     $('#copy-link').onclick = async () => {
       try {
         await navigator.clipboard.writeText(location.origin + '/r/' + encodeURIComponent(room.code));
@@ -3163,12 +3306,28 @@
 
   // intercept my own actions for cheer effects + capture my id from 'room'
   const _handleServer = handleServer;
+  /* Your own doing, confirmed by the server coming back. Sound belongs here
+     rather than on the button, so it lands when the thing actually happened. */
+  const MINE_FEEL = {
+    'tally+': 'tap',
+    'tally-': 'tap',
+    'money+': 'good',
+    'money-': 'tap',
+    'list:add': 'tap',
+    'list:toggle': 'good',
+    'checkin:tick': 'good',
+    'note:comment': 'tap',
+    'game:comment': 'tap',
+    'card:add': 'good',
+  };
+
   handleServer = (msg) => {
     if (msg.t === 'room') myId = msg.you;
     if (msg.t === 'card:update' && msg.by?.id && msg.by.id === myId) {
+      // a game move plays its own, because only the board knows if it won
+      if (MINE_FEEL[msg.verb]) feel(MINE_FEEL[msg.verb]);
       if (msg.verb === 'tally+') {
         randomCheer(false);
-        if (navigator.vibrate) navigator.vibrate(12);
         const goal = msg.card.config?.goal;
         if (goal && msg.card.state.count === goal) confetti();
       }

@@ -38,6 +38,11 @@ Ayrıca her odada:
   bırakılınca, mesaj gelince ve kalp gönderilince haber verir. Uygulamaya bakan kişiye
   bildirim gitmez; hızlı tekrarlar kart başına dakikada bire kısılır. Bildirim metni
   alıcının diline göre (TR/EN) yazılır. VAPID anahtarları ilk açılışta üretilip `/data`'da saklanır
+- 🔊 **Ses ve titreşim** — her hareketin kendi minik sesi var: senin dokunuşun, karşı
+  tarafın hamlesi (çift titreşim, bakmadan da anlarsın), gelen mesaj, kazanma ve kaybetme
+  ayrı ayrı. Sesler dosya değil, anlık üretiliyor — indirilecek bir şey yok. Üstteki
+  🔊 düğmesiyle kapanır, arka plandaki sekmede hiç çalmaz (o iş bildirimin).
+  *Titreşim iPhone'da Safari desteklemediği için çalışmayabilir; hissiyatı ses taşır*
 - 📱 **PWA** — telefonda "Ana Ekrana Ekle" ile gerçek uygulama gibi kurulur
 
 Hesap yok, şifre yok — sadece takma ad + oda kodu. TR/EN dil desteği var.

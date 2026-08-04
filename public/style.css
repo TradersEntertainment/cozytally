@@ -2129,6 +2129,9 @@ body.reordering {
 /* The invitation to watch the walkthrough. Deliberately loud — nobody
    reads a small "?" — and deliberately temporary: once you have watched
    it once this button is gone for good and only that "?" remains. */
+/* muted reads as "switched off", not "broken" */
+#feel-btn.off { opacity: 0.5; }
+
 .g-howto {
   width: 100%;
   padding: 10px 14px;

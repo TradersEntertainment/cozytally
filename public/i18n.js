@@ -46,6 +46,8 @@ window.I18N = {
     pickAvatar: 'Bir avatar seç:',
     letsGo: 'Hadi başlayalım! 🌙',
 
+    soundOn: 'Ses ve titreşim açık 🔊',
+    soundOff: 'Ses ve titreşim kapalı 🔇',
     copyLink: 'Linki kopyala',
     linkCopied: 'Link kopyalandı! 🔗',
     online: 'çevrimiçi',
@@ -355,6 +357,8 @@ window.I18N = {
     pickAvatar: 'Pick an avatar:',
     letsGo: "Let's go! 🌙",
 
+    soundOn: 'Sound and buzz on 🔊',
+    soundOff: 'Sound and buzz off 🔇',
     copyLink: 'Copy link',
     linkCopied: 'Link copied! 🔗',
     online: 'online',
