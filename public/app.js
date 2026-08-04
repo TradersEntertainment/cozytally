@@ -254,7 +254,7 @@
     connect4: { emoji: '🔵', nameKey: 'gameConnect4', descKey: 'gameConnect4Desc' },
     reversi: { emoji: '⚫', nameKey: 'gameReversi', descKey: 'gameReversiDesc' },
     dots: { emoji: '⬜', nameKey: 'gameDots', descKey: 'gameDotsDesc' },
-    hangman: { emoji: '🎈', nameKey: 'gameHangman', descKey: 'gameHangmanDesc' },
+    hangman: { emoji: '🔤', nameKey: 'gameHangman', descKey: 'gameHangmanDesc' },
     code: { emoji: '🔢', nameKey: 'gameCode', descKey: 'gameCodeDesc' },
     chain: { emoji: '🔗', nameKey: 'gameChain', descKey: 'gameChainDesc' },
     rps: { emoji: '✊', nameKey: 'gameRps', descKey: 'gameRpsDesc' },
@@ -1977,27 +1977,72 @@
     </div>`;
   }
 
+  /**
+   * The gallows, drawn one piece per wrong letter — post, beam, rope, then
+   * head, body, arms, legs. It is one SVG with every part always present and
+   * the unearned ones simply not shown, so a wrong guess adds a stroke
+   * instead of redrawing the picture, and the last one closes his eyes.
+   */
+  function gallows(wrong, lives) {
+    const part = (n) => (wrong >= n ? '' : ' hidden');
+    const dead = wrong >= HANGMAN_LIVES;
+    return `<svg class="g-gallows ${dead ? 'gone' : ''}" viewBox="0 0 120 130"
+      role="img" aria-label="${esc(t('gameLivesLeft', { n: lives }))}">
+      <g class="g-frame">
+        <path d="M8,124 H60" />
+        <path d="M20,124 V10" />
+        <path d="M20,10 H78" />
+        <path d="M78,10 V26" />
+      </g>
+      <g class="g-body">
+        <circle class="g-part${part(1)}" cx="78" cy="38" r="12" />
+        <path class="g-part${part(2)}" d="M78,50 V86" />
+        <path class="g-part${part(3)}" d="M78,58 L62,74" />
+        <path class="g-part${part(4)}" d="M78,58 L94,74" />
+        <path class="g-part${part(5)}" d="M78,86 L64,110" />
+        <path class="g-part${part(6)}" d="M78,86 L92,110" />
+        ${dead
+          ? `<path class="g-face" d="M72,35 l5,5 M77,35 l-5,5" />
+             <path class="g-face" d="M81,35 l5,5 M86,35 l-5,5" />`
+          : `<circle class="g-eye" cx="74" cy="36" r="1.6" />
+             <circle class="g-eye" cx="82" cy="36" r="1.6" />`}
+      </g>
+    </svg>`;
+  }
+
   function hangmanBoard(s, mySeat, myTurn) {
     if (s.phase === 'writing') {
       if (!myTurn) return `<div class="g-truths waiting">${esc(t('gameHangmanWaiting'))}</div>`;
       return `<div class="g-truths">
         <p class="sub-label">${esc(t('gameHangmanHint'))}</p>
-        <input type="text" class="js-hword" maxlength="20" autocomplete="off"
+        <input type="text" class="js-hword" maxlength="24" autocomplete="off"
           placeholder="${esc(t('gameHangmanPh'))}">
         <button class="btn btn-primary btn-sm js-hsend">${esc(t('gameHangmanSend'))}</button>
       </div>`;
     }
 
-    const lives = HANGMAN_LIVES - (s.wrong || 0);
+    const wrong = s.wrong || 0;
+    const lives = HANGMAN_LIVES - wrong;
     const word = s.phase === 'done' && s.over?.word ? [...s.over.word] : null;
     const newest = s.guessed?.[s.guessed.length - 1]; // only these letters just landed
-    const slots = (word || s.mask || [])
-      .map((c, i) => {
+
+    /* A space is a word break, not a letter, so the slots come apart at the
+       gaps: "SU BÖREĞİ" reads as two words that can wrap on their own. */
+    const cells = word || s.mask || [];
+    const words = [[]];
+    cells.forEach((c, i) => {
+      if ((word ? word[i] : c) === ' ') return words.push([]);
+      words[words.length - 1].push({ c, i });
+    });
+
+    const slots = words
+      .filter((w) => w.length)
+      .map((w) => `<span class="g-wordpart">${w.map(({ c, i }) => {
         const shown = word ? word[i] : c;
         const found = word ? s.guessed?.includes(word[i]) : !!c;
         return `<span class="g-slot ${found ? 'got' : 'miss'} ${found && shown === newest ? 'fresh' : ''}"
           >${shown && found ? esc(shown) : (word ? esc(shown) : '')}</span>`;
-      })
+      }).join('')}</span>`)
       .join('');
 
     // the wrong letters come pre-worked-out while the word is a secret; once
@@ -2005,10 +2050,7 @@
     const misses = s.misses || (word ? (s.guessed || []).filter((c) => !word.includes(c)) : []);
 
     return `<div class="g-hang">
-      <div class="g-balloons" aria-label="${esc(t('gameLivesLeft', { n: lives }))}">
-        ${Array.from({ length: HANGMAN_LIVES }, (_, i) =>
-          `<span class="g-balloon ${i < lives ? '' : 'popped'}">${i < lives ? '🎈' : '💥'}</span>`).join('')}
-      </div>
+      ${gallows(wrong, lives)}
       <div class="g-word">${slots}</div>
       ${misses.length
         ? `<div class="g-misses">${misses.map((c) => `<span>${esc(c)}</span>`).join('')}</div>`
@@ -2088,15 +2130,21 @@
     const dots = (i) => Array.from({ length: 3 }, (_, k) =>
       `<span class="g-pip ${k < (s.wins?.[i] || 0) ? 'on' : ''}"></span>`).join('');
 
+    /* Until both hands open, neither may look like a hand: a fist standing in
+       for "has chosen" reads as somebody having played rock. What is on the
+       wire is only whether a choice was made — see redactGame — and this is
+       what that should look like. */
+    const face = (i) => (reveal ? RPS_HAND[reveal.picks[i]] : chosen[i] ? '❔' : '…');
+
     return `<div class="g-rps">
       <div class="g-hands">
-        <div class="g-hand ${reveal ? 'shown' : ''}">
-          <span class="g-fist">${reveal ? RPS_HAND[reveal.picks[0]] : chosen[0] ? '🤛' : '…'}</span>
+        <div class="g-hand ${reveal ? 'shown' : ''} ${!reveal && chosen[0] ? 'sealed' : ''}">
+          <span class="g-fist">${face(0)}</span>
           <span class="g-pips">${dots(0)}</span>
         </div>
         <span class="g-vs">${esc(t('gameRpsVs'))}</span>
-        <div class="g-hand ${reveal ? 'shown' : ''}">
-          <span class="g-fist">${reveal ? RPS_HAND[reveal.picks[1]] : chosen[1] ? '🤜' : '…'}</span>
+        <div class="g-hand ${reveal ? 'shown' : ''} ${!reveal && chosen[1] ? 'sealed' : ''}">
+          <span class="g-fist">${face(1)}</span>
           <span class="g-pips">${dots(1)}</span>
         </div>
       </div>

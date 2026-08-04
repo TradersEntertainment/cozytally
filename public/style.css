@@ -2206,13 +2206,68 @@ body.reordering {
   width: 100%;
 }
 
-.g-balloons { display: flex; gap: 4px; font-size: 1.15rem; }
-.g-balloon.popped { opacity: 0.5; filter: grayscale(0.6); }
+/* The gallows. Every stroke is in the drawing from the start and simply
+   hidden until it is earned, so a wrong letter adds one line to a picture
+   that is already there rather than replacing the whole thing. */
+.g-gallows {
+  width: 122px;
+  height: 132px;
+  flex: none;
+}
+
+.g-gallows path,
+.g-gallows circle {
+  fill: none;
+  stroke-width: 4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.g-frame path { stroke: color-mix(in srgb, var(--ink-dim) 70%, transparent); }
+.g-body path,
+.g-body circle { stroke: var(--accent); }
+
+.g-part {
+  /* drawn on, rather than appearing: the stroke pays itself out */
+  stroke-dasharray: 130;
+  stroke-dashoffset: 0;
+  animation: g-draw 0.4s var(--ease);
+}
+
+.g-part.hidden { visibility: hidden; }
+/* no head yet, no face */
+.g-gallows:has(.g-part:first-of-type.hidden) .g-eye,
+.g-gallows:has(.g-part:first-of-type.hidden) .g-face { visibility: hidden; }
+
+@keyframes g-draw {
+  from { stroke-dashoffset: 130; }
+  to { stroke-dashoffset: 0; }
+}
+
+.g-eye {
+  fill: var(--accent);
+  stroke: none;
+}
+
+.g-face {
+  stroke: var(--pink);
+  stroke-width: 3;
+}
+
+.g-gallows.gone .g-body path,
+.g-gallows.gone .g-body circle { stroke: var(--pink); }
+.g-gallows.gone .g-face { stroke: var(--pink); }
 
 .g-word {
   display: flex;
   flex-wrap: wrap;
   justify-content: center;
+  gap: 5px 16px; /* the wider gap is the space between words */
+}
+
+/* a word holds together when the phrase wraps */
+.g-wordpart {
+  display: flex;
   gap: 5px;
 }
 
@@ -2332,6 +2387,9 @@ body.reordering {
 }
 
 /* ---- rock paper scissors */
+/* chosen, but not yet shown — deliberately not a hand */
+.g-hand.sealed .g-fist { opacity: 0.85; animation: g-pop 0.26s var(--spring); }
+
 .g-rps {
   display: flex;
   flex-direction: column;

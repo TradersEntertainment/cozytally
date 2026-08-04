@@ -21,7 +21,7 @@ export const GAMES = {
   connect4: { emoji: '🔵', titleKey: 'gameConnect4' },
   dots: { emoji: '⬜', titleKey: 'gameDots' },
   reversi: { emoji: '⚫', titleKey: 'gameReversi' },
-  hangman: { emoji: '🎈', titleKey: 'gameHangman' },
+  hangman: { emoji: '🔤', titleKey: 'gameHangman' },
   code: { emoji: '🔢', titleKey: 'gameCode' },
   chain: { emoji: '🔗', titleKey: 'gameChain' },
   rps: { emoji: '✊', titleKey: 'gameRps' },
@@ -292,10 +292,17 @@ function reversiMove(state, seat, move) {
 }
 
 // ---------------------------------------------------------------- hangman
+/* A space is a word break, not a letter: "SU BÖREĞİ" is two words on two
+   lines and nobody has to guess the gap. Everything else about the word —
+   which letters are in it, when it is solved — ignores the spaces. */
+const hangmanLetters = (word) => [...word].filter((c) => c !== ' ');
+
 function hangmanMove(state, seat, move) {
   if (state.phase === 'writing') {
-    const word = trUpper(move?.word).replace(/\s+/g, '');
-    if (word.length < 3 || word.length > 20 || !isTurkishWord(word)) return false;
+    const word = trUpper(move?.word).replace(/\s+/g, ' ').trim();
+    const letters = hangmanLetters(word);
+    if (letters.length < 3 || word.length > 24) return false;
+    if (!letters.every((c) => TR_LETTERS.includes(c))) return false;
     state.word = word;
     state.phase = 'guessing';
     return true;
@@ -310,7 +317,7 @@ function hangmanMove(state, seat, move) {
   const hit = state.word.includes(letter);
   if (!hit) state.wrong++;
 
-  if ([...state.word].every((c) => state.guessed.includes(c))) {
+  if (hangmanLetters(state.word).every((c) => state.guessed.includes(c))) {
     state.phase = 'done';
     state.over = { winner: seat, word: state.word }; // the guesser got there
   } else if (state.wrong >= HANGMAN_LIVES) {
@@ -585,7 +592,9 @@ export function redactGame(state) {
     // the shape of the word and the letters found so far — never the word
     return {
       ...rest,
-      mask: [...(word || '')].map((c) => (state.guessed.includes(c) ? c : null)),
+      // a space stays a space, so the shape of the phrase is visible from the
+      // start; every other letter is null until somebody finds it
+      mask: [...(word || '')].map((c) => (c === ' ' || state.guessed.includes(c) ? c : null)),
       misses: state.guessed.filter((c) => !(word || '').includes(c)),
     };
   }
