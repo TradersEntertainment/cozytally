@@ -83,7 +83,16 @@ function freshBoard(game, opts = {}) {
     return { phase: 'writing', secret: '', tries: [] };
   }
   if (game === 'chain') {
-    return { words: [], gaveUp: -1 };
+    /* The house rules are agreed when the card is made and carried in the
+       state so the rules and both screens all read the same ones. */
+    return {
+      words: [],
+      gaveUp: -1,
+      dict: opts.dict === 'tr' ? 'tr' : 'free',
+      limit: Number(opts.limit) || 0,
+      deadline: 0,
+      timedOut: -1,
+    };
   }
   if (game === 'rps') {
     return { picks: [null, null], wins: [0, 0], history: [], reveal: null };
@@ -383,6 +392,18 @@ export function chainLetter(word) {
   return w[w.length - 1] || '';
 }
 
+/* Whether a word is in the dictionary is the server's call, so the list is
+   handed in at boot from words.js — which lives outside public/. In a browser
+   this is never set, and dictionary mode simply doesn't second-guess the
+   referee. */
+let dictHas = null;
+export const useDictionary = (fn) => {
+  dictHas = fn;
+};
+
+/** Why a word bounced, so the card can say something better than nothing. */
+export const CHAIN_REASONS = { letters: 1, letter: 2, repeat: 3, dict: 4 };
+
 function chainMove(state, seat, move) {
   if (move?.giveUp) {
     state.gaveUp = seat;
@@ -390,12 +411,37 @@ function chainMove(state, seat, move) {
     return true;
   }
   const word = trUpper(move?.word).replace(/\s+/g, '');
-  if (word.length < 2 || word.length > 24 || !isTurkishWord(word)) return false;
-  if (state.words.some((w) => w.text === word)) return false; // already said
+  if (word.length < 2 || word.length > 24 || !isTurkishWord(word)) {
+    state.why = CHAIN_REASONS.letters;
+    return false;
+  }
+  if (state.words.some((w) => w.text === word)) {
+    state.why = CHAIN_REASONS.repeat;
+    return false;
+  }
   const prev = state.words[state.words.length - 1];
-  if (prev && word[0] !== chainLetter(prev.text)) return false;
+  if (prev && word[0] !== chainLetter(prev.text)) {
+    state.why = CHAIN_REASONS.letter;
+    return false;
+  }
+  if (state.dict === 'tr' && dictHas && !dictHas(word)) {
+    state.why = CHAIN_REASONS.dict;
+    return false;
+  }
 
+  state.why = 0;
   state.words.push({ text: word, by: seat });
+  return true;
+}
+
+/** The clock ran out on whoever's turn it is. Server-only — this is not a
+    move, so nothing a browser sends can reach it. */
+export function chainTimeout(state) {
+  if (state.game !== 'chain' || state.over) return false;
+  const loser = state.turn;
+  state.timedOut = loser;
+  state.over = { winner: loser === 0 ? 1 : 0, length: state.words.length, timeout: true };
+  state.scores[state.over.winner]++;
   return true;
 }
 

@@ -2319,6 +2319,75 @@ body.reordering {
 
 /* ---- crack the code */
 .g-code,
+/* the house rules, the clock, and how a chain looks under one */
+.g-rules { margin: 0; letter-spacing: 0.01em; }
+
+.g-clock {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+}
+
+.g-clock-bar {
+  flex: 1;
+  height: 6px;
+  border-radius: var(--r-pill);
+  background: rgba(255, 255, 255, 0.09);
+  overflow: hidden;
+}
+
+.g-clock-bar i {
+  display: block;
+  height: 100%;
+  width: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--mint), var(--sky));
+  transition: width 0.12s linear;
+}
+
+.g-clock-num {
+  min-width: 2.2ch;
+  text-align: right;
+  font-size: var(--t-footnote);
+  font-weight: 700;
+  color: var(--ink-2);
+  font-variant-numeric: tabular-nums;
+}
+
+.g-clock.low .g-clock-bar i { background: linear-gradient(90deg, var(--pink), var(--amber)); }
+.g-clock.low .g-clock-num { color: var(--pink); }
+
+/* the house rules, picked when the card is made */
+.rule-row { display: flex; gap: 7px; flex-wrap: wrap; }
+.rule-row--tight .rule-opt { flex: 1 1 0; min-width: 62px; text-align: center; }
+
+.rule-opt {
+  flex: 1 1 0;
+  min-width: 110px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  position: relative;
+  padding: 9px 11px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-md);
+  background: rgba(255, 255, 255, 0.04);
+  cursor: pointer;
+  transition: background 0.16s var(--ease);
+}
+
+/* the label is the control; the radio only carries the value */
+.rule-opt input { position: absolute; inset: 0; opacity: 0; }
+.rule-opt b { font-size: var(--t-footnote); font-weight: 700; }
+.rule-opt span { font-size: var(--t-caption); color: var(--ink-dim); }
+.rule-opt:hover { background: rgba(255, 255, 255, 0.08); }
+
+.rule-opt:has(input:checked) {
+  border-color: color-mix(in srgb, var(--accent) 60%, transparent);
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+}
+
 .g-chain {
   display: flex;
   flex-direction: column;

@@ -1258,6 +1258,15 @@
         centerCheer(t('coveredCheer', { name: msg.by }));
         return;
 
+      case 'game:no': {
+        const why = {
+          1: 'chainNoLetters', 2: 'chainNoLetter', 3: 'chainNoRepeat', 4: 'chainNoDict',
+        }[msg.why];
+        if (why) toast(t(why));
+        feel('lose');
+        return;
+      }
+
       case 'cheer': {
         const rain = RAIN[msg.kind] || RAIN.love;
         heartsRain(msg.kind);
@@ -2104,13 +2113,29 @@
     const next = words.length && window.CTGames
       ? window.CTGames.chainLetter(words[words.length - 1].text)
       : null;
+    const rules = [
+      s.dict === 'tr' ? t('chainDictTr') : t('chainDictFree'),
+      s.limit ? t('chainLimitSec', { n: s.limit }) : t('chainLimitOff'),
+    ].join(' · ');
     return `<div class="g-chain">
+      <p class="sub-label g-rules">${esc(rules)}</p>
+      ${s.limit && s.deadline && !s.over
+        ? `<div class="g-clock" data-deadline="${s.deadline}" data-limit="${s.limit}">
+            <div class="g-clock-bar"><i></i></div>
+            <span class="g-clock-num"></span>
+          </div>`
+        : ''}
       ${words.length
         ? `<div class="g-links">${words
             .map((w, i) => `<span class="g-link p${w.by + 1} ${i === words.length - 1 ? 'last' : ''}"
               >${esc(w.text)}</span>`)
             .join('')}</div>`
         : `<p class="sub-label">${esc(t('gameChainStart'))}</p>`}
+      ${s.over?.timeout
+        ? `<p class="sub-label">${esc(t('gameChainTimedOut', {
+            name: (s.players || [])[s.timedOut]?.name || '',
+          }))}</p>`
+        : ''}
       ${!s.over && myTurn
         ? `<div class="g-guessrow">
             <input type="text" class="js-chword" maxlength="24" autocomplete="off"
@@ -3265,9 +3290,27 @@
      and did a document-wide lookup per card before it even checked the type.
      Now it only asks about cards that actually move, only while someone is
      looking, and once a second, which is all a seconds display can show. */
+  /* A word chain played against the clock. The deadline is the server's, so
+     everyone counts down to the same instant; the only thing here is drawing
+     it, and it writes into the two nodes it already has. */
+  function paintClocks() {
+    const now = serverNow();
+    for (const el of $$('.g-clock')) {
+      const left = Math.max(0, Number(el.dataset.deadline) - now);
+      const limit = Number(el.dataset.limit) * 1000 || 1;
+      const bar = $('i', el);
+      const num = $('.g-clock-num', el);
+      const secs = Math.ceil(left / 1000);
+      if (bar) bar.style.width = `${Math.max(0, Math.min(100, (left / limit) * 100))}%`;
+      if (num && num.textContent !== String(secs)) num.textContent = String(secs);
+      el.classList.toggle('low', left < 6000);
+    }
+  }
+
   const TICKING = new Set(['timer', 'countdown', 'streak']);
   const tickOnce = () => {
     if (!room || document.hidden) return;
+    paintClocks();
     for (const card of cards.values()) {
       if (!TICKING.has(card.type)) continue;
       const el = $(`.card[data-id="${card.id}"] .card-body`);
@@ -3282,6 +3325,15 @@
     tickOnce();
     setTimeout(tickLoop, 1000 - (Date.now() % 1000) + 20);
   };
+  /* The countdown bar is the one thing that wants to be smooth. It runs on
+     its own, only while a clock is actually on the board and only while
+     somebody is looking. */
+  (function sweep() {
+    requestAnimationFrame(() => {
+      if (!document.hidden && $('.g-clock')) paintClocks();
+      setTimeout(sweep, 120);
+    });
+  })();
   tickLoop();
   document.addEventListener('visibilitychange', () => !document.hidden && tickOnce());
 
@@ -3448,6 +3500,32 @@
     if (type === 'game') {
       extraFields = `<p class="sub-label" style="text-align:left; margin:-2px 0 10px">
         ${esc(t(GAME_META[game].descKey))}</p>`;
+      // word chain is the one game with a couple of house rules to agree on
+      if (game === 'chain') {
+        const dict = existing?.config?.dict || 'free';
+        const limit = String(existing?.config?.limit ?? 0);
+        const pick = (name, value, on, label, note) => `
+          <label class="rule-opt ${on ? 'on' : ''}">
+            <input type="radio" name="${name}" value="${value}" ${on ? 'checked' : ''}>
+            <b>${esc(label)}</b>${note ? `<span>${esc(note)}</span>` : ''}
+          </label>`;
+        extraFields += `
+          <div class="field">
+            <label>${esc(t('chainDictLabel'))}</label>
+            <div class="rule-row">
+              ${pick('cf-dict', 'free', dict === 'free', t('chainDictFree'), t('chainDictFreeNote'))}
+              ${pick('cf-dict', 'tr', dict === 'tr', t('chainDictTr'), t('chainDictTrNote'))}
+            </div>
+          </div>
+          <div class="field">
+            <label>${esc(t('chainLimitLabel'))}</label>
+            <div class="rule-row rule-row--tight">
+              ${[0, 15, 30, 60].map((n) =>
+                pick('cf-limit', String(n), limit === String(n),
+                  n ? t('chainLimitSec', { n }) : t('chainLimitOff'), '')).join('')}
+            </div>
+          </div>`;
+      }
     }
     if (type === 'tally') {
       extraFields = `
@@ -3690,7 +3768,13 @@
       if (!title) return $('#cf-title', box).focus();
       const config = {};
       let job = null; // photos still in flight when the card is saved
-      if (type === 'game') config.game = game;
+      if (type === 'game') {
+        config.game = game;
+        if (game === 'chain') {
+          config.dict = $('input[name="cf-dict"]:checked', box)?.value === 'tr' ? 'tr' : 'free';
+          config.limit = Number($('input[name="cf-limit"]:checked', box)?.value) || 0;
+        }
+      }
       if (type === 'tally') config.goal = parseInt($('#cf-goal', box)?.value) || 0;
       if (type === 'streak') {
         const v = $('#cf-start', box)?.value;

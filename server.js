@@ -12,8 +12,13 @@ import webpush from 'web-push';
 // how-to-play demo — the rules a player is shown are the rules that referee
 import {
   isGame, newGameState, nextRound, seatOf, applyMove, redactGame, CLOSEST_ROUND,
+  chainTimeout, useDictionary,
 } from './public/games.js';
 import { QUESTIONS } from './questions.js';
+import { WORDS } from './words.js';
+
+// the referee gets the dictionary; a browser never does
+useDictionary((w) => WORDS.has(w));
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = process.env.PORT || 3000;
@@ -593,7 +598,14 @@ const toInt = (v, min, max, dflt) => {
 function sanitizeConfig(type, raw) {
   const src = raw && typeof raw === 'object' ? raw : {};
   const out = {};
-  if (type === 'game') out.game = isGame(src.game) ? src.game : 'xox';
+  if (type === 'game') {
+    out.game = isGame(src.game) ? src.game : 'xox';
+    // word chain's house rules, agreed when the card is made
+    if (out.game === 'chain') {
+      out.dict = src.dict === 'tr' ? 'tr' : 'free';
+      out.limit = [0, 15, 30, 60].includes(Number(src.limit)) ? Number(src.limit) : 0;
+    }
+  }
   if (type === 'tally') out.goal = toInt(src.goal, 0, 100000, 0);
   if (type === 'countdown') out.targetAt = toInt(src.targetAt, 0, 4102444800000, 0);
   if (type === 'checkin') out.mode = src.mode === 'any' ? 'any' : 'all';
@@ -641,12 +653,20 @@ function dealQuestions() {
   return out;
 }
 
-const gameOpts = (game) => (game === 'closest' ? { questions: dealQuestions() } : {});
+/* What a round needs to start. Closest gets a fresh deal; word chain carries
+   the house rules forward — read off the card's config when it is made, and
+   off the state it already has on every round after that. */
+const gameOpts = (game, from) =>
+  game === 'closest'
+    ? { questions: dealQuestions() }
+    : game === 'chain'
+      ? { dict: from?.dict, limit: from?.limit }
+      : {};
 
 function defaultState(type, now, config) {
   if (type === 'game') {
     const game = isGame(config?.game) ? config.game : 'xox';
-    return newGameState(game, gameOpts(game));
+    return newGameState(game, gameOpts(game, config));
   }
   if (type === 'tally') return { count: 0 };
   if (type === 'streak') return { startAt: now, best: 0 };
@@ -998,6 +1018,58 @@ function sendTo(ws, msg) {
 const personKey = (ws) => ws.meta.userId || ws.meta.cid || ws.meta.id;
 const personOf = (ws) => ({ key: personKey(ws), name: ws.meta.name, avatar: ws.meta.avatar });
 
+/* Word chain can be played against a clock, and a clock only means anything
+   if something is actually watching it — a player who has walked away is
+   exactly the case it exists for. So the deadline is kept in the state for
+   both screens to draw, and the server keeps the one timer that enforces it.
+   One per card, replaced on every move, dropped when the card is. */
+const chainClocks = new Map();
+
+function clearChainClock(cardId) {
+  const h = chainClocks.get(cardId);
+  if (h) clearTimeout(h);
+  chainClocks.delete(cardId);
+}
+
+function armChainClock(code, cardId, state) {
+  clearChainClock(cardId);
+  if (state.game !== 'chain' || !state.limit || state.over) {
+    state.deadline = 0;
+    return;
+  }
+  // no clock until both chairs are taken; a chain of one is just waiting
+  if (state.players.length < 2) {
+    state.deadline = 0;
+    return;
+  }
+  state.deadline = Date.now() + state.limit * 1000;
+  chainClocks.set(
+    cardId,
+    setTimeout(() => {
+      chainClocks.delete(cardId);
+      try {
+        const row = store.getCard(cardId, code);
+        if (!row || row.type !== 'game') return;
+        const live = JSON.parse(row.state);
+        // it may have moved on between the timer being set and firing
+        if (live.deadline !== state.deadline || live.over) return;
+        if (!chainTimeout(live)) return;
+        live.deadline = 0;
+        store.updateCardState(JSON.stringify(live), cardId);
+        broadcastCard(code, cardId, { name: '', avatar: '', id: '' }, 'game:move');
+        const winner = live.players[live.over.winner];
+        broadcast(code, {
+          t: 'game:over',
+          id: cardId,
+          winner: winner ? { name: winner.name, avatar: winner.avatar } : null,
+        });
+      } catch (err) {
+        console.error('chain clock:', err.message);
+      }
+    }, state.limit * 1000 + 250) // a little slack for the round trip
+  );
+}
+
 function broadcastCard(code, cardId, by, verb, ref) {
   const row = store.getCard(cardId, code);
   if (!row) return;
@@ -1230,6 +1302,7 @@ function handleMessage(ws, msg) {
         [cfg.photo, ...(Array.isArray(cfg.goals) ? cfg.goals.map((g) => g?.photo) : [])].filter(Boolean)
       );
       for (const p of orphans) fs.unlink(path.join(UPLOAD_DIR, path.basename(p)), () => {});
+      clearChainClock(row.id); // nothing left to count down for
       q.deleteCard.run(row.id);
       broadcast(code, { t: 'card:delete', id: row.id, title: row.title, by });
       pushToRoom(code, 'cardDelete', [ws.meta.name, row.title], ws.meta.cid);
@@ -1305,7 +1378,8 @@ function handleMessage(ws, msg) {
         // anyone at the table can deal the next round, but only once this one
         // has actually finished
         if (!state.over) return;
-        nextRound(state, gameOpts(state.game));
+        nextRound(state, gameOpts(state.game, state));
+        armChainClock(code, row.id, state);
         store.updateCardState(JSON.stringify(state), row.id);
         broadcastCard(code, row.id, by, 'game:next');
         return;
@@ -1320,8 +1394,11 @@ function handleMessage(ws, msg) {
           store.updateCardState(JSON.stringify(state), row.id);
           broadcastCard(code, row.id, by, 'game:seat');
         }
+        // and tell the person who tried why it bounced, so they can fix it
+        if (state.why) sendTo(ws, { t: 'game:no', id: row.id, why: state.why });
         return;
       }
+      armChainClock(code, row.id, state);
       store.updateCardState(JSON.stringify(state), row.id);
       broadcastCard(code, row.id, by, 'game:move');
 
