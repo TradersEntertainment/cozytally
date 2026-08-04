@@ -1165,12 +1165,17 @@
         <span class="card-emoji">${esc(card.emoji || TYPE_META[card.type].emoji)}</span>
         <span class="card-title">${esc(card.title)}</span>
         <button class="card-grip" title="${esc(t('moveCard'))}" aria-label="${esc(t('moveCard'))}">≡</button>
+        ${card.type === 'game'
+          ? `<button class="icon-btn js-how" title="${esc(t('howToPlay'))}"
+               aria-label="${esc(t('howToPlay'))}">?</button>`
+          : ''}
         <button class="icon-btn js-edit" title="${esc(t('edit'))}">✏️</button>
         <button class="icon-btn js-del" title="${esc(t('del'))}">🗑️</button>
       </div>
       <div class="card-body"></div>`;
 
     $('.js-edit', el).onclick = () => openCardModal(card.type, card);
+    $('.js-how', el)?.addEventListener('click', () => openHowToPlay(card.config?.game || 'xox'));
     $('.js-del', el).onclick = async () => {
       const ok = await confirmModal({
         title: t('confirmDeleteTitle'),
@@ -1412,11 +1417,13 @@
       <div class="g-foot">
         <span class="sub-label">${esc(t('gameRound', { n: s.round || 1 }))}${boxes ? ' · ' + esc(boxes) : ''}</span>
         ${s.over ? `<button class="btn btn-primary btn-sm js-gnext">${esc(t('gameNext'))}</button>` : ''}
-      </div>`;
+      </div>
+      ${commentsHtml(card, 'gameCommentPh')}`;
 
     const move = (m) => send({ t: 'game:move', id: card.id, move: m });
     $('.js-gnext', body)?.addEventListener('click', () => send({ t: 'game:next', id: card.id }));
     wireGameBoard(kind, body, s, myTurn, move);
+    wireComments(body, card);
 
     if (opts.verb === 'game:move' && s.over && s.over.winner === mySeat) coinRain(body.closest('.card'));
   }
@@ -1511,6 +1518,179 @@
         </button>`;
       }).join('')}
     </div>`;
+  }
+
+  /* ---- how to play
+     A scripted game between two made-up people, played out move by move on
+     the real board by the real rules (public/games.js is the same module the
+     server referees with). Nothing here is a mock-up: if the rules changed,
+     the demo would change with them. */
+  const DEMO_A = { key: 'demo-a', name: 'Rabia', avatar: '🐰' };
+  const DEMO_B = { key: 'demo-b', name: 'Ömer', avatar: '🐻' };
+
+  /**
+   * Every edge of the dots board, drawn column by column. The order matters
+   * more than it looks: drawing all the horizontals and then all the
+   * verticals hands one player a 16–0 cascade at the very end, which teaches
+   * nothing. Going column by column closes boxes throughout and finishes
+   * 10–6, so the extra-turn rule shows up seven separate times.
+   */
+  function dotsDemoSteps() {
+    const order = [];
+    const seen = new Set();
+    const add = (dir, i) => {
+      const k = dir + i;
+      if (seen.has(k)) return;
+      seen.add(k);
+      order.push({ move: { dir, i } });
+    };
+    for (let c = 0; c < DOTS_N - 1; c++) {
+      for (let r = 0; r < DOTS_N; r++) add('h', r * (DOTS_N - 1) + c);
+      for (let r = 0; r < DOTS_N - 1; r++) {
+        add('v', r * DOTS_N + c);
+        add('v', r * DOTS_N + c + 1);
+      }
+    }
+    return order; // whoever's turn it is takes the next step
+  }
+
+  const DEMOS = {
+    xox: {
+      speed: 950,
+      steps: [
+        { move: { cell: 0 } },
+        { move: { cell: 4 } },
+        { move: { cell: 1 } },
+        { move: { cell: 2 }, tip: 'demoBlocks' },
+        { move: { cell: 3 } },
+        { move: { cell: 5 } },
+        { move: { cell: 6 } },
+      ],
+    },
+    connect4: {
+      speed: 850,
+      steps: [3, 4, 3, 4, 3, 4, 3].map((col) => ({ move: { col } })),
+    },
+    dots: { speed: 200, steps: dotsDemoSteps() },
+    truths: {
+      speed: 2400,
+      steps: [
+        { tip: 'demoTruthsWrite' },
+        { move: { statements: [], lie: 1 }, tip: 'demoTruthsGuess', truthsWrite: true },
+        { move: { guess: 1 }, tip: 'demoTruthsReveal' },
+      ],
+    },
+  };
+
+  const DEMO_HOW = {
+    xox: 'demoHowXox',
+    connect4: 'demoHowC4',
+    dots: 'demoHowDots',
+    truths: 'demoHowTruths',
+  };
+
+  function openHowToPlay(kind) {
+    const meta = GAME_META[kind] || GAME_META.xox;
+    const box = openModal(`
+      <h2>${meta.emoji} ${esc(t('howToPlayTitle', { game: t(meta.nameKey) }))}</h2>
+      <p class="sub-label" style="text-align:left; margin:-4px 0 12px">${esc(t(meta.descKey))}</p>
+      <div class="demo">
+        <div class="g-seats demo-seats"></div>
+        <div class="demo-board"></div>
+        <div class="demo-tip"></div>
+      </div>
+      <div class="modal-actions">
+        <button class="btn btn-ghost js-replay" hidden>${esc(t('demoReplay'))}</button>
+        <button class="btn btn-primary js-close">${esc(t('gotIt'))}</button>
+      </div>`);
+    $('.js-close', box).onclick = closeModal;
+
+    const boards = { xox: xoxBoard, connect4: c4Board, dots: dotsBoard, truths: truthsBoard };
+    const seatsEl = $('.demo-seats', box);
+    const boardEl = $('.demo-board', box);
+    const tipEl = $('.demo-tip', box);
+    const replay = $('.js-replay', box);
+    let timer = null;
+
+    const paint = (state, tip) => {
+      seatsEl.innerHTML = [DEMO_A, DEMO_B]
+        .map((p, i) => {
+          const live = !state.over && state.turn === i;
+          return `<span class="g-seat ${live ? 'live' : ''}">
+            <span class="g-disc p${i + 1}"></span>${p.avatar} ${esc(p.name)}
+            <b>${state.scores[i]}</b></span>`;
+        })
+        .join('');
+      // drawn as a spectator sees it, so nothing invites a tap
+      boardEl.innerHTML = boards[kind](state, -1, false);
+      tipEl.textContent = tip;
+    };
+
+    function run() {
+      clearTimeout(timer);
+      replay.hidden = true;
+      const G = window.CTGames;
+      if (!G) {
+        tipEl.textContent = t('demoUnavailable');
+        return;
+      }
+      const state = G.newGameState(kind);
+      G.seatOf(state, DEMO_A);
+      G.seatOf(state, DEMO_B);
+      paint(state, t('demoStart'));
+
+      const { steps, speed } = DEMOS[kind];
+      let n = 0;
+      const tick = () => {
+        // the modal may be long gone by now
+        if (!document.body.contains(boardEl)) return;
+        if (n >= steps.length) {
+          replay.hidden = false;
+          return;
+        }
+        const step = steps[n++];
+        if (step.move) {
+          const move = step.truthsWrite
+            ? { statements: [t('demoTruth1'), t('demoLie'), t('demoTruth2')], lie: 1 }
+            : step.move;
+          G.applyMove(state, state.turn, move);
+        }
+        const who = state.over
+          ? [DEMO_A, DEMO_B][state.over.winner === 'draw' ? 0 : state.over.winner]
+          : [DEMO_A, DEMO_B][state.turn === 0 ? 1 : 0];
+        let tip;
+        if (state.over) {
+          // dots wins on a count, so say the count — extra keys are simply
+          // not present in the other games' strings
+          const [a, bx] = state.over.boxes || [];
+          tip = state.over.winner === 'draw'
+            ? t('gameDrawMsg')
+            : t('demoWins', {
+                name: who.name,
+                how: t(DEMO_HOW[kind], { a: Math.max(a, bx), b: Math.min(a, bx) }),
+              });
+        } else if (step.tip) {
+          tip = t(step.tip, { name: who.name });
+        } else if (state.again) {
+          tip = t('demoBox', { name: who.name });
+        } else {
+          tip = t('demoPlays', { name: who.name });
+        }
+        paint(state, tip);
+
+        if (state.over) {
+          confetti();
+          replay.hidden = false;
+          return;
+        }
+        // linger on the good bits so a box closing actually registers
+        timer = setTimeout(tick, state.again ? Math.max(speed, 650) : speed);
+      };
+      timer = setTimeout(tick, 900);
+    }
+
+    replay.onclick = run;
+    run();
   }
 
   function wireGameBoard(kind, body, s, myTurn, move) {
@@ -1757,19 +1937,12 @@
     }
   }
 
-  // ---- sticky note
-  function renderNoteBody(body, card) {
-    const text = card.state.text || '';
+  /* A small conversation attached to a card. Notes have had one for a while;
+     games use the same thing so you can talk while you play. */
+  function commentsHtml(card, placeholderKey = 'commentPh') {
     const comments = card.state.comments || [];
     const me = myKey();
-
-    body.innerHTML = `
-      <div class="note-paper">
-        <div class="note-scroll">${text
-          ? esc(text)
-          : `<span class="note-empty">${esc(t('noteEmpty'))}</span>`}</div>
-        ${text && card.state.author ? `<span class="note-author">— ${esc(card.state.author)}</span>` : ''}
-      </div>
+    return `
       ${comments.length
         ? `<div class="note-comments">
             ${comments
@@ -1787,9 +1960,40 @@
           </div>`
         : ''}
       <form class="ncom-add">
-        <input type="text" maxlength="300" class="js-ncom" placeholder="${esc(t('commentPh'))}" autocomplete="off">
+        <input type="text" maxlength="300" class="js-ncom" placeholder="${esc(t(placeholderKey))}" autocomplete="off">
         <button type="submit" class="small-btn accent">💬</button>
       </form>`;
+  }
+
+  function wireComments(body, card) {
+    $$('.ncom-del', body).forEach((btn) => {
+      btn.onclick = () =>
+        send({ t: 'card:comment', id: card.id, op: 'remove', commentId: btn.closest('.ncom').dataset.id });
+    });
+    $('.ncom-add', body).addEventListener('submit', (e) => {
+      e.preventDefault();
+      const input = $('.js-ncom', body);
+      const value = input.value.trim();
+      if (!value) return;
+      send({ t: 'card:comment', id: card.id, text: value });
+      input.value = '';
+    });
+    const list = $('.note-comments', body);
+    if (list) list.scrollTop = list.scrollHeight;
+  }
+
+  // ---- sticky note
+  function renderNoteBody(body, card) {
+    const text = card.state.text || '';
+
+    body.innerHTML = `
+      <div class="note-paper">
+        <div class="note-scroll">${text
+          ? esc(text)
+          : `<span class="note-empty">${esc(t('noteEmpty'))}</span>`}</div>
+        ${text && card.state.author ? `<span class="note-author">— ${esc(card.state.author)}</span>` : ''}
+      </div>
+      ${commentsHtml(card)}`;
 
     // tapping the paper edits the note, but not while scrolling through it
     const paper = $('.note-paper', body);
@@ -1800,22 +2004,7 @@
       downY = null;
     });
 
-    $$('.ncom-del', body).forEach((btn) => {
-      btn.onclick = () =>
-        send({ t: 'note:comment', id: card.id, op: 'remove', commentId: btn.closest('.ncom').dataset.id });
-    });
-
-    $('.ncom-add', body).addEventListener('submit', (e) => {
-      e.preventDefault();
-      const input = $('.js-ncom', body);
-      const value = input.value.trim();
-      if (!value) return;
-      send({ t: 'note:comment', id: card.id, text: value });
-      input.value = '';
-    });
-
-    const list = $('.note-comments', body);
-    if (list) list.scrollTop = list.scrollHeight;
+    wireComments(body, card);
   }
 
   function openNoteEditor(card) {

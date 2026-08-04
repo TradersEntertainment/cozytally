@@ -7,7 +7,9 @@ import express from 'express';
 import { WebSocketServer } from 'ws';
 import Database from 'better-sqlite3';
 import webpush from 'web-push';
-import { GAMES, isGame, newGameState, nextRound, seatOf, applyMove, redactGame } from './games.js';
+// lives under public/ because the browser loads the very same file to run the
+// how-to-play demo — the rules a player is shown are the rules that referee
+import { isGame, newGameState, nextRound, seatOf, applyMove, redactGame } from './public/games.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = process.env.PORT || 3000;
@@ -184,6 +186,7 @@ const PUSH_STR = {
     money: (n, c, v) => `${n} 💰 ${v} · ${c}`,
     note: (n, t) => `${n} 💌 ${t}`,
     noteComment: (n, c, t) => `${n} “${c}” notuna yorum yaptı 💬 ${t}`,
+    gameComment: (n, c, t) => `${n} oyunda yazdı 💬 ${c}: ${t}`,
     chat: (n, t) => `${n}: ${t}`,
     cheer: (n) => `${n} 💖✨`,
     timerStart: (n, c) => `${n} başlattı: ${c} ⏳`,
@@ -213,6 +216,7 @@ const PUSH_STR = {
     money: (n, c, v) => `${n} 💰 ${v} · ${c}`,
     note: (n, t) => `${n} 💌 ${t}`,
     noteComment: (n, c, t) => `${n} commented on “${c}” 💬 ${t}`,
+    gameComment: (n, c, t) => `${n} said in the game 💬 ${c}: ${t}`,
     chat: (n, t) => `${n}: ${t}`,
     cheer: (n) => `${n} 💖✨`,
     timerStart: (n, c) => `${n} started: ${c} ⏳`,
@@ -522,6 +526,8 @@ function newRoomCode() {
 const CARD_TYPES = new Set([
   'tally', 'streak', 'timer', 'countdown', 'note', 'money', 'list', 'checkin', 'game',
 ]);
+/** cards that carry a little conversation of their own */
+const COMMENTABLE = new Set(['note', 'game']);
 const MAX_LIST_ITEMS = 60;
 const MAX_GOALS = 6;
 const KEEP_DAYS = 90;
@@ -1474,9 +1480,12 @@ function handleMessage(ws, msg) {
       return;
     }
 
-    case 'note:comment': {
+    // `note:comment` is the old name, still accepted so a tab left open
+    // across a deploy keeps working
+    case 'note:comment':
+    case 'card:comment': {
       const row = store.getCard(clampStr(msg.id, 40), code);
-      if (!row || row.type !== 'note') return;
+      if (!row || !COMMENTABLE.has(row.type)) return;
       const state = JSON.parse(row.state);
       state.comments = Array.isArray(state.comments) ? state.comments : [];
 
@@ -1501,9 +1510,14 @@ function handleMessage(ws, msg) {
       }
 
       store.updateCardState(JSON.stringify(state), row.id);
-      broadcastCard(code, row.id, by, `note:${msg.op === 'remove' ? 'uncomment' : 'comment'}`);
+      broadcastCard(code, row.id, by, `${row.type}:${msg.op === 'remove' ? 'uncomment' : 'comment'}`);
       if (msg.op !== 'remove') {
-        pushToRoom(code, 'noteComment', [ws.meta.name, row.title, clampStr(msg.text, 70)], ws.meta.cid);
+        pushToRoom(
+          code,
+          row.type === 'game' ? 'gameComment' : 'noteComment',
+          [ws.meta.name, row.title, clampStr(msg.text, 70)],
+          ws.meta.cid
+        );
       }
       return;
     }

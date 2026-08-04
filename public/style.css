@@ -2126,6 +2126,41 @@ body.reordering {
 .g-tstmt.picked { box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 60%, transparent); }
 .g-tmark { flex: 0 0 auto; font-size: 1.05rem; }
 
+/* ---- the how-to-play walkthrough */
+.demo {
+  display: flex;
+  flex-direction: column;
+  gap: 11px;
+  padding: 13px;
+  border-radius: var(--r-md);
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--hairline);
+  --accent: var(--lavender);
+}
+
+.demo-board { display: flex; justify-content: center; }
+.demo-board > * { max-width: 300px; }
+
+.demo-tip {
+  min-height: 2.6em;
+  text-align: center;
+  font-size: var(--t-callout);
+  color: var(--ink-2);
+  /* a caption that changes every move shouldn't make the box jump */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  animation: demo-tip-in 0.3s var(--ease-out);
+}
+
+@keyframes demo-tip-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: none; }
+}
+
+/* nothing in the walkthrough is meant to look pressable */
+.demo-board button { cursor: default; pointer-events: none; }
+
 /* ============================================================
    dock — floating glass toolbar
    ============================================================ */
