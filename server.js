@@ -92,6 +92,14 @@ if (!db.prepare('PRAGMA table_info(push_subs)').all().some((c) => c.name === 'la
   db.exec("ALTER TABLE push_subs ADD COLUMN lang TEXT NOT NULL DEFAULT 'tr'");
 }
 
+// Who wrote a message, as opposed to which browser it came from. Messages
+// only ever carried a device id, so signing in on a second device made your
+// own words look like somebody else's. Older rows keep NULL and fall back to
+// the device id, which is all we ever knew about them.
+if (!db.prepare('PRAGMA table_info(messages)').all().some((c) => c.name === 'user_id')) {
+  db.exec('ALTER TABLE messages ADD COLUMN user_id TEXT');
+}
+
 /* ------------------------------------------------------------------
    Encryption at rest.
 
@@ -249,7 +257,8 @@ const q = {
   cardIds: db.prepare('SELECT id FROM cards WHERE room_code = ?'),
   setCardSort: db.prepare('UPDATE cards SET sort = ? WHERE id = ? AND room_code = ?'),
   insertMsg: db.prepare(
-    'INSERT INTO messages (id, room_code, cid, author, avatar, text, photo, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+    `INSERT INTO messages (id, room_code, cid, user_id, author, avatar, text, photo, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ),
   recentMsgs: db.prepare('SELECT * FROM messages WHERE room_code = ? ORDER BY created_at DESC LIMIT ?'),
   setSeen: db.prepare(
@@ -258,6 +267,10 @@ const q = {
        seen_at = MAX(seen_at, excluded.seen_at)`
   ),
   seenForRoom: db.prepare('SELECT person, name, avatar, seen_at FROM chat_seen WHERE room_code = ?'),
+  getSeen: db.prepare('SELECT * FROM chat_seen WHERE room_code = ? AND person = ?'),
+  deleteSeen: db.prepare('DELETE FROM chat_seen WHERE room_code = ? AND person = ?'),
+  getMeta: db.prepare('SELECT v FROM schema_meta WHERE k = ?'),
+  setMeta: db.prepare('INSERT OR REPLACE INTO schema_meta (k, v) VALUES (?, ?)'),
   oldMsgs: db.prepare(
     'SELECT id, photo FROM messages WHERE room_code = ? AND id NOT IN (SELECT id FROM messages WHERE room_code = ? ORDER BY created_at DESC LIMIT 500)'
   ),
@@ -350,7 +363,7 @@ const store = {
   updateCardState: (state, id) => q.updateCardState.run(enc(state), id),
 
   insertMsg: (m, code) =>
-    q.insertMsg.run(m.id, code, m.cid, enc(m.author), m.avatar, enc(m.text), m.photo, m.createdAt),
+    q.insertMsg.run(m.id, code, m.cid, m.userId || null, enc(m.author), m.avatar, enc(m.text), m.photo, m.createdAt),
   recentMsgs: (code, n) => q.recentMsgs.all(code, n).map(readMsgRow),
   setSeen: (code, person, name, avatar, at) => q.setSeen.run(code, person, enc(name), avatar, at),
   seenForRoom: (code) =>
@@ -412,6 +425,65 @@ try {
 } catch (err) {
   console.error('money backfill skipped:', err.message);
 }
+
+/* Read receipts arrived after people had already been talking for weeks, so
+   every older conversation starts blank: nothing is marked until the other
+   person next opens the chat, which reads as "the feature is broken".
+
+   We can't know what was read, but we do know something almost as good: if
+   you wrote a message, you had the chat open, so you had seen everything up
+   to that moment. Seed each person's receipt from the last thing they said.
+
+   Runs exactly once, recorded in schema_meta — re-running would resurrect the
+   guest rows that mergeSeen() below deliberately deletes. */
+const SEEN_BACKFILL_KEY = 'seen_backfill_v1';
+const backfillSeen = db.transaction(() => {
+  if (q.getMeta.get(SEEN_BACKFILL_KEY)) return 0;
+  // the newest message from each person in each room, keyed the way receipts
+  // are: by account where we know it, by device otherwise
+  const rows = db
+    .prepare(
+      `SELECT m.room_code, COALESCE(m.user_id, m.cid) AS person, m.author, m.avatar, m.created_at
+         FROM messages m
+         JOIN (SELECT room_code, COALESCE(user_id, cid) AS person, MAX(created_at) AS mx
+                 FROM messages WHERE COALESCE(user_id, cid) IS NOT NULL
+                                 AND COALESCE(user_id, cid) <> ''
+                GROUP BY room_code, COALESCE(user_id, cid)) t
+           ON t.room_code = m.room_code
+          AND t.person = COALESCE(m.user_id, m.cid)
+          AND t.mx = m.created_at`
+    )
+    .all();
+  for (const r of rows) {
+    // r.author is still ciphertext and chat_seen.name is stored the same way,
+    // so it goes in as-is — store.setSeen would encrypt it a second time and
+    // the name would come back as '???'.
+    q.setSeen.run(r.room_code, r.person, r.author, r.avatar || '🐻', r.created_at);
+  }
+  q.setMeta.run(SEEN_BACKFILL_KEY, String(rows.length));
+  return rows.length;
+});
+
+try {
+  const n = backfillSeen();
+  if (n) console.log(`Seeded read receipts for ${n} person/room pair(s) from chat history`);
+} catch (err) {
+  console.error('read-receipt backfill skipped:', err.message);
+}
+
+/* A receipt is filed under your account id once you sign in, but under this
+   device's id while you are a guest. Someone who used a room as a guest and
+   later made an account would otherwise leave the guest row behind forever —
+   read as a second person, stuck under whatever they last read as a guest.
+   Fold it into the account row the next time they connect. */
+const mergeSeen = db.transaction((code, cid, name, avatar, userId) => {
+  const guest = q.getSeen.get(code, cid);
+  if (!guest) return;
+  // keep how far they had read, but label it with who they are now rather
+  // than the nickname they were using before they signed in
+  store.setSeen(code, userId, name, avatar, guest.seen_at);
+  q.deleteSeen.run(code, cid);
+});
 
 const reorderCards = db.transaction((code, ids) => {
   ids.forEach((id, i) => q.setCardSort.run(i, id, code));
@@ -905,6 +977,14 @@ function handleMessage(ws, msg) {
     ws.meta.userId = account?.id || null;
     ws.meta.joined = true;
     if (account) q.linkRoom.run(account.id, code, now);
+    // before the room payload is read, so they never see their own ghost
+    if (account && ws.meta.cid) {
+      try {
+        mergeSeen(code, ws.meta.cid, ws.meta.name, ws.meta.avatar, account.id);
+      } catch (err) {
+        console.error('seen merge skipped:', err.message);
+      }
+    }
 
     let set = roomSockets.get(code);
     if (!set) roomSockets.set(code, (set = new Set()));
@@ -922,7 +1002,7 @@ function handleMessage(ws, msg) {
         .recentMsgs(code, 60)
         .reverse()
         .map((m) => ({
-          id: m.id, cid: m.cid, author: m.author, avatar: m.avatar,
+          id: m.id, cid: m.cid, userId: m.user_id, author: m.author, avatar: m.avatar,
           text: m.text, photo: m.photo, createdAt: m.created_at,
         })),
       now,
@@ -1284,6 +1364,7 @@ function handleMessage(ws, msg) {
       const m = {
         id: crypto.randomUUID(),
         cid: ws.meta.cid || '',
+        userId: ws.meta.userId || null,
         author: ws.meta.name,
         avatar: ws.meta.avatar,
         text,

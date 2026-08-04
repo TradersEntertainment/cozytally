@@ -749,7 +749,7 @@
         chatMsgs.push(msg.msg);
         if (chatMsgs.length > 200) chatMsgs.shift();
         appendChatMsg(msg.msg, true);
-        if (!chatOpen && msg.msg.cid !== myCid) {
+        if (!chatOpen && !isMine(msg.msg)) {
           chatUnread++;
           updateChatBadge();
           toast(`${msg.msg.author}: ${msg.msg.photo ? '📷 ' : ''}${msg.msg.text.slice(0, 42)}`);
@@ -2296,9 +2296,13 @@
     badge.textContent = chatUnread > 9 ? '9+' : chatUnread;
   }
 
+  /** Yours if your account wrote it — or, for guests and messages older than
+      accounts, if this browser did. */
+  const isMine = (m) => (m.userId ? m.userId === auth?.user?.id : m.cid === myCid);
+
   function chatMsgEl(m) {
     const el = document.createElement('div');
-    el.className = 'msg' + (m.cid === myCid ? ' mine' : '');
+    el.className = 'msg' + (isMine(m) ? ' mine' : '');
     el.dataset.at = m.createdAt;
     const time = new Date(m.createdAt).toLocaleTimeString(lang === 'tr' ? 'tr-TR' : 'en-US', {
       hour: '2-digit',
@@ -2316,11 +2320,16 @@
   /** Read receipts sit under the newest message each person has actually seen. */
   function renderSeen() {
     const mine = $$('#chat-list .msg.mine');
-    $$('#chat-list .msg-seen').forEach((el) => (el.textContent = ''));
+    $$('#chat-list .msg-seen').forEach((el) => {
+      el.textContent = '';
+      el.title = '';
+    });
     if (!mine.length) return;
 
     for (const watcher of seenList) {
-      if (watcher.person === myKey()) continue;
+      // your own receipt, filed under your account or — as a guest, or before
+      // the server folded the two together — under this device
+      if (watcher.person === myKey() || watcher.person === myCid) continue;
       // the last message of mine they have seen
       let target = null;
       for (const el of mine) {
@@ -2330,6 +2339,16 @@
       const slot = $('.msg-seen', target);
       slot.textContent = `${slot.textContent} ${watcher.avatar}`.trim();
       slot.title = t('seenBy', { name: watcher.name });
+    }
+
+    // Nobody has read the last thing you said yet. Say so, rather than
+    // showing nothing at all — otherwise "not read" and "receipts are broken"
+    // look identical.
+    const last = mine[mine.length - 1];
+    const slot = $('.msg-seen', last);
+    if (!slot.textContent) {
+      slot.innerHTML = '<span class="tick">✓</span>';
+      slot.title = t('sent');
     }
   }
 
@@ -2351,7 +2370,7 @@
     $('.chat-empty', list)?.remove();
     const nearBottom = list.scrollHeight - list.scrollTop - list.clientHeight < 140;
     list.appendChild(chatMsgEl(m));
-    if (nearBottom || m.cid === myCid) list.scrollTop = list.scrollHeight;
+    if (nearBottom || isMine(m)) list.scrollTop = list.scrollHeight;
     renderSeen();
     markSeen();
   }

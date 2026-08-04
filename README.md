@@ -28,8 +28,10 @@ o zaman odalar sadece o cihazda durur.
 
 Ayrıca her odada:
 
-- 💬 **Kalıcı sohbet** — mesajlar veritabanında saklanır, sonra girince de durur; 📷 fotoğraf da atabilir,
-  kimin gördüğünü mesajın altındaki avatardan anlayabilirsiniz
+- 💬 **Kalıcı sohbet** — mesajlar veritabanında saklanır, sonra girince de durur; 📷 fotoğraf da atabilirsiniz.
+  Gönderdiğin mesajın altında önce sönük bir ✓ (ulaştı) durur, karşı taraf sohbeti açınca yerini onun
+  avatarına bırakır — avatar hep gördüğü **son** mesajın altındadır. Uygulama arka plandayken ya da sohbet
+  kapalıyken "gördüm" denmez
 - 🔔 **Push bildirimleri** — odadaki 🔔 düğmesiyle açılır. Kart eklenince/silinince, çetele
   artınca, kumbaraya para girince, listeye madde eklenince, kronometre başlayınca, not
   bırakılınca, mesaj gelince ve kalp gönderilince haber verir. Uygulamaya bakan kişiye
