@@ -124,7 +124,21 @@
     money: { emoji: '💰', nameKey: 'typeMoney', descKey: 'typeMoneyDesc' },
     list: { emoji: '📝', nameKey: 'typeList', descKey: 'typeListDesc' },
     checkin: { emoji: '🤝', nameKey: 'typeCheckin', descKey: 'typeCheckinDesc' },
+    game: { emoji: '🎲', nameKey: 'typeGame', descKey: 'typeGameDesc' },
   };
+
+  /* The four mini games. They all live behind the one 'game' card type, so
+     the picker lists these rather than the type. Board sizes are fixed on the
+     server in games.js — repeated here only to lay the grid out. */
+  const GAME_META = {
+    xox: { emoji: '⭕', nameKey: 'gameXox', descKey: 'gameXoxDesc' },
+    connect4: { emoji: '🔵', nameKey: 'gameConnect4', descKey: 'gameConnect4Desc' },
+    dots: { emoji: '⬜', nameKey: 'gameDots', descKey: 'gameDotsDesc' },
+    truths: { emoji: '🤥', nameKey: 'gameTruths', descKey: 'gameTruthsDesc' },
+  };
+  const C4_COLS = 7;
+  const C4_ROWS = 6;
+  const DOTS_N = 5;
 
   // ---- shared day helpers (local calendar, so "today" matches your phone)
   const pad2 = (n) => String(n).padStart(2, '0');
@@ -816,6 +830,15 @@
         return;
       }
 
+      case 'game:over': {
+        // whoever won, both screens celebrate — it's a game between friends
+        confetti();
+        centerCheer(
+          msg.draw ? t('gameDrawMsg') : t('gameWonCheer', { name: msg.winner?.name || '?' })
+        );
+        return;
+      }
+
       case 'money:goal': {
         confetti();
         centerCheer(msg.goal?.title ? t('goalReachedCheer', { name: msg.goal.title }) : t('moneyReached'));
@@ -879,7 +902,12 @@
       'list:add': 'toastListAdd',
       'list:toggle': 'toastListDone',
       'checkin:tick': 'toastCheckin',
+      'game:move': 'toastGameMove',
+      'game:next': 'toastGameNext',
+      'game:seat': 'toastGameSeat',
     };
+    // the win gets its own confetti; don't also toast the move that caused it
+    if (verb === 'game:move' && card.state?.over) return;
     if (map[verb]) toast(t(map[verb], vars));
   }
 
@@ -1161,6 +1189,7 @@
     if (card.type === 'money') renderMoneyBody(body, card, opts);
     if (card.type === 'list') renderListBody(body, card);
     if (card.type === 'checkin') renderCheckinBody(body, card);
+    if (card.type === 'game') renderGameBody(body, card, opts);
 
     if (typing) {
       const again = el.querySelector('input.' + typing.cls.trim().split(/\s+/).join('.'));
@@ -1315,6 +1344,202 @@
 
     const clearBtn = $('.js-clear-done', body);
     if (clearBtn) clearBtn.onclick = () => send({ t: 'list', id: card.id, op: 'clear-done' });
+  }
+
+  // ---- mini games
+  /**
+   * All four games wear the same frame — two seats, a scoreboard, whose turn
+   * it is — and differ only in the board underneath. The browser draws what
+   * the server sent and asks for moves; it never decides whether one is
+   * legal, so the two of you can't end up looking at different boards.
+   */
+  function renderGameBody(body, card, opts = {}) {
+    const s = card.state || {};
+    const kind = card.config?.game || s.game || 'xox';
+    const seats = s.players || [];
+    const mySeat = seats.findIndex((p) => p.key === myKey());
+    /* Seats are handed out by the server on someone's first move, so a player
+       who hasn't sat down yet still has to be able to touch the board — the
+       chair they would take is simply the next free one. */
+    const openSeat = mySeat < 0 && seats.length < 2 ? seats.length : -1;
+    const playSeat = mySeat >= 0 ? mySeat : openSeat;
+    const myTurn = playSeat >= 0 && s.turn === playSeat && !s.over;
+
+    const seatChip = (i) => {
+      const p = seats[i];
+      const live = !s.over && s.turn === i;
+      if (!p) {
+        return `<span class="g-seat empty ${live ? 'live' : ''}">
+          <span class="g-disc p${i + 1}"></span>${esc(t('gameFreeSeat'))}</span>`;
+      }
+      return `<span class="g-seat ${live ? 'live' : ''} ${i === mySeat ? 'me' : ''}">
+        <span class="g-disc p${i + 1}"></span>${esc(p.avatar)} ${esc(p.name)}
+        <b>${s.scores?.[i] ?? 0}</b></span>`;
+    };
+
+    let status;
+    if (s.over) {
+      status = s.over.winner === 'draw'
+        ? t('gameDrawMsg')
+        : s.over.winner === mySeat
+          ? t('gameYouWon')
+          : t('gameTheyWon', { name: seats[s.over.winner]?.name || '?' });
+    } else if (myTurn && mySeat < 0) {
+      status = t('gameSitDown'); // your move is what puts you in the chair
+    } else if (myTurn) {
+      status = s.again ? t('gameAgain') : t('gameYourTurn');
+    } else if (mySeat < 0 && seats.length >= 2) {
+      status = t('gameSpectator');
+    } else if (seats[s.turn]) {
+      status = t('gameTheirTurn', { name: seats[s.turn].name });
+    } else {
+      status = t('gameWaitingOther'); // the chair whose turn it is, is empty
+    }
+
+    // in dots the thing you actually watch climb is boxes, not rounds won
+    const boxes = kind === 'dots'
+      ? t('gameBoxes', {
+          a: s.boxes.filter((v) => v === 1).length,
+          b: s.boxes.filter((v) => v === 2).length,
+        })
+      : '';
+
+    const boards = { xox: xoxBoard, connect4: c4Board, dots: dotsBoard, truths: truthsBoard };
+    body.innerHTML = `
+      <div class="g-seats">${seatChip(0)}${seatChip(1)}</div>
+      <div class="g-status ${myTurn ? 'mine' : ''} ${s.over ? 'over' : ''}">${esc(status)}</div>
+      ${boards[kind](s, mySeat, myTurn)}
+      <div class="g-foot">
+        <span class="sub-label">${esc(t('gameRound', { n: s.round || 1 }))}${boxes ? ' · ' + esc(boxes) : ''}</span>
+        ${s.over ? `<button class="btn btn-primary btn-sm js-gnext">${esc(t('gameNext'))}</button>` : ''}
+      </div>`;
+
+    const move = (m) => send({ t: 'game:move', id: card.id, move: m });
+    $('.js-gnext', body)?.addEventListener('click', () => send({ t: 'game:next', id: card.id }));
+    wireGameBoard(kind, body, s, myTurn, move);
+
+    if (opts.verb === 'game:move' && s.over && s.over.winner === mySeat) coinRain(body.closest('.card'));
+  }
+
+  const discOf = (v) => (v ? `<span class="g-disc p${v}"></span>` : '');
+
+  function xoxBoard(s, mySeat, myTurn) {
+    const marks = ['', '✕', '◯'];
+    return `<div class="g-xox ${myTurn ? 'playable' : ''}">
+      ${s.board.map((v, i) => `
+        <button class="g-cell ${v ? 'taken' : ''} ${s.over?.line?.includes(i) ? 'win' : ''}
+          ${i === s.last ? 'last' : ''}" data-cell="${i}" ${v || !myTurn ? 'disabled' : ''}>
+          ${v ? `<span class="g-mark p${v}">${marks[v]}</span>` : ''}
+        </button>`).join('')}
+    </div>`;
+  }
+
+  function c4Board(s, mySeat, myTurn) {
+    // one tall button per column: on a phone you aim at a column, not a hole
+    const cols = Array.from({ length: C4_COLS }, (_, c) => {
+      const full = !!s.board[c];
+      const holes = Array.from({ length: C4_ROWS }, (_, r) => {
+        const i = r * C4_COLS + c;
+        return `<span class="g-hole ${s.over?.line?.includes(i) ? 'win' : ''} ${i === s.last ? 'last' : ''}">
+          ${discOf(s.board[i])}</span>`;
+      }).join('');
+      return `<button class="g-col" data-col="${c}" ${full || !myTurn ? 'disabled' : ''}>${holes}</button>`;
+    }).join('');
+    return `<div class="g-c4 ${myTurn ? 'playable' : ''}">${cols}</div>`;
+  }
+
+  function dotsBoard(s, mySeat, myTurn) {
+    const parts = [];
+    for (let r = 0; r < DOTS_N; r++) {
+      for (let c = 0; c < DOTS_N; c++) {
+        parts.push(`<span class="g-dot" style="grid-row:${r * 2 + 1};grid-column:${c * 2 + 1}"></span>`);
+        if (c < DOTS_N - 1) {
+          const i = r * (DOTS_N - 1) + c;
+          const on = s.h[i];
+          parts.push(`<button class="g-edge h ${on ? 'on p' + on : ''}
+            ${s.last?.dir === 'h' && s.last.i === i ? 'last' : ''}"
+            data-dir="h" data-i="${i}" style="grid-row:${r * 2 + 1};grid-column:${c * 2 + 2}"
+            ${on || !myTurn ? 'disabled' : ''}></button>`);
+        }
+      }
+      if (r < DOTS_N - 1) {
+        for (let c = 0; c < DOTS_N; c++) {
+          const i = r * DOTS_N + c;
+          const on = s.v[i];
+          parts.push(`<button class="g-edge v ${on ? 'on p' + on : ''}
+            ${s.last?.dir === 'v' && s.last.i === i ? 'last' : ''}"
+            data-dir="v" data-i="${i}" style="grid-row:${r * 2 + 2};grid-column:${c * 2 + 1}"
+            ${on || !myTurn ? 'disabled' : ''}></button>`);
+          if (c < DOTS_N - 1) {
+            const b = r * (DOTS_N - 1) + c;
+            parts.push(`<span class="g-box ${s.boxes[b] ? 'p' + s.boxes[b] : ''}"
+              style="grid-row:${r * 2 + 2};grid-column:${c * 2 + 2}">
+              ${s.boxes[b] ? (s.boxes[b] === 1 ? '●' : '○') : ''}</span>`);
+          }
+        }
+      }
+    }
+    return `<div class="g-dots ${myTurn ? 'playable' : ''}">${parts.join('')}</div>`;
+  }
+
+  function truthsBoard(s, mySeat, myTurn) {
+    if (s.phase === 'writing') {
+      if (!myTurn) {
+        return `<div class="g-truths waiting">${esc(t('gameTruthsWaiting'))}</div>`;
+      }
+      return `<div class="g-truths">
+        <p class="sub-label">${esc(t('gameTruthsHint'))}</p>
+        ${[0, 1, 2].map((i) => `
+          <label class="g-tline">
+            <input type="radio" name="lie-${s.round}" class="js-lie" value="${i}" ${i === 2 ? 'checked' : ''}>
+            <input type="text" class="js-stmt" maxlength="120" data-i="${i}"
+              placeholder="${esc(t('gameTruthsPh', { n: i + 1 }))}" autocomplete="off">
+          </label>`).join('')}
+        <button class="btn btn-primary btn-sm js-tsend">${esc(t('gameTruthsSend'))}</button>
+      </div>`;
+    }
+
+    const done = s.phase === 'done';
+    return `<div class="g-truths">
+      <p class="sub-label">${esc(done ? t('gameTruthsResult') : myTurn ? t('gameTruthsPick') : t('gameTruthsTheyPick'))}</p>
+      ${s.statements.map((text, i) => {
+        const isLie = done && s.over?.lie === i;
+        const picked = done && s.over?.guess === i;
+        return `<button class="g-tstmt ${isLie ? 'lie' : ''} ${picked ? 'picked' : ''}"
+          data-guess="${i}" ${myTurn && !done ? '' : 'disabled'}>
+          <span class="g-tmark">${done ? (isLie ? '🤥' : '✅') : '?'}</span>${esc(text)}
+        </button>`;
+      }).join('')}
+    </div>`;
+  }
+
+  function wireGameBoard(kind, body, s, myTurn, move) {
+    if (!myTurn) return;
+    if (kind === 'xox') {
+      $$('.g-cell:not([disabled])', body).forEach((b) => (b.onclick = () => move({ cell: Number(b.dataset.cell) })));
+    }
+    if (kind === 'connect4') {
+      $$('.g-col:not([disabled])', body).forEach((b) => (b.onclick = () => move({ col: Number(b.dataset.col) })));
+    }
+    if (kind === 'dots') {
+      $$('.g-edge:not([disabled])', body).forEach(
+        (b) => (b.onclick = () => move({ dir: b.dataset.dir, i: Number(b.dataset.i) }))
+      );
+    }
+    if (kind === 'truths') {
+      const send3 = $('.js-tsend', body);
+      if (send3) {
+        send3.onclick = () => {
+          const statements = $$('.js-stmt', body).map((el) => el.value.trim());
+          if (statements.some((v) => !v)) return $$('.js-stmt', body).find((el) => !el.value.trim())?.focus();
+          const lie = Number($$('.js-lie', body).find((el) => el.checked)?.value ?? 2);
+          move({ statements, lie });
+        };
+      }
+      $$('.g-tstmt:not([disabled])', body).forEach(
+        (b) => (b.onclick = () => move({ guess: Number(b.dataset.guess) }))
+      );
+    }
   }
 
   // ---- money pot
@@ -1796,9 +2021,23 @@
           )
           .join('')}
       </div>
+      <h3 class="pack-head">${esc(t('gamesTitle'))}</h3>
+      <div class="type-grid">
+        ${Object.entries(GAME_META)
+          .map(
+            ([game, meta]) => `
+          <button class="type-btn game-btn" data-game="${game}">
+            <span class="t-emoji">${meta.emoji}</span>
+            <span class="t-name">${esc(t(meta.nameKey))}</span>
+            <span class="t-desc">${esc(t(meta.descKey))}</span>
+          </button>`
+          )
+          .join('')}
+      </div>
       <h3 class="pack-head">${esc(t('orSingleCard'))}</h3>
       <div class="type-grid">
         ${Object.entries(TYPE_META)
+          .filter(([type]) => type !== 'game') // it has its own section above
           .map(
             ([type, meta]) => `
           <button class="type-btn" data-type="${type}">
@@ -1809,8 +2048,11 @@
           )
           .join('')}
       </div>`);
-    $$('.type-btn', box).forEach((btn) => {
+    $$('.type-btn[data-type]', box).forEach((btn) => {
       btn.onclick = () => openCardModal(btn.dataset.type, null);
+    });
+    $$('.game-btn', box).forEach((btn) => {
+      btn.onclick = () => openCardModal('game', null, btn.dataset.game);
     });
     $$('.pack-btn', box).forEach((btn) => {
       btn.onclick = () => openPackModal(btn.dataset.pack);
@@ -1901,16 +2143,23 @@
     setTimeout(() => $('#pk-name', box)?.focus(), 60);
   }
 
-  function openCardModal(type, existing) {
+  function openCardModal(type, existing, gameKind) {
     const isEdit = !!existing;
     const meta = TYPE_META[type];
-    let emoji = existing?.emoji || meta.emoji;
+    // the four games share one card type, so which one it is comes either
+    // from the picker or from the card being edited
+    const game = type === 'game' ? existing?.config?.game || gameKind || 'xox' : null;
+    let emoji = existing?.emoji || (game ? GAME_META[game].emoji : meta.emoji);
 
     const today = new Date();
     const toDateInput = (d) =>
       `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 
     let extraFields = '';
+    if (type === 'game') {
+      extraFields = `<p class="sub-label" style="text-align:left; margin:-2px 0 10px">
+        ${esc(t(GAME_META[game].descKey))}</p>`;
+    }
     if (type === 'tally') {
       extraFields = `
         <div class="field">
@@ -1982,12 +2231,17 @@
         </div>`;
     }
 
+    const headEmoji = game ? GAME_META[game].emoji : meta.emoji;
+    const headName = game ? t(GAME_META[game].nameKey) : t(meta.nameKey);
+    // a game arrives already named, so you can just hit create
+    const titleValue = existing?.title || (game ? t(GAME_META[game].nameKey) : '');
+
     const box = openModal(`
-      <h2>${meta.emoji} ${esc(isEdit ? t('editCardTitle') : t(meta.nameKey))}</h2>
+      <h2>${headEmoji} ${esc(isEdit ? t('editCardTitle') : headName)}</h2>
       <div class="field">
         <label>${esc(t('fieldTitle'))}</label>
         <input id="cf-title" type="text" maxlength="60" placeholder="${esc(t('fieldTitlePh'))}"
-          value="${esc(existing?.title || '')}" autocomplete="off">
+          value="${esc(titleValue)}" autocomplete="off">
       </div>
       <div class="field">
         <label>${esc(t('fieldEmoji'))}</label>
@@ -2147,6 +2401,7 @@
       if (!title) return $('#cf-title', box).focus();
       const config = {};
       let job = null; // photos still in flight when the card is saved
+      if (type === 'game') config.game = game;
       if (type === 'tally') config.goal = parseInt($('#cf-goal', box)?.value) || 0;
       if (type === 'streak') {
         const v = $('#cf-start', box)?.value;

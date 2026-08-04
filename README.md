@@ -15,6 +15,7 @@ ikiniz de aynı panoyu **canlı** görürsünüz. Panoya istediğiniz kadar kart
 | 💰 **Kumbara** | Birlikte para biriktirin. **Kademeli hedefler:** tek kumbaraya birden fazla hedef koyabilirsin (kira → okul → araba), her birinin kendi tutarı, adı ve fotoğrafı olur. Kumbara **şelale gibi sırayla dolar**: önce 1. hedef kendi tutarını alır, ancak o bittikten sonra artan para 2.'ye geçer — sıradaki hedef ödenmeden alttakine pay düşmez. Her adımda "17.250/25.000₺" gibi kendi payını görürsün. Ayrıca aktif hedefe göre %25/50/75/100 yaklaşma yıldızları, kim ne kadar koydu gösteren katkı yarışı, +/− işlem geçmişi ve para atınca 🪙 yağmuru |
 | 📝 **Liste** | Ortak yapılacaklar — herkes madde ekler ve işaretler, hepsi bitince konfeti |
 | 🤝 **Beraber** | Ortak seri: herkesin kendi günlük tiki var ama seri odanın. “Herkes” ya da “biri yeter” modu, son 7 günün ızgarası ve birbirinize hediye edebildiğiniz **pas hakkı** — biri günü kaçırdıysa pasını harcayıp onun için örtebilirsin, seri bozulmaz |
+| 🎲 **Oyun** | Sıra tabanlı mini oyunlar — dördü de aynı anda açık olabilir: ⭕ **XOX**, 🔵 **Dört Taş**, ⬜ **Nokta-Kutu** ve 🤥 **İki Doğru Bir Yalan**. Aynı anda çevrimiçi olmanız gerekmez: hamleni yaparsın, karşı tarafa “sıra sende” bildirimi gider, o müsait olunca oynar. Kim kaç tur aldı üstte durur, kazananda konfeti patlar, “yeni tur” ile kaldığınız yerden devam edersiniz |
 
 **Sıralama:** Kartlar başlıklarındaki ≡ tutamağından basılı tutulup sürüklenerek istediğin
 sıraya dizilir (klavyede tutamağa odaklanıp ↑/↓ de olur). Yeni eklenen kartlar panonun
@@ -86,6 +87,10 @@ Lokalde veriler `./data/` klasörüne yazılır.
 - **Sunucu:** Node.js + Express + WebSocket (`ws`)
 - **Veritabanı:** SQLite (`better-sqlite3`), tek dosya, WAL modu
 - **İstemci:** Bağımlılıksız vanilla JS — build adımı yok
+- **Oyun kuralları** yalnızca sunucuda (`games.js`): tarayıcı sadece sunucudan
+  gelen tahtayı çizer ve hamle ister, hiçbir hamlenin geçerli olup olmadığına
+  kendisi karar vermez. "İki Doğru Bir Yalan"da hangisinin yalan olduğu, tahmin
+  yapılana kadar tarayıcıya hiç gönderilmez
 - Kronometre ve geri sayımlar sunucu saatine göre senkronlanır
   (istemciler saat farkını `ping/pong` ile düzeltir)
 - **Cam iki türlü:** Yerinde duran yüzeyler (başlık, alt çubuk, kâğıtlar, sohbet)

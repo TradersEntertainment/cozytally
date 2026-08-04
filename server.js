@@ -7,6 +7,7 @@ import express from 'express';
 import { WebSocketServer } from 'ws';
 import Database from 'better-sqlite3';
 import webpush from 'web-push';
+import { GAMES, isGame, newGameState, nextRound, seatOf, applyMove, redactGame } from './games.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = process.env.PORT || 3000;
@@ -194,6 +195,9 @@ const PUSH_STR = {
     checkinTick: (n, c) => `${n} ✅ ${c}`,
     checkinDone: (c, s) => `Gün tamam! ${c} · ${s} gün 🔥`,
     cover: (n, c) => `${n} bugünü senin için örttü 🧣 · ${c}`,
+    gameTurn: (n, c) => `${n} oynadı — sıra sende 🎲 ${c}`,
+    gameWon: (n, c) => `${n} kazandı! 🎉 ${c}`,
+    gameDraw: (c) => `Berabere kaldınız 🤝 ${c}`,
   },
   en: {
     moneyIn: (n, c, amt, total, cur) =>
@@ -220,6 +224,9 @@ const PUSH_STR = {
     checkinTick: (n, c) => `${n} ✅ ${c}`,
     checkinDone: (c, s) => `Day complete! ${c} · ${s} days 🔥`,
     cover: (n, c) => `${n} covered today for you 🧣 · ${c}`,
+    gameTurn: (n, c) => `${n} played — your turn 🎲 ${c}`,
+    gameWon: (n, c) => `${n} won! 🎉 ${c}`,
+    gameDraw: (c) => `It's a draw 🤝 ${c}`,
   },
 };
 
@@ -512,7 +519,9 @@ function newRoomCode() {
   return crypto.randomUUID().slice(0, 8);
 }
 
-const CARD_TYPES = new Set(['tally', 'streak', 'timer', 'countdown', 'note', 'money', 'list', 'checkin']);
+const CARD_TYPES = new Set([
+  'tally', 'streak', 'timer', 'countdown', 'note', 'money', 'list', 'checkin', 'game',
+]);
 const MAX_LIST_ITEMS = 60;
 const MAX_GOALS = 6;
 const KEEP_DAYS = 90;
@@ -564,6 +573,7 @@ const toInt = (v, min, max, dflt) => {
 function sanitizeConfig(type, raw) {
   const src = raw && typeof raw === 'object' ? raw : {};
   const out = {};
+  if (type === 'game') out.game = isGame(src.game) ? src.game : 'xox';
   if (type === 'tally') out.goal = toInt(src.goal, 0, 100000, 0);
   if (type === 'countdown') out.targetAt = toInt(src.targetAt, 0, 4102444800000, 0);
   if (type === 'checkin') out.mode = src.mode === 'any' ? 'any' : 'all';
@@ -598,7 +608,8 @@ function sanitizeConfig(type, raw) {
   return out;
 }
 
-function defaultState(type, now) {
+function defaultState(type, now, config) {
+  if (type === 'game') return newGameState(config?.game || 'xox');
   if (type === 'tally') return { count: 0 };
   if (type === 'streak') return { startAt: now, best: 0 };
   if (type === 'timer') return { running: false, startedAt: 0, accumulated: 0 };
@@ -611,13 +622,16 @@ function defaultState(type, now) {
 }
 
 function rowToCard(row) {
+  const state = JSON.parse(row.state);
   return {
     id: row.id,
     type: row.type,
     title: row.title,
     emoji: row.emoji,
     config: JSON.parse(row.config),
-    state: JSON.parse(row.state),
+    // the only funnel card state takes to reach a browser, so it is also the
+    // only place a game's secrets have to be held back
+    state: row.type === 'game' ? redactGame(state) : state,
     sort: row.sort,
     createdAt: row.created_at,
   };
@@ -891,6 +905,11 @@ function sendTo(ws, msg) {
   if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(msg));
 }
 
+/** Who is acting, as the rest of the app keys people: account first, then
+    this device, then this socket. */
+const personKey = (ws) => ws.meta.userId || ws.meta.cid || ws.meta.id;
+const personOf = (ws) => ({ key: personKey(ws), name: ws.meta.name, avatar: ws.meta.avatar });
+
 function broadcastCard(code, cardId, by, verb, ref) {
   const row = store.getCard(cardId, code);
   if (!row) return;
@@ -1035,7 +1054,12 @@ function handleMessage(ws, msg) {
       const title = clampStr(c.title, 60) || '...';
       const emoji = clampStr(c.emoji, 8);
       const config = sanitizeConfig(c.type, c.config);
-      let state = defaultState(c.type, now);
+      let state = defaultState(c.type, now, config);
+      if (c.type === 'game') {
+        // whoever sets the game up takes the first chair, so the card opens
+        // with a name against the first turn instead of two empty seats
+        seatOf(state, personOf(ws));
+      }
       if (c.type === 'streak') {
         const startAt = toInt(c.config?.startAt, 0, now, now);
         state.startAt = startAt || now;
@@ -1161,6 +1185,66 @@ function handleMessage(ws, msg) {
       broadcastCard(code, row.id, by, `timer:${msg.op}`);
       if (msg.op === 'start') pushToRoom(code, 'timerStart', [ws.meta.name, row.title], ws.meta.cid);
       if (msg.op === 'pause') pushToRoom(code, 'timerPause', [ws.meta.name, row.title], ws.meta.cid);
+      return;
+    }
+
+    case 'game:move':
+    case 'game:next': {
+      const row = store.getCard(clampStr(msg.id, 40), code);
+      if (!row || row.type !== 'game') return;
+      const state = JSON.parse(row.state);
+      const seatsBefore = state.players.length;
+      const seat = seatOf(state, personOf(ws));
+      if (seat < 0) return sendTo(ws, { t: 'error', code: 'game-full' });
+
+      if (msg.t === 'game:next') {
+        // anyone at the table can deal the next round, but only once this one
+        // has actually finished
+        if (!state.over) return;
+        nextRound(state);
+        store.updateCardState(JSON.stringify(state), row.id);
+        broadcastCard(code, row.id, by, 'game:next');
+        return;
+      }
+
+      const before = state.over;
+      const res = applyMove(state, seat, msg.move);
+      if (!res.ok) {
+        // the move was refused, but sitting down still counts — show the room
+        // that a second player has arrived, and say nothing otherwise
+        if (state.players.length !== seatsBefore) {
+          store.updateCardState(JSON.stringify(state), row.id);
+          broadcastCard(code, row.id, by, 'game:seat');
+        }
+        return;
+      }
+      store.updateCardState(JSON.stringify(state), row.id);
+      broadcastCard(code, row.id, by, 'game:move');
+
+      if (state.over && !before) {
+        const won = state.over.winner;
+        const winner = won === 'draw' ? null : state.players[won];
+        broadcast(code, {
+          t: 'game:over',
+          id: row.id,
+          card: row.title,
+          game: state.game,
+          draw: won === 'draw',
+          winner: winner ? { name: winner.name, avatar: winner.avatar } : null,
+        });
+        pushToRoom(
+          code,
+          won === 'draw' ? 'gameDraw' : 'gameWon',
+          won === 'draw' ? [row.title] : [winner?.name || '?', row.title],
+          ws.meta.cid
+        );
+        return;
+      }
+      // Only nudge a phone when the turn actually changed hands — and never
+      // throttle it. A turn can only come round as fast as the other person
+      // plays, and the throttle is per card, so a quick exchange would eat
+      // the notification meant for whoever had walked away.
+      if (res.passed) pushToRoom(code, 'gameTurn', [ws.meta.name, row.title], ws.meta.cid);
       return;
     }
 

@@ -1000,6 +1000,7 @@ textarea {
 .card--money { --accent: #ffcf6b; }
 .card--list { --accent: var(--sky); }
 .card--checkin { --accent: #ff9d76; }
+.card--game { --accent: #b7a4ff; }
 
 .card-head {
   display: flex;
@@ -1853,6 +1854,277 @@ body.reordering {
   text-transform: uppercase;
   letter-spacing: 0.08em;
 }
+
+/* ============================================================
+   mini games
+
+   Four boards, one frame. Every playable square is a real <button> so it
+   arrives with keyboard focus and a disabled state for free — the server
+   decides what is legal, and `disabled` is only ever a hint about it.
+   ============================================================ */
+
+/* .card-body centres its children, so every block here has to claim the
+   full width for itself or it collapses to its content */
+.g-seats,
+.g-status,
+.g-c4,
+.g-dots,
+.g-xox,
+.g-truths,
+.g-foot {
+  width: 100%;
+}
+
+.g-seats {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.g-seat {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1 1 0;
+  min-width: 0;
+  padding: 6px 10px;
+  border-radius: var(--r-pill);
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid transparent;
+  font-size: var(--t-footnote);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: border-color 0.2s var(--ease), background 0.2s var(--ease);
+}
+
+.g-seat.empty { opacity: 0.5; font-style: italic; }
+.g-seat.me { font-weight: 700; }
+
+.g-seat.live {
+  border-color: color-mix(in srgb, var(--accent) 60%, transparent);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+
+.g-seat b { margin-left: auto; font-size: var(--t-callout); }
+
+/* the two players' colours, used by discs, marks, edges and boxes alike */
+.g-disc {
+  display: inline-block;
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  flex: 0 0 auto;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.45);
+}
+
+.g-disc.p1, .g-mark.p1, .g-box.p1 { --pc: var(--pink); }
+.g-disc.p2, .g-mark.p2, .g-box.p2 { --pc: var(--sky); }
+.g-disc.p1 { background: var(--pink); }
+.g-disc.p2 { background: var(--sky); }
+.g-seat.empty .g-disc { background: rgba(255, 255, 255, 0.18); box-shadow: none; }
+
+.g-status {
+  text-align: center;
+  font-size: var(--t-callout);
+  color: var(--ink-2);
+  min-height: 1.4em;
+}
+
+.g-status.mine { color: var(--accent); font-weight: 700; }
+.g-status.over { color: var(--peach); font-weight: 700; }
+
+.g-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.btn-sm { padding: 7px 14px; font-size: var(--t-footnote); }
+
+/* ---- tic-tac-toe */
+.g-xox {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+  max-width: 260px;
+  margin: 0 auto;
+  width: 100%;
+}
+
+.g-cell {
+  aspect-ratio: 1;
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-sm);
+  background: rgba(255, 255, 255, 0.04);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 2rem;
+  line-height: 1;
+  cursor: pointer;
+  transition: background 0.16s var(--ease), transform 0.16s var(--spring-soft);
+}
+
+.g-cell:not([disabled]):hover { background: rgba(255, 255, 255, 0.11); }
+.g-cell:not([disabled]):active { transform: scale(0.94); }
+.g-cell[disabled] { cursor: default; }
+.g-cell.last { border-color: color-mix(in srgb, var(--accent) 70%, transparent); }
+.g-cell.win { background: rgba(255, 215, 168, 0.18); border-color: rgba(255, 215, 168, 0.6); }
+
+.g-mark { color: var(--pc, var(--ink)); font-weight: 700; animation: g-pop 0.3s var(--spring); }
+
+@keyframes g-pop {
+  from { transform: scale(0.4); opacity: 0; }
+  to { transform: scale(1); opacity: 1; }
+}
+
+/* ---- connect four */
+.g-c4 {
+  display: flex;
+  gap: 4px;
+  padding: 6px;
+  border-radius: var(--r-sm);
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--hairline);
+}
+
+.g-col {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--r-xs);
+  background: transparent;
+  cursor: pointer;
+  transition: background 0.16s var(--ease);
+}
+
+.g-c4.playable .g-col:not([disabled]):hover { background: rgba(255, 255, 255, 0.1); }
+.g-col[disabled] { cursor: default; }
+
+.g-hole {
+  aspect-ratio: 1;
+  border-radius: 50%;
+  background: rgba(20, 16, 44, 0.55);
+  box-shadow: inset 0 2px 5px rgba(0, 0, 0, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.g-hole .g-disc {
+  width: 82%;
+  height: 82%;
+  animation: g-drop 0.34s var(--spring);
+}
+
+.g-hole.win { box-shadow: inset 0 0 0 2px rgba(255, 215, 168, 0.85); }
+.g-hole.last .g-disc { box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.45), 0 0 10px 2px var(--glow-amber); }
+
+@keyframes g-drop {
+  from { transform: translateY(-260%); }
+  to { transform: translateY(0); }
+}
+
+/* ---- dots & boxes */
+.g-dots {
+  display: grid;
+  /* dot, edge, dot, edge … — dots stay small, edges take the rest */
+  grid-template-columns: 10px repeat(4, 1fr 10px);
+  grid-template-rows: 10px repeat(4, 1fr 10px);
+  gap: 2px;
+  max-width: 280px;
+  width: 100%;
+  margin: 0 auto;
+  aspect-ratio: 1;
+  place-items: stretch;
+}
+
+.g-dot {
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.45);
+}
+
+.g-edge {
+  border: 0;
+  padding: 0;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.07);
+  cursor: pointer;
+  transition: background 0.16s var(--ease);
+  /* the drawn line is thin, but the thing you tap is the whole cell */
+  position: relative;
+}
+
+.g-dots.playable .g-edge:not([disabled]):hover { background: rgba(255, 255, 255, 0.24); }
+.g-edge[disabled] { cursor: default; }
+.g-edge.on.p1 { background: var(--pink); }
+.g-edge.on.p2 { background: var(--sky); }
+.g-edge.last { box-shadow: 0 0 8px 2px var(--glow-amber); }
+
+.g-box {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  font-size: 0.75rem;
+  color: rgba(20, 16, 44, 0.55);
+  background: transparent;
+  transition: background 0.3s var(--ease);
+}
+
+.g-box.p1 { background: color-mix(in srgb, var(--pink) 55%, transparent); animation: g-pop 0.3s var(--spring); }
+.g-box.p2 { background: color-mix(in srgb, var(--sky) 55%, transparent); animation: g-pop 0.3s var(--spring); }
+
+/* ---- two truths, one lie */
+.g-truths {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.g-truths.waiting { text-align: center; color: var(--ink-dim); padding: 14px 0; }
+
+.g-tline {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.g-tline input[type='radio'] {
+  flex: 0 0 auto;
+  width: 20px;
+  height: 20px;
+  accent-color: var(--accent);
+}
+
+.g-tline .js-stmt { flex: 1; min-width: 0; }
+
+.g-tstmt {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  text-align: left;
+  padding: 11px 13px;
+  border-radius: var(--r-sm);
+  border: 1px solid var(--hairline);
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--ink);
+  font-size: var(--t-callout);
+  cursor: pointer;
+  transition: background 0.16s var(--ease), border-color 0.16s var(--ease);
+}
+
+.g-tstmt:not([disabled]):hover { background: rgba(255, 255, 255, 0.11); }
+.g-tstmt[disabled] { cursor: default; }
+.g-tstmt.lie { border-color: rgba(255, 158, 181, 0.7); background: rgba(255, 158, 181, 0.14); }
+.g-tstmt.picked { box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 60%, transparent); }
+.g-tmark { flex: 0 0 auto; font-size: 1.05rem; }
 
 /* ============================================================
    dock — floating glass toolbar
