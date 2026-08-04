@@ -290,6 +290,39 @@
     return fire;
   })();
 
+  /* ------------------------------------------------------------------
+     Keeping the bottom chrome on the actual bottom.
+
+     iOS anchors position:fixed to the layout viewport, which does not
+     shrink when the on-screen keyboard appears — and Safari does not
+     always put the two back in step when it closes again. The dock ends
+     up stranded in the middle of the screen until some layout change
+     shakes it loose. (The room header is `sticky`, which follows the
+     document, which is why it never showed the problem.)
+
+     So: measure how much of the layout viewport is hidden below what you
+     can see, and hand that to CSS. Everything pinned to the bottom adds
+     it, and it self-corrects the moment the keyboard goes away.
+     ------------------------------------------------------------------ */
+  function trackViewport() {
+    const vv = window.visualViewport;
+    if (!vv) return; // old browsers keep the plain `bottom` values
+    // the URL bar is worth ~90px at most; past that it is the keyboard
+    const KEYBOARD = 150;
+    let last = -1;
+    const place = () => {
+      const hidden = Math.max(0, Math.round(innerHeight - vv.height - vv.offsetTop));
+      if (hidden === last) return;
+      last = hidden;
+      document.documentElement.style.setProperty('--vv-bottom', hidden + 'px');
+      document.body.classList.toggle('kb-open', hidden > KEYBOARD);
+    };
+    vv.addEventListener('resize', place);
+    vv.addEventListener('scroll', place);
+    addEventListener('orientationchange', () => setTimeout(place, 250));
+    place();
+  }
+
   // stable per-browser id: lets the server skip push notifications to yourself
   let myCid = localStorage.getItem('ct:cid');
   if (!myCid) {
@@ -3342,6 +3375,7 @@
 
   // ------------------------------------------------------------ boot
   buildSky();
+  trackViewport();
   applyI18n();
   if (roomCode) initRoom();
   else initLanding();

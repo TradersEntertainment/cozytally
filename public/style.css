@@ -2132,6 +2132,14 @@ body.reordering {
 /* muted reads as "switched off", not "broken" */
 #feel-btn.off { opacity: 0.5; }
 
+/* With the keyboard up the dock would sit right on top of the box you are
+   typing in, so it steps out of the way until you are done. */
+body.kb-open .dock,
+body.kb-open .dock-veil {
+  opacity: 0;
+  pointer-events: none;
+}
+
 .g-howto {
   width: 100%;
   padding: 10px 14px;
@@ -2197,11 +2205,16 @@ body.reordering {
 
 /* a soft gradient under the dock so cards dissolve into the night
    instead of being sliced by the toolbar */
+/* --vv-bottom is how much of the layout viewport is currently hidden below
+   what you can actually see — the on-screen keyboard, mostly. iOS pins
+   position:fixed to the *layout* viewport, so without this the dock strands
+   itself mid-screen when the keyboard closes. Set from JS; 0 everywhere
+   that behaves. */
 .dock-veil {
   position: fixed;
   left: 0;
   right: 0;
-  bottom: 0;
+  bottom: var(--vv-bottom, 0px);
   height: calc(var(--dock-h) + 56px + var(--safe-b));
   z-index: 35;
   pointer-events: none;
@@ -2213,8 +2226,9 @@ body.reordering {
   position: fixed;
   z-index: 40;
   left: 50%;
-  bottom: calc(18px + var(--safe-b));
+  bottom: calc(18px + var(--safe-b) + var(--vv-bottom, 0px));
   transform: translateX(-50%);
+  transition: opacity 0.18s var(--ease);
   display: flex;
   align-items: center;
   gap: 6px;
@@ -2712,7 +2726,7 @@ body.reordering {
 
 .toasts {
   position: fixed;
-  bottom: calc(22px + var(--safe-b));
+  bottom: calc(22px + var(--safe-b) + var(--vv-bottom, 0px));
   left: calc(20px + var(--safe-l));
   z-index: 90;
   display: flex;
