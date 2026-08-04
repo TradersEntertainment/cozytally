@@ -111,7 +111,11 @@ Lokalde veriler `./data/` klasörüne yazılır.
   eder ve `mix-blend-mode: screen` ile üstünden geçtiği her şeyi aydınlatır —
   yani ekran kartının işi, ana iş parçacığı hiç uyanmıyor; imleç akışı da kare
   başına tek yazıya indiriliyor ve ışık sönünce döngü kendini durduruyor
-  (ölçüldü: parmak basılıyken kaydırmada kare süresine etkisi yok).
+  (ölçüldü: parmak basılıyken kaydırmada kare süresine etkisi yok). Telefonda
+  sürükleme kaydırmaya dönüşünce tarayıcı hareketi kendine alıp `pointermove`
+  göndermeyi kesiyor, o yüzden dokunma olaylarını da dinliyor — parmak ekranda
+  olduğu sürece ışık peşinden geliyor, sabit tutunca sönmüyor, ancak elini
+  çekince yavaşça kapanıyor.
   Telefonuna "hareketi azalt" diyen birinde hiç kurulmuyor
 - **Cam iki türlü:** Yerinde duran yüzeyler (başlık, alt çubuk, kâğıtlar, sohbet)
   gerçek `backdrop-filter` kullanır; kaydırılan kartlar aynı görüntüyü veren

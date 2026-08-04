@@ -88,6 +88,7 @@
     let y = innerHeight / 2;
     let lastMove = 0;
     let running = false;
+    let down = false;
     let dim = null;
     const trail = Array.from({ length: N }, () => ({ x, y }));
 
@@ -103,27 +104,57 @@
         dots[i].style.transform =
           `translate3d(${trail[i].x.toFixed(1)}px, ${trail[i].y.toFixed(1)}px, 0) translate(-50%, -50%)`;
       }
-      // keep drawing until the tail has caught up and the fade has finished
-      if (now - lastMove < 1800) requestAnimationFrame(frame);
+      // draw while a finger is down, and after it lifts until the tail has
+      // caught up and the fade has finished
+      if (down || now - lastMove < 1800) requestAnimationFrame(frame);
       else running = false;
     };
 
-    const follow = (e) => {
-      x = e.clientX;
-      y = e.clientY;
+    const move = (px, py) => {
+      x = px;
+      y = py;
       lastMove = performance.now();
       wrap.classList.add('lit');
       clearTimeout(dim);
-      // a moment after the finger stops, the light settles back down
-      dim = setTimeout(() => wrap.classList.remove('lit'), 650);
+      // Held still, the light stays — it is following a finger, not a motion.
+      // Only once the finger is gone does it start to settle.
+      if (!down) dim = setTimeout(() => wrap.classList.remove('lit'), 900);
       if (!running) {
         running = true;
         requestAnimationFrame(frame);
       }
     };
 
-    addEventListener('pointerdown', follow, { passive: true });
-    addEventListener('pointermove', follow, { passive: true });
+    const lift = () => {
+      down = false;
+      clearTimeout(dim);
+      dim = setTimeout(() => wrap.classList.remove('lit'), 900);
+    };
+
+    /* Pointer events are the clean way to do this, and they are enough for a
+       mouse. On a phone they are not: the moment a drag turns into a scroll
+       the browser takes the gesture for itself, sends pointercancel and stops
+       delivering pointermove — so the light would stop dead under a finger
+       that is still very much on the screen. Touch events keep coming for the
+       whole gesture, so they are what actually keeps up. Both are passive;
+       neither can hold up a scroll. */
+    addEventListener('pointerdown', (e) => {
+      if (e.pointerType !== 'touch') down = true;
+      move(e.clientX, e.clientY);
+    }, { passive: true });
+    addEventListener('pointermove', (e) => move(e.clientX, e.clientY), { passive: true });
+    addEventListener('pointerup', lift, { passive: true });
+
+    const touch = (e) => {
+      const t = e.touches[0];
+      if (!t) return;
+      down = true;
+      move(t.clientX, t.clientY);
+    };
+    addEventListener('touchstart', touch, { passive: true });
+    addEventListener('touchmove', touch, { passive: true });
+    addEventListener('touchend', lift, { passive: true });
+    addEventListener('touchcancel', lift, { passive: true });
   }
 
   function buildSky() {
