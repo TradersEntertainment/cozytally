@@ -2126,6 +2126,33 @@ body.reordering {
 .g-tstmt.picked { box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 60%, transparent); }
 .g-tmark { flex: 0 0 auto; font-size: 1.05rem; }
 
+/* The invitation to watch the walkthrough. Deliberately loud — nobody
+   reads a small "?" — and deliberately temporary: once you have watched
+   it once this button is gone for good and only that "?" remains. */
+.g-howto {
+  width: 100%;
+  padding: 10px 14px;
+  border-radius: var(--r-pill);
+  border: 1px solid color-mix(in srgb, var(--accent) 55%, transparent);
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  color: var(--ink);
+  font-family: inherit;
+  font-size: var(--t-callout);
+  font-weight: 700;
+  cursor: pointer;
+  box-shadow: var(--specular-soft), 0 0 0 0 color-mix(in srgb, var(--accent) 45%, transparent);
+  animation: howto-glow 2.4s var(--ease) infinite;
+}
+
+.g-howto:hover { background: color-mix(in srgb, var(--accent) 28%, transparent); }
+.g-howto:active { transform: scale(0.97); }
+
+/* opacity and box-shadow only — nothing here forces a layout pass */
+@keyframes howto-glow {
+  0%, 100% { box-shadow: var(--specular-soft), 0 0 0 0 color-mix(in srgb, var(--accent) 45%, transparent); }
+  50% { box-shadow: var(--specular-soft), 0 0 16px 2px color-mix(in srgb, var(--accent) 45%, transparent); }
+}
+
 /* ---- the how-to-play walkthrough */
 .demo {
   display: flex;

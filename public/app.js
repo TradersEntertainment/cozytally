@@ -1413,6 +1413,9 @@
     body.innerHTML = `
       <div class="g-seats">${seatChip(0)}${seatChip(1)}</div>
       <div class="g-status ${myTurn ? 'mine' : ''} ${s.over ? 'over' : ''}">${esc(status)}</div>
+      ${hasSeenHow(kind)
+        ? '' // you've watched it; the quiet ? in the header is enough from here
+        : `<button class="g-howto js-how-big" data-game="${kind}">✨ ${esc(t('howToPlay'))}</button>`}
       ${boards[kind](s, mySeat, myTurn)}
       <div class="g-foot">
         <span class="sub-label">${esc(t('gameRound', { n: s.round || 1 }))}${boxes ? ' · ' + esc(boxes) : ''}</span>
@@ -1422,6 +1425,7 @@
 
     const move = (m) => send({ t: 'game:move', id: card.id, move: m });
     $('.js-gnext', body)?.addEventListener('click', () => send({ t: 'game:next', id: card.id }));
+    $('.js-how-big', body)?.addEventListener('click', () => openHowToPlay(kind));
     wireGameBoard(kind, body, s, myTurn, move);
     wireComments(body, card);
 
@@ -1527,6 +1531,27 @@
      the demo would change with them. */
   const DEMO_A = { key: 'demo-a', name: 'Rabia', avatar: '🐰' };
   const DEMO_B = { key: 'demo-b', name: 'Ömer', avatar: '🐻' };
+
+  /* Which walkthroughs this person has already sat through. Per game, because
+     knowing tic-tac-toe tells you nothing about Dots & Boxes, and per device
+     rather than per room — it is about what you know, not where you are. */
+  const HOW_SEEN_KEY = 'ct:howseen';
+  const howSeen = () => {
+    try {
+      return new Set(JSON.parse(localStorage.getItem(HOW_SEEN_KEY) || '[]'));
+    } catch {
+      return new Set();
+    }
+  };
+  const hasSeenHow = (kind) => howSeen().has(kind);
+  function markHowSeen(kind) {
+    const seen = howSeen();
+    if (seen.has(kind)) return;
+    seen.add(kind);
+    localStorage.setItem(HOW_SEEN_KEY, JSON.stringify([...seen]));
+    // the invitation has done its job — retire it wherever it is on screen
+    $$(`.g-howto[data-game="${kind}"]`).forEach((el) => el.remove());
+  }
 
   /**
    * Every edge of the dots board, drawn column by column. The order matters
@@ -1646,6 +1671,7 @@
         if (!document.body.contains(boardEl)) return;
         if (n >= steps.length) {
           replay.hidden = false;
+          markHowSeen(kind);
           return;
         }
         const step = steps[n++];
@@ -1681,6 +1707,8 @@
         if (state.over) {
           confetti();
           replay.hidden = false;
+          // watched it through to the end — that is what "seen" means
+          markHowSeen(kind);
           return;
         }
         // linger on the good bits so a box closing actually registers
