@@ -259,6 +259,42 @@ a:focus-visible {
   contain: strict;
 }
 
+/* The light that follows your finger. One element, moved with a transform and
+   faded with opacity, so the compositor handles all of it and the main thread
+   never wakes: the gradient is rastered once and then only slid around.
+   Sized in viewport units so it stays a pool of light rather than a dot. */
+.touch-glow {
+  /* Above the cards rather than behind them, blended so it adds light instead
+     of covering anything — otherwise the board hides it completely, since a
+     card is deliberately almost opaque. Below the dock and the sheets, which
+     should stay readable. */
+  position: fixed;
+  z-index: 29;
+  mix-blend-mode: screen;
+  top: 0;
+  left: 0;
+  width: 92vmin;
+  height: 92vmin;
+  margin: -46vmin 0 0 -46vmin;
+  border-radius: 50%;
+  pointer-events: none;
+  opacity: 0;
+  will-change: transform, opacity;
+  background: radial-gradient(
+    closest-side,
+    color-mix(in srgb, var(--mint) 20%, transparent),
+    color-mix(in srgb, var(--sky) 13%, transparent) 34%,
+    color-mix(in srgb, var(--lavender) 9%, transparent) 58%,
+    transparent 76%
+  );
+  transition: opacity 0.75s var(--ease);
+}
+
+.touch-glow.lit {
+  opacity: 1;
+  transition-duration: 0.22s; /* arrives quickly, leaves slowly */
+}
+
 /* Nobody is looking — stop burning battery. Named one by one this went stale
    the moment anything new started moving, so it is everything or nothing. */
 body.away *,

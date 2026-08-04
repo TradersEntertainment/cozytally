@@ -104,6 +104,12 @@ Lokalde veriler `./data/` klasörüne yazılır.
   kendiliğinden değişir
 - Kronometre ve geri sayımlar sunucu saatine göre senkronlanır
   (istemciler saat farkını `ping/pong` ile düzeltir)
+- **Parmak ışığı:** ekranda gezdirdiğin yerde arkada yumuşak bir ışık havuzu
+  beliriyor, elini çekince kendiliğinden sönüyor. Tek bir öğe; yeri `transform`
+  ile, parlaklığı `opacity` ile değişiyor ve `mix-blend-mode: screen` ile
+  üstünden geçtiği her şeyi aydınlatıyor — hepsi ekran kartının işi, ana iş
+  parçacığı hiç uyanmıyor (ölçüldü: kaydırırken kare süresine etkisi yok).
+  Telefonuna "hareketi azalt" diyen birinde hiç kurulmuyor
 - **Cam iki türlü:** Yerinde duran yüzeyler (başlık, alt çubuk, kâğıtlar, sohbet)
   gerçek `backdrop-filter` kullanır; kaydırılan kartlar aynı görüntüyü veren
   hazır bir malzeme kullanır. Kartlarda canlı bulanıklık varken telefonda pano

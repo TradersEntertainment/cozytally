@@ -53,6 +53,55 @@
   }
 
   // ------------------------------------------------------------ night sky
+  /**
+   * A pool of light that follows your finger across the night. On a phone
+   * pointermove only fires while you are actually touching, which is exactly
+   * the feeling: the sky lights up under your thumb and settles again when
+   * you let go.
+   *
+   * Deliberately cheap — the gradient is painted once and then only moved and
+   * faded, both of which the compositor does on its own, and the pointer
+   * stream is collapsed to one write per frame.
+   */
+  function initTouchGlow() {
+    if (REDUCED) return;
+    const glow = document.createElement('div');
+    glow.className = 'touch-glow';
+    glow.setAttribute('aria-hidden', 'true');
+    document.body.appendChild(glow);
+
+    let x = innerWidth / 2;
+    let y = innerHeight / 2;
+    let queued = false;
+    let dim = null;
+
+    const place = () => {
+      queued = false;
+      glow.style.transform = `translate3d(${x}px, ${y}px, 0)`;
+    };
+
+    const follow = (e) => {
+      x = e.clientX;
+      y = e.clientY;
+      glow.classList.add('lit');
+      clearTimeout(dim);
+      // a moment after the finger stops, the light settles back down
+      dim = setTimeout(() => glow.classList.remove('lit'), 700);
+      if (!queued) {
+        queued = true;
+        requestAnimationFrame(place);
+      }
+    };
+
+    place();
+    addEventListener('pointerdown', follow, { passive: true });
+    addEventListener('pointermove', follow, { passive: true });
+    addEventListener('pointerup', () => {
+      clearTimeout(dim);
+      dim = setTimeout(() => glow.classList.remove('lit'), 700);
+    }, { passive: true });
+  }
+
   function buildSky() {
     const sky = $('#sky');
     // a phone screen doesn't need a desktop's worth of stars, and every one
@@ -3884,6 +3933,7 @@
 
   // ------------------------------------------------------------ boot
   buildSky();
+  initTouchGlow();
   trackViewport();
   applyI18n();
   if (roomCode) initRoom();
