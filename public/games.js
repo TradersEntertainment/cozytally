@@ -25,6 +25,7 @@ export const GAMES = {
   code: { emoji: '🔢', titleKey: 'gameCode' },
   chain: { emoji: '🔗', titleKey: 'gameChain' },
   rps: { emoji: '✊', titleKey: 'gameRps' },
+  closest: { emoji: '🎯', titleKey: 'gameClosest' },
   truths: { emoji: '🤥', titleKey: 'gameTruths' },
 };
 
@@ -33,7 +34,7 @@ export const isGame = (g) => Object.prototype.hasOwnProperty.call(GAMES, g);
 /* Rock-paper-scissors is the odd one out: both people choose at once and
    nothing is revealed until the second choice lands, so the usual "is it
    your turn" gate would lock one of them out. */
-const SIMULTANEOUS = new Set(['rps']);
+const SIMULTANEOUS = new Set(['rps', 'closest']);
 
 const C4_COLS = 7;
 const C4_ROWS = 6;
@@ -43,6 +44,7 @@ export const HANGMAN_LIVES = 6;
 export const CODE_LEN = 4;
 export const CODE_TRIES = 10;
 const RPS_TARGET = 3; // best of five
+export const CLOSEST_ROUND = 10; // questions per round
 
 /** Turkish needs its own casing: i→İ and ı→I, which plain toUpperCase gets wrong. */
 export const trUpper = (s) => String(s ?? '').toLocaleUpperCase('tr');
@@ -51,7 +53,7 @@ export const TR_ALPHABET = [...TR_LETTERS];
 const isTurkishWord = (w) => w.length > 0 && [...w].every((c) => TR_LETTERS.includes(c));
 
 /** the empty board for a fresh round, keeping seats and scores */
-function freshBoard(game) {
+function freshBoard(game, opts = {}) {
   if (game === 'xox') return { board: Array(9).fill(0), last: -1, line: null };
   if (game === 'connect4') {
     return { board: Array(C4_COLS * C4_ROWS).fill(0), last: -1, line: null };
@@ -86,11 +88,24 @@ function freshBoard(game) {
   if (game === 'rps') {
     return { picks: [null, null], wins: [0, 0], history: [], reveal: null };
   }
+  if (game === 'closest') {
+    /* The questions are dealt in by whoever starts the round — the server, so
+       the answers never sit in a browser. See questions.js, which lives
+       outside public/ for exactly that reason. */
+    return {
+      qs: (opts.questions || []).slice(0, CLOSEST_ROUND),
+      at: 0,
+      guesses: [null, null],
+      reveal: null,
+      wins: [0, 0],
+      history: [],
+    };
+  }
   // truths: the writer of the round makes up the statements
   return { phase: 'writing', statements: [], lie: -1, guess: -1 };
 }
 
-export function newGameState(game) {
+export function newGameState(game, opts = {}) {
   return {
     game,
     players: [],
@@ -98,7 +113,7 @@ export function newGameState(game) {
     scores: [0, 0],
     round: 1,
     over: null,
-    ...freshBoard(game),
+    ...freshBoard(game, opts),
   };
 }
 
@@ -108,12 +123,12 @@ export function newGameState(game) {
 const PUZZLE_GAMES = new Set(['truths', 'hangman', 'code']);
 
 /** Start the next round. The loser goes first, so a thrashing evens out. */
-export function nextRound(state) {
+export function nextRound(state, opts = {}) {
   const game = state.game;
   const prev = state.over;
   state.round = (state.round || 1) + 1;
   state.over = null;
-  Object.assign(state, freshBoard(game));
+  Object.assign(state, freshBoard(game, opts));
   if (PUZZLE_GAMES.has(game)) {
     // leave the turn exactly where it is — see PUZZLE_GAMES
   } else if (prev && prev.winner === 0) {
@@ -405,6 +420,45 @@ function rpsMove(state, seat, move) {
   return true;
 }
 
+// ---------------------------------------------------------------- closest guess
+/** Distance is all that matters, so a wild guess is never worse than a blank. */
+function closestScore(state) {
+  const q = state.qs[state.at];
+  const [a, b] = state.guesses;
+  const da = Math.abs(a - q.a);
+  const db = Math.abs(b - q.a);
+  const winner = da === db ? 'draw' : da < db ? 0 : 1;
+  state.reveal = { answer: q.a, guesses: [a, b], winner };
+  state.history.push(winner);
+  if (winner !== 'draw') state.wins[winner]++;
+}
+
+function closestMove(state, seat, move) {
+  if (state.reveal) {
+    // the answer is on screen; either of you can move it along
+    if (!move?.next) return false;
+    if (state.at + 1 >= state.qs.length) return false;
+    state.at++;
+    state.reveal = null;
+    state.guesses = [null, null];
+    return true;
+  }
+  if (!state.qs.length) return false;
+  if (state.guesses[seat] !== null) return false; // no changing your answer
+
+  const guess = Number(move?.guess);
+  if (!Number.isFinite(guess) || guess < 0 || guess > 1e15) return false;
+  state.guesses[seat] = guess;
+  if (state.guesses[0] === null || state.guesses[1] === null) return true;
+
+  closestScore(state);
+  if (state.at + 1 >= state.qs.length) {
+    const [x, y] = state.wins;
+    state.over = { winner: x === y ? 'draw' : x > y ? 0 : 1, wins: [x, y] };
+  }
+  return true;
+}
+
 // ---------------------------------------------------------------- dots & boxes
 const hIndex = (r, c) => r * (DOTS_N - 1) + c;
 const vIndex = (r, c) => r * DOTS_N + c;
@@ -493,6 +547,7 @@ export function applyMove(state, seat, move) {
     code: codeMove,
     chain: chainMove,
     rps: rpsMove,
+    closest: closestMove,
     truths: truthsMove,
   }[state.game]?.(state, seat, move);
   if (!ok) return { ok: false };
@@ -538,6 +593,18 @@ export function redactGame(state) {
   if (state.game === 'code' && state.phase !== 'done') {
     const { secret, ...rest } = state;
     return rest; // the scored guesses are enough to play from
+  }
+
+  if (state.game === 'closest') {
+    const { qs, guesses, ...rest } = state;
+    const q = qs[state.at];
+    return {
+      ...rest,
+      // the question, never the answer — and never what the other one wrote
+      q: q ? { tr: q.tr, en: q.en, u: q.u } : null,
+      total: qs.length,
+      chosen: [guesses[0] !== null, guesses[1] !== null],
+    };
   }
 
   if (state.game === 'rps') {

@@ -258,6 +258,7 @@
     code: { emoji: '🔢', nameKey: 'gameCode', descKey: 'gameCodeDesc' },
     chain: { emoji: '🔗', nameKey: 'gameChain', descKey: 'gameChainDesc' },
     rps: { emoji: '✊', nameKey: 'gameRps', descKey: 'gameRpsDesc' },
+    closest: { emoji: '🎯', nameKey: 'gameClosest', descKey: 'gameClosestDesc' },
     truths: { emoji: '🤥', nameKey: 'gameTruths', descKey: 'gameTruthsDesc' },
   };
   const C4_COLS = 7;
@@ -267,6 +268,7 @@
   const HANGMAN_LIVES = 6;
   const TR_ALPHABET = [...'ABCÇDEFGĞHIİJKLMNOÖPRSŞTUÜVYZ'];
   const RPS_HAND = { rock: '✊', paper: '✋', scissors: '✌️' };
+  const CLOSEST_ROUND = 10;
 
   // ---- shared day helpers (local calendar, so "today" matches your phone)
   const pad2 = (n) => String(n).padStart(2, '0');
@@ -1785,7 +1787,7 @@
        thing stopping you is having already chosen. Once the hands are open
        the round is done, and choosing again is what starts the next one — so
        an open reveal is an invitation, not a wait. */
-    const together = kind === 'rps';
+    const together = kind === 'rps' || kind === 'closest';
     const waitingOnMe = together && (!!s.reveal || !s.chosen?.[playSeat]);
     const myTurn = playSeat >= 0 && !s.over && (together ? waitingOnMe : s.turn === playSeat);
     if (together) rpsKey = `${card.id}:${s.round}:${(s.history || []).length}`;
@@ -1811,9 +1813,11 @@
           : t('gameTheyWon', { name: seats[s.over.winner]?.name || '?' });
     } else if (together && s.reveal) {
       // who took the round outranks "your move" — you can see the buttons
+      const tie = kind === 'closest' ? 'gameClosestTie' : 'gameRpsTie';
+      const took = kind === 'closest' ? 'gameClosestRound' : 'gameRpsRound';
       status = s.reveal.winner === 'draw'
-        ? t('gameRpsTie')
-        : t('gameRpsRound', { name: seats[s.reveal.winner]?.name || '?' });
+        ? t(tie)
+        : t(took, { name: seats[s.reveal.winner]?.name || '?' });
     } else if (myTurn && mySeat < 0) {
       status = t('gameSitDown'); // your move is what puts you in the chair
     } else if (myTurn) {
@@ -1821,7 +1825,8 @@
     } else if (mySeat < 0 && seats.length >= 2) {
       status = t('gameSpectator');
     } else if (together) {
-      status = t('gameRpsWaiting'); // chosen already, and they haven't
+      // answered already, and they haven't
+      status = t(kind === 'closest' ? 'gameClosestWaiting' : 'gameRpsWaiting');
     } else if (seats[s.turn]) {
       status = t('gameTheirTurn', { name: seats[s.turn].name });
     } else {
@@ -1842,12 +1847,14 @@
             })
           : kind === 'chain' && s.words?.length
             ? t('gameChainLen', { n: s.words.length })
-            : '';
+            : kind === 'closest' && s.total
+              ? t('gameClosestAt', { n: Math.min(s.at + 1, s.total), of: s.total })
+              : '';
 
     const boards = {
       xox: xoxBoard, connect4: c4Board, reversi: reversiBoard, dots: dotsBoard,
       hangman: hangmanBoard, code: codeBoard, chain: chainBoard, rps: rpsBoard,
-      truths: truthsBoard,
+      closest: closestBoard, truths: truthsBoard,
     };
     body.innerHTML = `
       <div class="g-seats">${seatChip(0)}${seatChip(1)}</div>
@@ -2119,6 +2126,67 @@
     code: 'gameCodeGo',
   };
 
+  /** how big a number is, in words, so a wild guess is readable at a glance */
+  const bigWord = (n) => {
+    const a = Math.abs(n);
+    if (a >= 1e9) return t('numBillion', { n: round1(a / 1e9) });
+    if (a >= 1e6) return t('numMillion', { n: round1(a / 1e6) });
+    if (a >= 1e3) return t('numThousand', { n: round1(a / 1e3) });
+    return '';
+  };
+  const round1 = (v) => (Math.round(v * 10) / 10).toLocaleString(lang === 'tr' ? 'tr-TR' : 'en-US');
+  const bigNum = (n) => Number(n).toLocaleString(lang === 'tr' ? 'tr-TR' : 'en-US');
+
+  function closestBoard(s, mySeat, myTurn) {
+    if (!s.q) return `<div class="g-truths waiting">${esc(t('gameClosestEmpty'))}</div>`;
+    const unit = s.q.u?.[lang] || s.q.u?.en || '';
+    const rv = s.reveal;
+    const chosen = s.chosen || [false, false];
+    const seats = s.players || [];
+
+    const pips = (i) => Array.from({ length: CLOSEST_ROUND }, (_, k) => {
+      const won = (s.history || [])[k];
+      const cls = won === undefined ? '' : won === i ? 'on' : won === 'draw' ? 'tie' : 'off';
+      return `<span class="g-cpip ${cls}"></span>`;
+    }).join('');
+
+    return `<div class="g-closest">
+      <p class="g-question">${esc(s.q[lang] || s.q.en)}</p>
+      ${unit ? `<p class="sub-label g-unit">${esc(t('gameClosestUnit', { unit }))}</p>` : ''}
+
+      ${rv
+        ? `<div class="g-answer">
+            <b>${esc(bigNum(rv.answer))}</b> <span>${esc(unit)}</span>
+            ${bigWord(rv.answer) ? `<i>${esc(bigWord(rv.answer))}</i>` : ''}
+          </div>
+          <div class="g-guesses">${[0, 1].map((i) => `
+            <div class="g-guess p${i + 1} ${rv.winner === i ? 'win' : ''}">
+              <span class="g-gwho">${esc(seats[i]?.avatar || '')} ${esc(seats[i]?.name || '')}</span>
+              <b>${esc(bigNum(rv.guesses[i]))}</b>
+              <span class="g-gaway">${esc(t('gameClosestAway', { n: bigNum(Math.abs(rv.guesses[i] - rv.answer)) }))}</span>
+            </div>`).join('')}</div>`
+        : `<div class="g-waiters">${[0, 1].map((i) => `
+            <span class="g-waiter ${chosen[i] ? 'in' : ''}">
+              ${chosen[i] ? '✅' : '✍️'} ${esc(seats[i]?.name || t('gameFreeSeat'))}
+            </span>`).join('')}</div>`}
+
+      <div class="g-cpips">${pips(0)}</div>
+      <div class="g-cpips">${pips(1)}</div>
+
+      ${mySeat < 0 || s.over
+        ? ''
+        : rv
+          ? `<button class="btn btn-primary btn-sm js-cnext">${esc(t('gameClosestNext'))}</button>`
+          : chosen[mySeat]
+            ? `<p class="sub-label">${esc(t('gameClosestSent'))}</p>`
+            : `<div class="g-guessrow">
+                <input type="text" inputmode="numeric" class="js-cguessnum" maxlength="16"
+                  autocomplete="off" placeholder="${esc(t('gameClosestPh'))}">
+                <button class="btn btn-primary btn-sm js-cguessgo">${esc(t('gameClosestSend'))}</button>
+              </div>`}
+    </div>`;
+  }
+
   function truthsBoard(s, mySeat, myTurn) {
     if (s.phase === 'writing') {
       if (!myTurn) {
@@ -2303,6 +2371,32 @@
         { seat: 1, move: { pick: b }, tip: a === b ? 'demoRpsDraw' : 'demoRpsShow' },
       ]),
     },
+    closest: {
+      /* Three questions played out end to end: both write a number, the
+         answer lands, the nearer one takes it, and the round is decided on
+         who took more. Finishes 2–1, so the count is obviously what did it. */
+      speed: 1500,
+      live: true,
+      steps: [
+        { tip: 'demoClosestRead' },
+        { seat: 0, move: { guess: 40000000 }, tip: 'demoClosestHidden' },
+        { seat: 1, move: { guess: 80000000 }, tip: 'demoClosestShow' },
+        { seat: 0, move: { next: true }, tip: 'demoClosestNext' },
+        { seat: 0, move: { guess: 3 }, tip: 'demoClosestHidden' },
+        { seat: 1, move: { guess: 8 }, tip: 'demoClosestShow' },
+        { seat: 0, move: { next: true }, tip: 'demoClosestNext' },
+        { seat: 0, move: { guess: 100000 }, tip: 'demoClosestHidden' },
+        { seat: 1, move: { guess: 400000 }, tip: 'demoClosestShow' },
+      ],
+      questions: [
+        { tr: 'Türkiye’nin nüfusu kaç kişi?', en: 'What is the population of Türkiye?',
+          a: 85400000, u: { tr: 'kişi', en: 'people' } },
+        { tr: 'Ahtapotun kaç kalbi var?', en: 'How many hearts does an octopus have?',
+          a: 3, u: { tr: 'kalp', en: 'hearts' } },
+        { tr: 'Ay ile Dünya arası ortalama kaç km?', en: 'How far is the Moon from Earth?',
+          a: 384400, u: { tr: 'km', en: 'km' } },
+      ],
+    },
     truths: {
       speed: 2400,
       steps: [
@@ -2325,6 +2419,7 @@
     code: 'demoHowCode',
     chain: 'demoHowChain',
     rps: 'demoHowRps',
+    closest: 'demoHowClosest',
     truths: 'demoHowTruths',
   };
 
@@ -2395,7 +2490,7 @@
     const boards = {
       xox: xoxBoard, connect4: c4Board, reversi: reversiBoard, dots: dotsBoard,
       hangman: hangmanBoard, code: codeBoard, chain: chainBoard, rps: rpsBoard,
-      truths: truthsBoard,
+      closest: closestBoard, truths: truthsBoard,
     };
     const seatsEl = $('.demo-seats', box);
     const boardEl = $('.demo-board', box);
@@ -2440,7 +2535,7 @@
         tipEl.textContent = t('demoUnavailable');
         return;
       }
-      const state = G.newGameState(kind);
+      const state = G.newGameState(kind, { questions: DEMOS[kind].questions || [] });
       G.seatOf(state, DEMO_A);
       G.seatOf(state, DEMO_B);
       paint(state, t('demoStart'));
@@ -2582,6 +2677,17 @@
           });
           if (sure) move({ giveUp: true });
         };
+      }
+    }
+    if (kind === 'closest') {
+      const next = $('.js-cnext', body);
+      if (next) next.onclick = () => move({ next: true });
+      if ($('.js-cguessgo', body)) {
+        wireEntry('.js-cguessnum', '.js-cguessgo', (raw) => {
+          // people type "85.000.000" or "85 000 000" — take the digits
+          const n = Number(String(raw).replace(/[^\d]/g, ''));
+          return Number.isFinite(n) ? { guess: n } : null;
+        });
       }
     }
     if (kind === 'rps') {

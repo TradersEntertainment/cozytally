@@ -2393,6 +2393,99 @@ body.reordering {
 .g-pick:hover { background: rgba(255, 255, 255, 0.14); }
 .g-pick:active { transform: scale(0.92); }
 
+/* ---- closest guess */
+.g-closest {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  align-items: center;
+  width: 100%;
+  text-align: center;
+}
+
+.g-question {
+  margin: 2px 0 0;
+  font-size: var(--t-headline);
+  font-weight: 700;
+  line-height: 1.3;
+  text-wrap: balance;
+}
+
+.g-unit { margin: -4px 0 0; }
+
+.g-answer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: center;
+  gap: 6px;
+  padding: 10px 16px;
+  border-radius: var(--r-md);
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
+  animation: g-pop 0.3s var(--spring);
+}
+
+.g-answer b { font-size: var(--t-title-sm); color: var(--accent); }
+.g-answer span { font-size: var(--t-footnote); color: var(--ink-2); }
+.g-answer i { font-size: var(--t-caption); color: var(--ink-dim); font-style: normal; }
+
+.g-guesses { display: flex; gap: 8px; width: 100%; }
+
+.g-guess {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 8px 6px;
+  border-radius: var(--r-sm);
+  border: 1px solid var(--hairline);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.g-guess.p1 { border-color: color-mix(in srgb, var(--pink) 40%, transparent); }
+.g-guess.p2 { border-color: color-mix(in srgb, var(--sky) 40%, transparent); }
+.g-guess.win {
+  background: rgba(255, 215, 168, 0.14);
+  box-shadow: inset 0 0 0 1px rgba(255, 215, 168, 0.55);
+}
+
+.g-guess b { font-size: var(--t-headline); }
+.g-gwho, .g-gaway {
+  font-size: var(--t-caption);
+  color: var(--ink-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.g-waiters { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; }
+
+.g-waiter {
+  font-size: var(--t-footnote);
+  color: var(--ink-dim);
+  padding: 5px 11px;
+  border-radius: var(--r-pill);
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.g-waiter.in { color: var(--ink-2); background: rgba(139, 233, 201, 0.14); }
+
+/* one dot per question, filled in as they are taken */
+.g-cpips { display: flex; gap: 4px; }
+
+.g-cpip {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.g-cpips:first-of-type .g-cpip.on { background: var(--pink); }
+.g-cpips:last-of-type .g-cpip.on { background: var(--sky); }
+.g-cpip.tie { background: rgba(255, 255, 255, 0.4); }
+
 /* ---- two truths, one lie */
 .g-truths {
   display: flex;

@@ -10,7 +10,10 @@ import Database from 'better-sqlite3';
 import webpush from 'web-push';
 // lives under public/ because the browser loads the very same file to run the
 // how-to-play demo — the rules a player is shown are the rules that referee
-import { isGame, newGameState, nextRound, seatOf, applyMove, redactGame } from './public/games.js';
+import {
+  isGame, newGameState, nextRound, seatOf, applyMove, redactGame, CLOSEST_ROUND,
+} from './public/games.js';
+import { QUESTIONS } from './questions.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = process.env.PORT || 3000;
@@ -625,8 +628,26 @@ function sanitizeConfig(type, raw) {
   return out;
 }
 
+/* Ten questions for a round of "closest guess", drawn without repeats. The
+   answers only ever live here — questions.js is outside public/ so a browser
+   can't read ahead, and redactGame keeps them off the wire until both people
+   have written a number down. */
+function dealQuestions() {
+  const pool = [...QUESTIONS];
+  const out = [];
+  for (let i = 0; i < CLOSEST_ROUND && pool.length; i++) {
+    out.push(pool.splice(Math.floor(Math.random() * pool.length), 1)[0]);
+  }
+  return out;
+}
+
+const gameOpts = (game) => (game === 'closest' ? { questions: dealQuestions() } : {});
+
 function defaultState(type, now, config) {
-  if (type === 'game') return newGameState(config?.game || 'xox');
+  if (type === 'game') {
+    const game = isGame(config?.game) ? config.game : 'xox';
+    return newGameState(game, gameOpts(game));
+  }
   if (type === 'tally') return { count: 0 };
   if (type === 'streak') return { startAt: now, best: 0 };
   if (type === 'timer') return { running: false, startedAt: 0, accumulated: 0 };
@@ -1284,7 +1305,7 @@ function handleMessage(ws, msg) {
         // anyone at the table can deal the next round, but only once this one
         // has actually finished
         if (!state.over) return;
-        nextRound(state);
+        nextRound(state, gameOpts(state.game));
         store.updateCardState(JSON.stringify(state), row.id);
         broadcastCard(code, row.id, by, 'game:next');
         return;

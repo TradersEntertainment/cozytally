@@ -15,7 +15,7 @@ ikiniz de aynı panoyu **canlı** görürsünüz. Panoya istediğiniz kadar kart
 | 💰 **Kumbara** | Birlikte para biriktirin. **Kademeli hedefler:** tek kumbaraya birden fazla hedef koyabilirsin (kira → okul → araba), her birinin kendi tutarı, adı ve fotoğrafı olur. Kumbara **şelale gibi sırayla dolar**: önce 1. hedef kendi tutarını alır, ancak o bittikten sonra artan para 2.'ye geçer — sıradaki hedef ödenmeden alttakine pay düşmez. Her adımda "17.250/25.000₺" gibi kendi payını görürsün. Ayrıca aktif hedefe göre %25/50/75/100 yaklaşma yıldızları, kim ne kadar koydu gösteren katkı yarışı, +/− işlem geçmişi ve para atınca 🪙 yağmuru |
 | 📝 **Liste** | Ortak yapılacaklar — herkes madde ekler ve işaretler, hepsi bitince konfeti |
 | 🤝 **Beraber** | Ortak seri: herkesin kendi günlük tiki var ama seri odanın. “Herkes” ya da “biri yeter” modu, son 7 günün ızgarası ve birbirinize hediye edebildiğiniz **pas hakkı** — biri günü kaçırdıysa pasını harcayıp onun için örtebilirsin, seri bozulmaz |
-| 🎲 **Oyun** | Sıra tabanlı mini oyunlar — dokuzu da aynı anda açık olabilir: ⭕ **XOX**, 🔵 **Dört Taş**, ⚫ **Reversi**, ⬜ **Nokta-Kutu**, 🎈 **Adam Asmaca**, 🔢 **Sayı Tut**, 🔗 **Kelime Zinciri**, ✊ **Taş Kağıt Makas** ve 🤥 **İki Doğru Bir Yalan**. Aynı anda çevrimiçi olmanız gerekmez: hamleni yaparsın, karşı tarafa “sıra sende” bildirimi gider, o müsait olunca oynar (Taş Kağıt Makas'ta ikiniz aynı anda seçersiniz, eller ikinci seçim gelince açılır). Kim kaç tur aldı üstte durur, kazananda konfeti patlar, “yeni tur” ile kaldığınız yerden devam edersiniz — Adam Asmaca, Sayı Tut ve İki Doğru Bir Yalan'da roller kendiliğinden değişir, bu sefer tutan sen olursun. Tanımadığın bir oyunun kartında parlayan **✨ Nasıl oynanır?** düğmesi durur; basınca iki kişinin oynadığı canlı bir tanıtım açılır ve kimin nasıl kazandığını gösterir. XOX ile Dört Taş'ta finalde kazandıran bütün dizilişler de tek tek geçer — yatay, dikey ve iki çapraz. Bir kez sonuna kadar izledin mi o oyun için bir daha çıkmaz — kart başındaki sessiz **?** hep orada kalır. Altındaki kutudan da **oynarken yorumlaşabilirsiniz** |
+| 🎲 **Oyun** | Sıra tabanlı mini oyunlar — onu da aynı anda açık olabilir: ⭕ **XOX**, 🔵 **Dört Taş**, ⚫ **Reversi**, ⬜ **Nokta-Kutu**, 🎈 **Adam Asmaca**, 🔢 **Sayı Tut**, 🔗 **Kelime Zinciri**, ✊ **Taş Kağıt Makas**, 🎯 **En Yakın** ve 🤥 **İki Doğru Bir Yalan**. Aynı anda çevrimiçi olmanız gerekmez: hamleni yaparsın, karşı tarafa “sıra sende” bildirimi gider, o müsait olunca oynar (Taş Kağıt Makas ile En Yakın'da ikiniz aynı anda yazarsınız, ikinci cevap gelince açılır). Kim kaç tur aldı üstte durur, kazananda konfeti patlar, “yeni tur” ile kaldığınız yerden devam edersiniz — Adam Asmaca, Sayı Tut ve İki Doğru Bir Yalan'da roller kendiliğinden değişir, bu sefer tutan sen olursun. Tanımadığın bir oyunun kartında parlayan **✨ Nasıl oynanır?** düğmesi durur; basınca iki kişinin oynadığı canlı bir tanıtım açılır ve kimin nasıl kazandığını gösterir. XOX ile Dört Taş'ta finalde kazandıran bütün dizilişler de tek tek geçer — yatay, dikey ve iki çapraz. Bir kez sonuna kadar izledin mi o oyun için bir daha çıkmaz — kart başındaki sessiz **?** hep orada kalır. Altındaki kutudan da **oynarken yorumlaşabilirsiniz** |
 
 **Sıralama:** Kartlar başlıklarındaki ≡ tutamağından basılı tutulup sürüklenerek istediğin
 sıraya dizilir (klavyede tutamağa odaklanıp ↑/↓ de olur). Yeni eklenen kartlar panonun
@@ -97,6 +97,12 @@ Lokalde veriler `./data/` klasörüne yazılır.
 - **Sunucu:** Node.js + Express + WebSocket (`ws`)
 - **Veritabanı:** SQLite (`better-sqlite3`), tek dosya, WAL modu
 - **İstemci:** Bağımlılıksız vanilla JS — build adımı yok
+- **En Yakın'ın soru havuzu** (`questions.js`) bilerek `public/` dışında duruyor:
+  yalnızca `public/` sunuluyor, dolayısıyla cevaplar hiçbir zaman tarayıcıya
+  inmiyor. Sunucu her tura 111 sorudan 10'unu tekrarsız dağıtıyor, karta yalnız
+  soru metni gidiyor, sayı ikiniz de yazana kadar sunucuda kalıyor. Cevaplar
+  yuvarlanmış yaklaşık değerler — oyun kimin tam bildiği değil, kimin daha yakın
+  olduğu üzerine
 - **Oyun kuralları** tek bir yerde (`public/games.js`): oyunun hakemi sunucudur,
   tarayıcı sadece sunucudan gelen tahtayı çizer ve hamle ister, hiçbir hamlenin
   geçerli olup olmadığına kendisi karar vermez. Bu oyunların yarısı zaten bir
