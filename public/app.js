@@ -75,10 +75,14 @@
     for (let i = 0; i < N; i++) {
       const d = document.createElement('span');
       d.className = 'tg-dot';
-      // widest and brightest at the head, thinning out towards the tail
+      // widest at the head, thinning out towards the tail — and the whole
+      // spectrum along its length, green through violet to a warm ember
       const k = i / (N - 1);
       d.style.setProperty('--s', (34 - k * 24).toFixed(1) + 'vmin');
-      d.style.opacity = (1 - k * 0.82).toFixed(3);
+      d.style.setProperty('--c', `hsl(${Math.round((160 + k * 300) % 360)} 100% 68%)`);
+      // the tail keeps most of its colour rather than fading straight out, so
+      // the whole spectrum is there to see even though none of it is loud
+      d.style.opacity = (0.3 - k * 0.17).toFixed(3);
       wrap.appendChild(d);
       dots.push(d);
     }
@@ -93,10 +97,14 @@
     const trail = Array.from({ length: N }, () => ({ x, y }));
 
     const frame = (now) => {
-      // each segment eases towards the one ahead of it — that lag is the tail
+      /* Each segment eases towards the one ahead of it — that lag is the
+         tail, and a gentle one spreads the colours out. Once the finger is
+         gone it tightens, so the comet gathers itself back up as it fades
+         instead of leaving a smear hanging in the air. */
+      const ease = down ? 0.28 : 0.45;
       for (let i = N - 1; i > 0; i--) {
-        trail[i].x += (trail[i - 1].x - trail[i].x) * 0.38;
-        trail[i].y += (trail[i - 1].y - trail[i].y) * 0.38;
+        trail[i].x += (trail[i - 1].x - trail[i].x) * ease;
+        trail[i].y += (trail[i - 1].y - trail[i].y) * ease;
       }
       trail[0].x += (x - trail[0].x) * 0.55;
       trail[0].y += (y - trail[0].y) * 0.55;
@@ -104,6 +112,10 @@
         dots[i].style.transform =
           `translate3d(${trail[i].x.toFixed(1)}px, ${trail[i].y.toFixed(1)}px, 0) translate(-50%, -50%)`;
       }
+      // A touchend can go missing — a call arriving, the tab being switched
+      // away mid-gesture. Without this the light would stay pinned on with
+      // nothing holding it.
+      if (down && now - lastMove > 2500) lift();
       // draw while a finger is down, and after it lifts until the tail has
       // caught up and the fade has finished
       if (down || now - lastMove < 1800) requestAnimationFrame(frame);
@@ -138,12 +150,10 @@
        that is still very much on the screen. Touch events keep coming for the
        whole gesture, so they are what actually keeps up. Both are passive;
        neither can hold up a scroll. */
-    addEventListener('pointerdown', (e) => {
-      if (e.pointerType !== 'touch') down = true;
-      move(e.clientX, e.clientY);
-    }, { passive: true });
+    // A mouse has no finger resting on the screen, so it only ever moves the
+    // light — "down" belongs to touch alone, and to nothing else.
+    addEventListener('pointerdown', (e) => move(e.clientX, e.clientY), { passive: true });
     addEventListener('pointermove', (e) => move(e.clientX, e.clientY), { passive: true });
-    addEventListener('pointerup', lift, { passive: true });
 
     const touch = (e) => {
       const t = e.touches[0];

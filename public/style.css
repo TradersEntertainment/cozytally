@@ -284,6 +284,10 @@ a:focus-visible {
   transition-duration: 0.18s; /* arrives quickly, leaves slowly */
 }
 
+/* Each segment carries its own neon hue — the tail runs the whole spectrum —
+   but at an alpha low enough that it reads as a tint on the night rather than
+   something drawn on top of it. Saturated colour screened at low opacity is
+   what makes it glow without shouting. */
 .tg-dot {
   position: absolute;
   top: 0;
@@ -294,10 +298,9 @@ a:focus-visible {
   will-change: transform;
   background: radial-gradient(
     closest-side,
-    color-mix(in srgb, var(--mint) 20%, transparent),
-    color-mix(in srgb, var(--sky) 13%, transparent) 36%,
-    color-mix(in srgb, var(--lavender) 8%, transparent) 62%,
-    transparent 78%
+    color-mix(in srgb, var(--c) 30%, transparent),
+    color-mix(in srgb, var(--c) 17%, transparent) 40%,
+    transparent 76%
   );
 }
 

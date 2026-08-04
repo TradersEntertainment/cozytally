@@ -106,8 +106,10 @@ Lokalde veriler `./data/` klasörüne yazılır.
   (istemciler saat farkını `ping/pong` ile düzeltir)
 - **Parmak ışığı:** parmağını gezdirdiğin yerde küçük bir ışık başı ve arkasında
   incelerek sönen bir kuyruk — kuyruk gerçekten gittiğin yolu takip eder, çünkü
-  her parça önündekine yetişmeye çalışır. Elini çekince kuyruk başa toplanıp
-  hepsi söner. On parça, hepsi yalnızca `transform` ve `opacity` ile hareket
+  her parça önündekine yetişmeye çalışır. Her parçanın kendi neon rengi var,
+  kuyruk boyunca yeşilden mora ve sıcak bir kora kadar bütün tayf geçiyor; ama
+  hepsi çok düşük saydamlıkta, yani geceye vuran bir renk gibi duruyor, üstüne
+  çizilmiş bir şey gibi değil. Elini çekince kuyruk başa toplanıp hepsi söner. On parça, hepsi yalnızca `transform` ve `opacity` ile hareket
   eder ve `mix-blend-mode: screen` ile üstünden geçtiği her şeyi aydınlatır —
   yani ekran kartının işi, ana iş parçacığı hiç uyanmıyor; imleç akışı da kare
   başına tek yazıya indiriliyor ve ışık sönünce döngü kendini durduruyor
