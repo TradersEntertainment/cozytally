@@ -259,40 +259,46 @@ a:focus-visible {
   contain: strict;
 }
 
-/* The light that follows your finger. One element, moved with a transform and
-   faded with opacity, so the compositor handles all of it and the main thread
-   never wakes: the gradient is rastered once and then only slid around.
-   Sized in viewport units so it stays a pool of light rather than a dot. */
+/* The light that follows your finger, and the tail it drags behind it. Each
+   segment chases the one in front, so the trail curves along the path you
+   actually took rather than snapping to a straight line.
+
+   Everything here is transform and opacity, which the compositor does on its
+   own — the gradients are painted once and then only slid around, and the
+   pointer stream is collapsed to a single write per frame. It sits above the
+   cards, blended so it adds light instead of covering anything: behind them
+   the board hid it completely, since a card is deliberately almost opaque. */
 .touch-glow {
-  /* Above the cards rather than behind them, blended so it adds light instead
-     of covering anything — otherwise the board hides it completely, since a
-     card is deliberately almost opaque. Below the dock and the sheets, which
-     should stay readable. */
   position: fixed;
+  inset: 0;
   z-index: 29;
-  mix-blend-mode: screen;
-  top: 0;
-  left: 0;
-  width: 92vmin;
-  height: 92vmin;
-  margin: -46vmin 0 0 -46vmin;
-  border-radius: 50%;
   pointer-events: none;
+  /* blended as one group, so overlapping segments don't blow out */
+  mix-blend-mode: screen;
   opacity: 0;
-  will-change: transform, opacity;
-  background: radial-gradient(
-    closest-side,
-    color-mix(in srgb, var(--mint) 20%, transparent),
-    color-mix(in srgb, var(--sky) 13%, transparent) 34%,
-    color-mix(in srgb, var(--lavender) 9%, transparent) 58%,
-    transparent 76%
-  );
-  transition: opacity 0.75s var(--ease);
+  transition: opacity 0.8s var(--ease);
 }
 
 .touch-glow.lit {
   opacity: 1;
-  transition-duration: 0.22s; /* arrives quickly, leaves slowly */
+  transition-duration: 0.18s; /* arrives quickly, leaves slowly */
+}
+
+.tg-dot {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: var(--s);
+  height: var(--s);
+  border-radius: 50%;
+  will-change: transform;
+  background: radial-gradient(
+    closest-side,
+    color-mix(in srgb, var(--mint) 20%, transparent),
+    color-mix(in srgb, var(--sky) 13%, transparent) 36%,
+    color-mix(in srgb, var(--lavender) 8%, transparent) 62%,
+    transparent 78%
+  );
 }
 
 /* Nobody is looking — stop burning battery. Named one by one this went stale

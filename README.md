@@ -104,11 +104,14 @@ Lokalde veriler `./data/` klasörüne yazılır.
   kendiliğinden değişir
 - Kronometre ve geri sayımlar sunucu saatine göre senkronlanır
   (istemciler saat farkını `ping/pong` ile düzeltir)
-- **Parmak ışığı:** ekranda gezdirdiğin yerde arkada yumuşak bir ışık havuzu
-  beliriyor, elini çekince kendiliğinden sönüyor. Tek bir öğe; yeri `transform`
-  ile, parlaklığı `opacity` ile değişiyor ve `mix-blend-mode: screen` ile
-  üstünden geçtiği her şeyi aydınlatıyor — hepsi ekran kartının işi, ana iş
-  parçacığı hiç uyanmıyor (ölçüldü: kaydırırken kare süresine etkisi yok).
+- **Parmak ışığı:** parmağını gezdirdiğin yerde küçük bir ışık başı ve arkasında
+  incelerek sönen bir kuyruk — kuyruk gerçekten gittiğin yolu takip eder, çünkü
+  her parça önündekine yetişmeye çalışır. Elini çekince kuyruk başa toplanıp
+  hepsi söner. On parça, hepsi yalnızca `transform` ve `opacity` ile hareket
+  eder ve `mix-blend-mode: screen` ile üstünden geçtiği her şeyi aydınlatır —
+  yani ekran kartının işi, ana iş parçacığı hiç uyanmıyor; imleç akışı da kare
+  başına tek yazıya indiriliyor ve ışık sönünce döngü kendini durduruyor
+  (ölçüldü: parmak basılıyken kaydırmada kare süresine etkisi yok).
   Telefonuna "hareketi azalt" diyen birinde hiç kurulmuyor
 - **Cam iki türlü:** Yerinde duran yüzeyler (başlık, alt çubuk, kâğıtlar, sohbet)
   gerçek `backdrop-filter` kullanır; kaydırılan kartlar aynı görüntüyü veren

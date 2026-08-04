@@ -54,52 +54,76 @@
 
   // ------------------------------------------------------------ night sky
   /**
-   * A pool of light that follows your finger across the night. On a phone
-   * pointermove only fires while you are actually touching, which is exactly
-   * the feeling: the sky lights up under your thumb and settles again when
-   * you let go.
+   * A small pool of light at your fingertip with a comet tail behind it. On a
+   * phone pointermove only fires while you are actually touching, which is
+   * exactly the feeling: the night lights up under your thumb, the tail
+   * curves along the path you took, and it all settles again when you let go.
    *
-   * Deliberately cheap — the gradient is painted once and then only moved and
-   * faded, both of which the compositor does on its own, and the pointer
-   * stream is collapsed to one write per frame.
+   * Deliberately cheap. Ten segments, each one only ever moved with a
+   * transform and faded with opacity — no layout, no paint, nothing the main
+   * thread has to think about. The pointer stream is collapsed to one write
+   * per frame, and the loop stops itself once the light has gone out.
    */
   function initTouchGlow() {
     if (REDUCED) return;
-    const glow = document.createElement('div');
-    glow.className = 'touch-glow';
-    glow.setAttribute('aria-hidden', 'true');
-    document.body.appendChild(glow);
+    const N = 10;
+    const wrap = document.createElement('div');
+    wrap.className = 'touch-glow';
+    wrap.setAttribute('aria-hidden', 'true');
+
+    const dots = [];
+    for (let i = 0; i < N; i++) {
+      const d = document.createElement('span');
+      d.className = 'tg-dot';
+      // widest and brightest at the head, thinning out towards the tail
+      const k = i / (N - 1);
+      d.style.setProperty('--s', (34 - k * 24).toFixed(1) + 'vmin');
+      d.style.opacity = (1 - k * 0.82).toFixed(3);
+      wrap.appendChild(d);
+      dots.push(d);
+    }
+    document.body.appendChild(wrap);
 
     let x = innerWidth / 2;
     let y = innerHeight / 2;
-    let queued = false;
+    let lastMove = 0;
+    let running = false;
     let dim = null;
+    const trail = Array.from({ length: N }, () => ({ x, y }));
 
-    const place = () => {
-      queued = false;
-      glow.style.transform = `translate3d(${x}px, ${y}px, 0)`;
+    const frame = (now) => {
+      // each segment eases towards the one ahead of it — that lag is the tail
+      for (let i = N - 1; i > 0; i--) {
+        trail[i].x += (trail[i - 1].x - trail[i].x) * 0.38;
+        trail[i].y += (trail[i - 1].y - trail[i].y) * 0.38;
+      }
+      trail[0].x += (x - trail[0].x) * 0.55;
+      trail[0].y += (y - trail[0].y) * 0.55;
+      for (let i = 0; i < N; i++) {
+        dots[i].style.transform =
+          `translate3d(${trail[i].x.toFixed(1)}px, ${trail[i].y.toFixed(1)}px, 0) translate(-50%, -50%)`;
+      }
+      // keep drawing until the tail has caught up and the fade has finished
+      if (now - lastMove < 1800) requestAnimationFrame(frame);
+      else running = false;
     };
 
     const follow = (e) => {
       x = e.clientX;
       y = e.clientY;
-      glow.classList.add('lit');
+      lastMove = performance.now();
+      wrap.classList.add('lit');
       clearTimeout(dim);
       // a moment after the finger stops, the light settles back down
-      dim = setTimeout(() => glow.classList.remove('lit'), 700);
-      if (!queued) {
-        queued = true;
-        requestAnimationFrame(place);
+      dim = setTimeout(() => wrap.classList.remove('lit'), 650);
+      if (!running) {
+        running = true;
+        requestAnimationFrame(frame);
       }
     };
 
-    place();
     addEventListener('pointerdown', follow, { passive: true });
     addEventListener('pointermove', follow, { passive: true });
-    addEventListener('pointerup', () => {
-      clearTimeout(dim);
-      dim = setTimeout(() => glow.classList.remove('lit'), 700);
-    }, { passive: true });
   }
 
   function buildSky() {
