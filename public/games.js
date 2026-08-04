@@ -20,14 +20,35 @@ export const GAMES = {
   xox: { emoji: '⭕', titleKey: 'gameXox' },
   connect4: { emoji: '🔵', titleKey: 'gameConnect4' },
   dots: { emoji: '⬜', titleKey: 'gameDots' },
+  reversi: { emoji: '⚫', titleKey: 'gameReversi' },
+  hangman: { emoji: '🎈', titleKey: 'gameHangman' },
+  code: { emoji: '🔢', titleKey: 'gameCode' },
+  chain: { emoji: '🔗', titleKey: 'gameChain' },
+  rps: { emoji: '✊', titleKey: 'gameRps' },
   truths: { emoji: '🤥', titleKey: 'gameTruths' },
 };
 
 export const isGame = (g) => Object.prototype.hasOwnProperty.call(GAMES, g);
 
+/* Rock-paper-scissors is the odd one out: both people choose at once and
+   nothing is revealed until the second choice lands, so the usual "is it
+   your turn" gate would lock one of them out. */
+const SIMULTANEOUS = new Set(['rps']);
+
 const C4_COLS = 7;
 const C4_ROWS = 6;
 const DOTS_N = 5; // dots per side, so 4×4 = 16 boxes
+const RV_N = 8; // reversi is 8×8, like the real thing
+export const HANGMAN_LIVES = 6;
+export const CODE_LEN = 4;
+export const CODE_TRIES = 10;
+const RPS_TARGET = 3; // best of five
+
+/** Turkish needs its own casing: i→İ and ı→I, which plain toUpperCase gets wrong. */
+export const trUpper = (s) => String(s ?? '').toLocaleUpperCase('tr');
+const TR_LETTERS = 'ABCÇDEFGĞHIİJKLMNOÖPRSŞTUÜVYZ';
+export const TR_ALPHABET = [...TR_LETTERS];
+const isTurkishWord = (w) => w.length > 0 && [...w].every((c) => TR_LETTERS.includes(c));
 
 /** the empty board for a fresh round, keeping seats and scores */
 function freshBoard(game) {
@@ -42,6 +63,28 @@ function freshBoard(game) {
       boxes: Array((DOTS_N - 1) * (DOTS_N - 1)).fill(0),
       last: null,
     };
+  }
+  if (game === 'reversi') {
+    const board = Array(RV_N * RV_N).fill(0);
+    // the four in the middle that every game opens with
+    const m = RV_N / 2;
+    board[rv(m - 1, m - 1)] = 2;
+    board[rv(m, m)] = 2;
+    board[rv(m - 1, m)] = 1;
+    board[rv(m, m - 1)] = 1;
+    return { board, last: -1, flipped: [], passed: false };
+  }
+  if (game === 'hangman') {
+    return { phase: 'writing', word: '', guessed: [], wrong: 0 };
+  }
+  if (game === 'code') {
+    return { phase: 'writing', secret: '', tries: [] };
+  }
+  if (game === 'chain') {
+    return { words: [], gaveUp: -1 };
+  }
+  if (game === 'rps') {
+    return { picks: [null, null], wins: [0, 0], history: [], reveal: null };
   }
   // truths: the writer of the round makes up the statements
   return { phase: 'writing', statements: [], lie: -1, guess: -1 };
@@ -59,16 +102,20 @@ export function newGameState(game) {
   };
 }
 
-/** Start the next round. The loser — or in truths, the other person — goes first. */
+/** Games where one person sets a puzzle and the other solves it. After a
+    round the roles swap, which happens by itself: the turn is already sitting
+    with the solver, and next round setting is their job. */
+const PUZZLE_GAMES = new Set(['truths', 'hangman', 'code']);
+
+/** Start the next round. The loser goes first, so a thrashing evens out. */
 export function nextRound(state) {
   const game = state.game;
   const prev = state.over;
   state.round = (state.round || 1) + 1;
   state.over = null;
   Object.assign(state, freshBoard(game));
-  if (game === 'truths') {
-    // the turn already sits with whoever just guessed, and it is their go to
-    // make something up — so leave it exactly where it is
+  if (PUZZLE_GAMES.has(game)) {
+    // leave the turn exactly where it is — see PUZZLE_GAMES
   } else if (prev && prev.winner === 0) {
     state.turn = 1; // the one who lost opens
   } else if (prev && prev.winner === 1) {
@@ -156,6 +203,208 @@ function connect4Move(state, seat, move) {
   return true;
 }
 
+// ---------------------------------------------------------------- reversi
+const rv = (r, c) => r * RV_N + c;
+const RV_DIRS = [[-1, -1], [-1, 0], [-1, 1], [0, -1], [0, 1], [1, -1], [1, 0], [1, 1]];
+
+/** Every disc this move would turn over, or [] if it isn't a legal move. */
+function rvGains(board, at, mark) {
+  if (board[at]) return [];
+  const row = Math.floor(at / RV_N);
+  const col = at % RV_N;
+  const gains = [];
+  for (const [dr, dc] of RV_DIRS) {
+    const run = [];
+    let r = row + dr;
+    let c = col + dc;
+    while (r >= 0 && r < RV_N && c >= 0 && c < RV_N && board[rv(r, c)] === 3 - mark) {
+      run.push(rv(r, c));
+      r += dr;
+      c += dc;
+    }
+    // the run only counts if one of your own discs closes it off
+    if (run.length && r >= 0 && r < RV_N && c >= 0 && c < RV_N && board[rv(r, c)] === mark) {
+      gains.push(...run);
+    }
+  }
+  return gains;
+}
+
+export const reversiMoves = (board, mark) =>
+  board.map((_, i) => i).filter((i) => rvGains(board, i, mark).length > 0);
+
+/** how much a square is worth, for hints and for the walkthrough's play */
+export const reversiGains = (board, at, mark) => rvGains(board, at, mark);
+export const RV_CORNERS = [0, RV_N - 1, RV_N * (RV_N - 1), RV_N * RV_N - 1];
+
+const rvCount = (board) => [
+  board.filter((v) => v === 1).length,
+  board.filter((v) => v === 2).length,
+];
+
+function rvFinish(state) {
+  const [a, b] = rvCount(state.board);
+  state.over = { winner: a === b ? 'draw' : a > b ? 0 : 1, boxes: [a, b] };
+}
+
+function reversiMove(state, seat, move) {
+  const at = Number(move?.at);
+  if (!Number.isInteger(at) || at < 0 || at >= RV_N * RV_N) return false;
+  const mark = seat + 1;
+  const gains = rvGains(state.board, at, mark);
+  if (!gains.length) return false;
+
+  state.board[at] = mark;
+  for (const i of gains) state.board[i] = mark;
+  state.last = at;
+  state.flipped = gains;
+
+  // if the next player has nowhere to go the turn bounces back; if neither
+  // of you can move, the board is done wherever it stands
+  const theirs = reversiMoves(state.board, 3 - mark);
+  if (theirs.length) {
+    state.passed = false;
+    return true;
+  }
+  const mine = reversiMoves(state.board, mark);
+  if (!mine.length) {
+    rvFinish(state);
+    return true;
+  }
+  state.passed = true; // they sit this one out
+  state.again = true; // which means you go again
+  return true;
+}
+
+// ---------------------------------------------------------------- hangman
+function hangmanMove(state, seat, move) {
+  if (state.phase === 'writing') {
+    const word = trUpper(move?.word).replace(/\s+/g, '');
+    if (word.length < 3 || word.length > 20 || !isTurkishWord(word)) return false;
+    state.word = word;
+    state.phase = 'guessing';
+    return true;
+  }
+  if (state.phase !== 'guessing') return false;
+
+  const letter = trUpper(move?.letter);
+  if (letter.length !== 1 || !TR_LETTERS.includes(letter)) return false;
+  if (state.guessed.includes(letter)) return false;
+
+  state.guessed.push(letter);
+  const hit = state.word.includes(letter);
+  if (!hit) state.wrong++;
+
+  if ([...state.word].every((c) => state.guessed.includes(c))) {
+    state.phase = 'done';
+    state.over = { winner: seat, word: state.word }; // the guesser got there
+  } else if (state.wrong >= HANGMAN_LIVES) {
+    state.phase = 'done';
+    state.over = { winner: seat === 0 ? 1 : 0, word: state.word }; // the word held
+  } else {
+    state.again = true; // guessing is one long turn, right or wrong
+  }
+  return true;
+}
+
+// ---------------------------------------------------------------- number code
+/** bulls = right digit in the right place, cows = right digit, wrong place */
+function scoreCode(secret, guess) {
+  let bulls = 0;
+  let cows = 0;
+  for (let i = 0; i < secret.length; i++) {
+    if (guess[i] === secret[i]) bulls++;
+    else if (secret.includes(guess[i])) cows++;
+  }
+  return { bulls, cows };
+}
+
+const distinctDigits = (s) =>
+  s.length === CODE_LEN && /^\d+$/.test(s) && new Set(s).size === CODE_LEN;
+
+function codeMove(state, seat, move) {
+  if (state.phase === 'writing') {
+    const secret = String(move?.secret ?? '').trim();
+    if (!distinctDigits(secret)) return false;
+    state.secret = secret;
+    state.phase = 'guessing';
+    return true;
+  }
+  if (state.phase !== 'guessing') return false;
+
+  const guess = String(move?.guess ?? '').trim();
+  if (!distinctDigits(guess)) return false;
+
+  const { bulls, cows } = scoreCode(state.secret, guess);
+  state.tries.push({ guess, bulls, cows });
+
+  if (bulls === CODE_LEN) {
+    state.phase = 'done';
+    state.over = { winner: seat, secret: state.secret, tries: state.tries.length };
+  } else if (state.tries.length >= CODE_TRIES) {
+    state.phase = 'done';
+    state.over = { winner: seat === 0 ? 1 : 0, secret: state.secret, tries: state.tries.length };
+  } else {
+    state.again = true; // keep guessing until you crack it or run out
+  }
+  return true;
+}
+
+// ---------------------------------------------------------------- word chain
+/** Turkish words never begin with ğ, so a word ending in one hands over the
+    letter before it instead of an impossible turn. */
+export function chainLetter(word) {
+  const w = trUpper(word);
+  for (let i = w.length - 1; i >= 0; i--) {
+    if (w[i] !== 'Ğ') return w[i];
+  }
+  return w[w.length - 1] || '';
+}
+
+function chainMove(state, seat, move) {
+  if (move?.giveUp) {
+    state.gaveUp = seat;
+    state.over = { winner: seat === 0 ? 1 : 0, length: state.words.length };
+    return true;
+  }
+  const word = trUpper(move?.word).replace(/\s+/g, '');
+  if (word.length < 2 || word.length > 24 || !isTurkishWord(word)) return false;
+  if (state.words.some((w) => w.text === word)) return false; // already said
+  const prev = state.words[state.words.length - 1];
+  if (prev && word[0] !== chainLetter(prev.text)) return false;
+
+  state.words.push({ text: word, by: seat });
+  return true;
+}
+
+// ---------------------------------------------------------------- rock paper scissors
+const RPS_BEATS = { rock: 'scissors', paper: 'rock', scissors: 'paper' };
+
+function rpsMove(state, seat, move) {
+  // a new round starts the moment the last one has been seen
+  if (state.reveal) {
+    state.reveal = null;
+    state.picks = [null, null];
+  }
+  const pick = String(move?.pick ?? '');
+  if (!RPS_BEATS[pick]) return false;
+  if (state.picks[seat]) return false; // no changing your mind
+
+  state.picks[seat] = pick;
+  if (!state.picks[0] || !state.picks[1]) return true; // still waiting
+
+  const [a, b] = state.picks;
+  const winner = a === b ? 'draw' : RPS_BEATS[a] === b ? 0 : 1;
+  state.reveal = { picks: [a, b], winner };
+  state.history.push(winner);
+  if (winner !== 'draw') state.wins[winner]++;
+
+  if (state.wins[0] >= RPS_TARGET || state.wins[1] >= RPS_TARGET) {
+    state.over = { winner: state.wins[0] > state.wins[1] ? 0 : 1, wins: [...state.wins] };
+  }
+  return true;
+}
+
 // ---------------------------------------------------------------- dots & boxes
 const hIndex = (r, c) => r * (DOTS_N - 1) + c;
 const vIndex = (r, c) => r * DOTS_N + c;
@@ -229,8 +478,9 @@ export function applyMove(state, seat, move) {
   if (state.over) return { ok: false };
   if (seat !== 0 && seat !== 1) return { ok: false };
   // the turn is the only gate that matters: after you play it belongs to the
-  // other chair, and you can't sit in two chairs at once
-  if (state.turn !== seat) return { ok: false };
+  // other chair, and you can't sit in two chairs at once. Games where both
+  // choose at the same time police themselves instead.
+  if (!SIMULTANEOUS.has(state.game) && state.turn !== seat) return { ok: false };
 
   state.again = false;
   const before = state.turn;
@@ -238,26 +488,69 @@ export function applyMove(state, seat, move) {
     xox: xoxMove,
     connect4: connect4Move,
     dots: dotsMove,
+    reversi: reversiMove,
+    hangman: hangmanMove,
+    code: codeMove,
+    chain: chainMove,
+    rps: rpsMove,
     truths: truthsMove,
   }[state.game]?.(state, seat, move);
   if (!ok) return { ok: false };
 
-  if (!state.over && !state.again) state.turn = seat === 0 ? 1 : 0;
+  if (!state.over && !state.again && !SIMULTANEOUS.has(state.game)) {
+    state.turn = seat === 0 ? 1 : 0;
+  }
   if (state.over && state.over.winner !== 'draw') state.scores[state.over.winner]++;
-  return { ok: true, passed: state.turn !== before };
+  // in a simultaneous game the nudge belongs to the other person the moment
+  // you have chosen and they have not
+  const passed = SIMULTANEOUS.has(state.game)
+    ? !state.reveal && !state.over
+    : state.turn !== before;
+  return { ok: true, passed };
 }
 
 /**
- * What the browser is allowed to see. The lie has to stay on the server
- * while it is still being guessed, or anyone could read it straight out of
- * the page.
+ * What the browser is allowed to see.
+ *
+ * Several of these games are only games because one side does not know
+ * something. That secret has to stay on the server for as long as it is
+ * secret — send it and anyone can read it straight out of the page, and
+ * the game is over before it starts.
  */
 export function redactGame(state) {
-  if (state?.game === 'truths' && state.phase === 'guessing') {
+  if (!state) return state;
+
+  if (state.game === 'truths' && state.phase === 'guessing') {
     const { lie, ...rest } = state;
     return rest;
   }
+
+  if (state.game === 'hangman' && state.phase !== 'done') {
+    const { word, ...rest } = state;
+    // the shape of the word and the letters found so far — never the word
+    return {
+      ...rest,
+      mask: [...(word || '')].map((c) => (state.guessed.includes(c) ? c : null)),
+      misses: state.guessed.filter((c) => !(word || '').includes(c)),
+    };
+  }
+
+  if (state.game === 'code' && state.phase !== 'done') {
+    const { secret, ...rest } = state;
+    return rest; // the scored guesses are enough to play from
+  }
+
+  if (state.game === 'rps') {
+    // while a round is live, neither pick is anybody's business but the
+    // person who made it — so send only who has and hasn't chosen
+    if (!state.reveal) {
+      const { picks, ...rest } = state;
+      return { ...rest, chosen: [!!picks[0], !!picks[1]] };
+    }
+    return { ...state, chosen: [true, true] };
+  }
+
   return state;
 }
 
-export const GAME_SIZES = { C4_COLS, C4_ROWS, DOTS_N };
+export const GAME_SIZES = { C4_COLS, C4_ROWS, DOTS_N, RV_N };

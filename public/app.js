@@ -133,12 +133,21 @@
   const GAME_META = {
     xox: { emoji: '⭕', nameKey: 'gameXox', descKey: 'gameXoxDesc' },
     connect4: { emoji: '🔵', nameKey: 'gameConnect4', descKey: 'gameConnect4Desc' },
+    reversi: { emoji: '⚫', nameKey: 'gameReversi', descKey: 'gameReversiDesc' },
     dots: { emoji: '⬜', nameKey: 'gameDots', descKey: 'gameDotsDesc' },
+    hangman: { emoji: '🎈', nameKey: 'gameHangman', descKey: 'gameHangmanDesc' },
+    code: { emoji: '🔢', nameKey: 'gameCode', descKey: 'gameCodeDesc' },
+    chain: { emoji: '🔗', nameKey: 'gameChain', descKey: 'gameChainDesc' },
+    rps: { emoji: '✊', nameKey: 'gameRps', descKey: 'gameRpsDesc' },
     truths: { emoji: '🤥', nameKey: 'gameTruths', descKey: 'gameTruthsDesc' },
   };
   const C4_COLS = 7;
   const C4_ROWS = 6;
   const DOTS_N = 5;
+  const RV_N = 8;
+  const HANGMAN_LIVES = 6;
+  const TR_ALPHABET = [...'ABCÇDEFGĞHIİJKLMNOÖPRSŞTUÜVYZ'];
+  const RPS_HAND = { rock: '✊', paper: '✋', scissors: '✌️' };
 
   // ---- shared day helpers (local calendar, so "today" matches your phone)
   const pad2 = (n) => String(n).padStart(2, '0');
@@ -1505,10 +1514,10 @@
 
   // ---- mini games
   /**
-   * All four games wear the same frame — two seats, a scoreboard, whose turn
-   * it is — and differ only in the board underneath. The browser draws what
-   * the server sent and asks for moves; it never decides whether one is
-   * legal, so the two of you can't end up looking at different boards.
+   * Every game wears the same frame — two seats, a scoreboard, whose turn it
+   * is — and differs only in the board underneath. The browser draws what the
+   * server sent and asks for moves; it never decides whether one is legal, so
+   * the two of you can't end up looking at different boards.
    */
   function renderGameBody(body, card, opts = {}) {
     const s = card.state || {};
@@ -1520,11 +1529,18 @@
        chair they would take is simply the next free one. */
     const openSeat = mySeat < 0 && seats.length < 2 ? seats.length : -1;
     const playSeat = mySeat >= 0 ? mySeat : openSeat;
-    const myTurn = playSeat >= 0 && s.turn === playSeat && !s.over;
+    /* Rock-paper-scissors has no turn: you both choose at once, and the only
+       thing stopping you is having already chosen. Once the hands are open
+       the round is done, and choosing again is what starts the next one — so
+       an open reveal is an invitation, not a wait. */
+    const together = kind === 'rps';
+    const waitingOnMe = together && (!!s.reveal || !s.chosen?.[playSeat]);
+    const myTurn = playSeat >= 0 && !s.over && (together ? waitingOnMe : s.turn === playSeat);
+    if (together) rpsKey = `${card.id}:${s.round}:${(s.history || []).length}`;
 
     const seatChip = (i) => {
       const p = seats[i];
-      const live = !s.over && s.turn === i;
+      const live = !s.over && (together ? !s.chosen?.[i] && !s.reveal : s.turn === i);
       if (!p) {
         return `<span class="g-seat empty ${live ? 'live' : ''}">
           <span class="g-disc p${i + 1}"></span>${esc(t('gameFreeSeat'))}</span>`;
@@ -1541,34 +1557,56 @@
         : s.over.winner === mySeat
           ? t('gameYouWon')
           : t('gameTheyWon', { name: seats[s.over.winner]?.name || '?' });
+    } else if (together && s.reveal) {
+      // who took the round outranks "your move" — you can see the buttons
+      status = s.reveal.winner === 'draw'
+        ? t('gameRpsTie')
+        : t('gameRpsRound', { name: seats[s.reveal.winner]?.name || '?' });
     } else if (myTurn && mySeat < 0) {
       status = t('gameSitDown'); // your move is what puts you in the chair
     } else if (myTurn) {
-      status = s.again ? t('gameAgain') : t('gameYourTurn');
+      status = s.again ? t(AGAIN_MSG[kind] || 'gameAgain') : t('gameYourTurn');
     } else if (mySeat < 0 && seats.length >= 2) {
       status = t('gameSpectator');
+    } else if (together) {
+      status = t('gameRpsWaiting'); // chosen already, and they haven't
     } else if (seats[s.turn]) {
       status = t('gameTheirTurn', { name: seats[s.turn].name });
     } else {
       status = t('gameWaitingOther'); // the chair whose turn it is, is empty
     }
 
-    // in dots the thing you actually watch climb is boxes, not rounds won
-    const boxes = kind === 'dots'
-      ? t('gameBoxes', {
-          a: s.boxes.filter((v) => v === 1).length,
-          b: s.boxes.filter((v) => v === 2).length,
-        })
-      : '';
+    // what each game wants under the board instead of a bare round number
+    const boxes =
+      kind === 'dots'
+        ? t('gameBoxes', {
+            a: s.boxes.filter((v) => v === 1).length,
+            b: s.boxes.filter((v) => v === 2).length,
+          })
+        : kind === 'reversi'
+          ? t('gameDiscs', {
+              a: s.board.filter((v) => v === 1).length,
+              b: s.board.filter((v) => v === 2).length,
+            })
+          : kind === 'chain' && s.words?.length
+            ? t('gameChainLen', { n: s.words.length })
+            : '';
 
-    const boards = { xox: xoxBoard, connect4: c4Board, dots: dotsBoard, truths: truthsBoard };
+    const boards = {
+      xox: xoxBoard, connect4: c4Board, reversi: reversiBoard, dots: dotsBoard,
+      hangman: hangmanBoard, code: codeBoard, chain: chainBoard, rps: rpsBoard,
+      truths: truthsBoard,
+    };
     body.innerHTML = `
       <div class="g-seats">${seatChip(0)}${seatChip(1)}</div>
       <div class="g-status ${myTurn ? 'mine' : ''} ${s.over ? 'over' : ''}">${esc(status)}</div>
       ${hasSeenHow(kind)
         ? '' // you've watched it; the quiet ? in the header is enough from here
         : `<button class="g-howto js-how-big" data-game="${kind}">✨ ${esc(t('howToPlay'))}</button>`}
-      ${boards[kind](s, mySeat, myTurn)}
+      ${/* the chair you're in, or the one your first move would put you in —
+            reversi needs it to know which squares are legal for you, and
+            rock-paper-scissors to know whether to offer you the hands */ ''}
+      ${boards[kind](s, playSeat, myTurn)}
       <div class="g-foot">
         <span class="sub-label">${esc(t('gameRound', { n: s.round || 1 }))}${boxes ? ' · ' + esc(boxes) : ''}</span>
         ${s.over ? `<button class="btn btn-primary btn-sm js-gnext">${esc(t('gameNext'))}</button>` : ''}
@@ -1653,6 +1691,166 @@
     }
     return `<div class="g-dots ${myTurn ? 'playable' : ''}">${parts.join('')}</div>`;
   }
+
+  function reversiBoard(s, mySeat, myTurn) {
+    // the browser doesn't decide what is legal, but it can ask the same rules
+    // the server uses which squares are worth showing a hint on
+    const legal = myTurn && window.CTGames
+      ? new Set(window.CTGames.reversiMoves(s.board, mySeat + 1))
+      : new Set();
+    return `<div class="g-rv ${myTurn ? 'playable' : ''}">
+      ${s.board.map((v, i) => `
+        <button class="g-rvcell ${legal.has(i) ? 'can' : ''} ${i === s.last ? 'last' : ''}
+          ${s.flipped?.includes(i) ? 'flip' : ''}" data-at="${i}" ${legal.has(i) ? '' : 'disabled'}>
+          ${v ? `<span class="g-disc p${v}"></span>` : ''}
+        </button>`).join('')}
+    </div>`;
+  }
+
+  function hangmanBoard(s, mySeat, myTurn) {
+    if (s.phase === 'writing') {
+      if (!myTurn) return `<div class="g-truths waiting">${esc(t('gameHangmanWaiting'))}</div>`;
+      return `<div class="g-truths">
+        <p class="sub-label">${esc(t('gameHangmanHint'))}</p>
+        <input type="text" class="js-hword" maxlength="20" autocomplete="off"
+          placeholder="${esc(t('gameHangmanPh'))}">
+        <button class="btn btn-primary btn-sm js-hsend">${esc(t('gameHangmanSend'))}</button>
+      </div>`;
+    }
+
+    const lives = HANGMAN_LIVES - (s.wrong || 0);
+    const word = s.phase === 'done' && s.over?.word ? [...s.over.word] : null;
+    const slots = (word || s.mask || [])
+      .map((c, i) => {
+        const shown = word ? word[i] : c;
+        const found = word ? s.guessed?.includes(word[i]) : !!c;
+        return `<span class="g-slot ${found ? 'got' : 'miss'}">${shown && found ? esc(shown) : (word ? esc(shown) : '')}</span>`;
+      })
+      .join('');
+
+    // the wrong letters come pre-worked-out while the word is a secret; once
+    // it's out in the open they're just as easy to see for ourselves
+    const misses = s.misses || (word ? (s.guessed || []).filter((c) => !word.includes(c)) : []);
+
+    return `<div class="g-hang">
+      <div class="g-balloons" aria-label="${esc(t('gameLivesLeft', { n: lives }))}">
+        ${Array.from({ length: HANGMAN_LIVES }, (_, i) =>
+          `<span class="g-balloon ${i < lives ? '' : 'popped'}">${i < lives ? '🎈' : '💥'}</span>`).join('')}
+      </div>
+      <div class="g-word">${slots}</div>
+      ${misses.length
+        ? `<div class="g-misses">${misses.map((c) => `<span>${esc(c)}</span>`).join('')}</div>`
+        : ''}
+      ${s.phase === 'guessing' && myTurn
+        ? `<div class="g-keys">${TR_ALPHABET.map((c) => {
+            const used = s.guessed?.includes(c);
+            return `<button class="g-key ${used ? 'used' : ''}" data-letter="${c}" ${used ? 'disabled' : ''}>${c}</button>`;
+          }).join('')}</div>`
+        : ''}
+    </div>`;
+  }
+
+  function codeBoard(s, mySeat, myTurn) {
+    if (s.phase === 'writing') {
+      if (!myTurn) return `<div class="g-truths waiting">${esc(t('gameCodeWaiting'))}</div>`;
+      return `<div class="g-truths">
+        <p class="sub-label">${esc(t('gameCodeHint'))}</p>
+        <input type="text" inputmode="numeric" class="js-csecret" maxlength="4" autocomplete="off"
+          placeholder="${esc(t('gameCodePh'))}">
+        <button class="btn btn-primary btn-sm js-csend">${esc(t('gameCodeSet'))}</button>
+      </div>`;
+    }
+    const rows = (s.tries || [])
+      .map(
+        (tr, i) => `<div class="g-try">
+          <b>${i + 1}</b>
+          <span class="g-digits">${[...tr.guess].map((d) => `<i>${d}</i>`).join('')}</span>
+          <span class="g-marks"><em class="bull">${'●'.repeat(tr.bulls) || '–'}</em><em class="cow">${'○'.repeat(tr.cows)}</em></span>
+        </div>`
+      )
+      .join('');
+    return `<div class="g-code">
+      <p class="sub-label">${esc(t('gameCodeKey'))}</p>
+      ${rows ? `<div class="g-tries">${rows}</div>` : ''}
+      ${s.phase === 'done' && s.over?.secret
+        ? `<div class="g-reveal">${esc(t('gameCodeWas', { n: s.over.secret }))}</div>`
+        : ''}
+      ${s.phase === 'guessing' && myTurn
+        ? `<div class="g-guessrow">
+            <input type="text" inputmode="numeric" class="js-cguess" maxlength="4" autocomplete="off"
+              placeholder="${esc(t('gameCodePh'))}">
+            <button class="btn btn-primary btn-sm js-cgo">${esc(t('gameCodeTry'))}</button>
+          </div>`
+        : ''}
+    </div>`;
+  }
+
+  function chainBoard(s, mySeat, myTurn) {
+    const words = s.words || [];
+    const next = words.length && window.CTGames
+      ? window.CTGames.chainLetter(words[words.length - 1].text)
+      : null;
+    return `<div class="g-chain">
+      ${words.length
+        ? `<div class="g-links">${words
+            .map((w) => `<span class="g-link p${w.by + 1}">${esc(w.text)}</span>`)
+            .join('')}</div>`
+        : `<p class="sub-label">${esc(t('gameChainStart'))}</p>`}
+      ${!s.over && myTurn
+        ? `<div class="g-guessrow">
+            <input type="text" class="js-chword" maxlength="24" autocomplete="off"
+              placeholder="${esc(next ? t('gameChainNext', { letter: next }) : t('gameChainAny'))}">
+            <button class="btn btn-primary btn-sm js-chgo">${esc(t('gameChainSend'))}</button>
+          </div>
+          <button class="g-giveup js-chgiveup">${esc(t('gameChainGiveUp'))}</button>`
+        : ''}
+    </div>`;
+  }
+
+  function rpsBoard(s, mySeat, myTurn) {
+    const reveal = s.reveal;
+    const chosen = s.chosen || [false, false];
+    // the server never sends our own pick back, but we know what we sent
+    const mine = reveal ? reveal.picks[mySeat] : rpsPicks.get(rpsKey);
+    const dots = (i) => Array.from({ length: 3 }, (_, k) =>
+      `<span class="g-pip ${k < (s.wins?.[i] || 0) ? 'on' : ''}"></span>`).join('');
+
+    return `<div class="g-rps">
+      <div class="g-hands">
+        <div class="g-hand ${reveal ? 'shown' : ''}">
+          <span class="g-fist">${reveal ? RPS_HAND[reveal.picks[0]] : chosen[0] ? '🤛' : '…'}</span>
+          <span class="g-pips">${dots(0)}</span>
+        </div>
+        <span class="g-vs">${esc(t('gameRpsVs'))}</span>
+        <div class="g-hand ${reveal ? 'shown' : ''}">
+          <span class="g-fist">${reveal ? RPS_HAND[reveal.picks[1]] : chosen[1] ? '🤜' : '…'}</span>
+          <span class="g-pips">${dots(1)}</span>
+        </div>
+      </div>
+      ${mySeat < 0 || s.over
+        ? ''
+        : mine && !reveal
+          ? `<p class="sub-label">${esc(t('gameRpsChose', { hand: RPS_HAND[mine] }))}</p>`
+          : `<div class="g-picks">${Object.entries(RPS_HAND)
+              .map(([k, e]) => `<button class="g-pick" data-pick="${k}">${e}</button>`)
+              .join('')}</div>`}
+    </div>`;
+  }
+
+  /* Our own rock-paper-scissors pick. The server keeps it to itself until
+     both are in — which is the point — so the only copy we can show back is
+     the one we just sent. Keyed by card and round so a stale one is ignored
+     rather than shown against the wrong hand. */
+  const rpsPicks = new Map();
+  let rpsKey = '';
+
+  /* "You go again" reads differently depending on why. */
+  const AGAIN_MSG = {
+    dots: 'gameAgain',
+    reversi: 'gameReversiPass',
+    hangman: 'gameHangmanGo',
+    code: 'gameCodeGo',
+  };
 
   function truthsBoard(s, mySeat, myTurn) {
     if (s.phase === 'writing') {
@@ -1740,6 +1938,49 @@
     return order; // whoever's turn it is takes the next step
   }
 
+  /**
+   * Reversi is too long to write down move by move, so the two of them play
+   * it out by one habit each: Rabia takes whatever flips the most discs,
+   * Ömer works across the board in reading order. Neither is clever, and
+   * that is the point — the game still runs its full sixty moves, all four
+   * corners change hands, the turn bounces back four times when one of them
+   * has nowhere to go, and it finishes 34–30. Close enough that the count at
+   * the end is obviously what decided it.
+   */
+  function reversiDemoStep(state) {
+    const G = window.CTGames;
+    if (!G || state.over) return null;
+    const mark = state.turn + 1;
+    const moves = G.reversiMoves(state.board, mark);
+    if (!moves.length) return null;
+    const gains = (i) => G.reversiGains(state.board, i, mark).length;
+    const at = state.turn === 0 ? moves.reduce((a, b) => (gains(b) > gains(a) ? b : a)) : moves[0];
+    return { move: { at }, tip: G.RV_CORNERS.includes(at) ? 'demoRvCorner' : null };
+  }
+
+  /**
+   * Hangman is scripted off its own word rather than off a fixed list of
+   * letters, so the walkthrough still works when the word is translated:
+   * one wrong letter, two right ones, another wrong one, then the rest.
+   * Two balloons pop and the guesser still gets there with room to spare.
+   */
+  function hangmanDemoStep(state, i) {
+    if (i === 0) return { tip: 'demoHangWrite' };
+    const word = (window.CTGames?.trUpper || ((s) => s))(t('demoHangWord'));
+    if (i === 1) return { move: { word }, tip: 'demoHangGuess' };
+    const hits = [...new Set([...word])];
+    const misses = TR_ALPHABET.filter((c) => !word.includes(c));
+    const order = [
+      { letter: misses[0], tip: 'demoHangMiss' },
+      { letter: hits[0] },
+      { letter: hits[1] },
+      { letter: misses[1], tip: 'demoHangMiss' },
+      ...hits.slice(2).map((letter) => ({ letter })),
+    ];
+    const step = order[i - 2];
+    return step ? { move: { letter: step.letter }, tip: step.tip } : null;
+  }
+
   const DEMOS = {
     xox: {
       speed: 950,
@@ -1757,12 +1998,52 @@
       speed: 850,
       steps: [3, 4, 3, 4, 3, 4, 3].map((col) => ({ move: { col } })),
     },
+    reversi: { speed: 150, live: true, steps: reversiDemoStep },
     dots: { speed: 200, steps: dotsDemoSteps() },
+    hangman: { speed: 900, live: true, steps: hangmanDemoStep },
+    code: {
+      // 4712, worked out from three scored guesses — the whole game in four rows
+      speed: 1300,
+      live: true,
+      steps: [
+        { tip: 'demoCodeWrite' },
+        { move: { secret: '4712' }, tip: 'demoCodeGuess' },
+        { move: { guess: '1234' }, tip: 'demoCodeCows' },
+        { move: { guess: '4123' }, tip: 'demoCodeBull' },
+        { move: { guess: '4172' } },
+        { move: { guess: '4712' } },
+      ],
+    },
+    chain: {
+      speed: 1400,
+      live: true,
+      steps: [
+        ...[1, 2, 3, 4, 5, 6, 7].map((k) => ({ move: () => ({ word: t(`demoChain${k}`) }) })),
+        { move: { giveUp: true }, tip: 'demoChainStuck' },
+      ],
+    },
+    rps: {
+      // best of five, taken 3–1, with a draw in the middle so that rule shows
+      speed: 700,
+      steps: [
+        ['rock', 'scissors'],
+        ['paper', 'paper'],
+        ['scissors', 'rock'],
+        ['paper', 'rock'],
+        ['scissors', 'paper'],
+      ].flatMap(([a, b], i) => [
+        { seat: 0, move: { pick: a }, tip: 'demoRpsHidden' },
+        { seat: 1, move: { pick: b }, tip: a === b ? 'demoRpsDraw' : 'demoRpsShow' },
+      ]),
+    },
     truths: {
       speed: 2400,
       steps: [
         { tip: 'demoTruthsWrite' },
-        { move: { statements: [], lie: 1 }, tip: 'demoTruthsGuess', truthsWrite: true },
+        {
+          move: () => ({ statements: [t('demoTruth1'), t('demoLie'), t('demoTruth2')], lie: 1 }),
+          tip: 'demoTruthsGuess',
+        },
         { move: { guess: 1 }, tip: 'demoTruthsReveal' },
       ],
     },
@@ -1771,14 +2052,29 @@
   const DEMO_HOW = {
     xox: 'demoHowXox',
     connect4: 'demoHowC4',
+    reversi: 'demoHowRv',
     dots: 'demoHowDots',
+    hangman: 'demoHowHang',
+    code: 'demoHowCode',
+    chain: 'demoHowChain',
+    rps: 'demoHowRps',
     truths: 'demoHowTruths',
+  };
+
+  /* Keeping the turn means something different in each game, and "you go
+     again" on its own would be a riddle. */
+  const DEMO_AGAIN = {
+    dots: 'demoBox',
+    reversi: 'demoRvPass',
+    hangman: 'demoHangGo',
+    code: 'demoCodeGo',
   };
 
   /* After the demo game is won, run through the other ways it could have
      been. A scripted match can only ever show one of them, and a vertical
-     four leaves people wondering whether sideways counts. Dots and Truths
-     are won on a count and a guess, so they have no shapes to show. */
+     four leaves people wondering whether sideways counts. Only the two
+     line-up games have this question: everything else is won on a count, a
+     guess, a word or a code, and there the finish speaks for itself. */
   const c4At = (r, c) => r * C4_COLS + c;
   const WIN_SHAPES = {
     xox: [
@@ -1827,24 +2123,43 @@
       </div>`);
     $('.js-close', box).onclick = closeModal;
 
-    const boards = { xox: xoxBoard, connect4: c4Board, dots: dotsBoard, truths: truthsBoard };
+    const boards = {
+      xox: xoxBoard, connect4: c4Board, reversi: reversiBoard, dots: dotsBoard,
+      hangman: hangmanBoard, code: codeBoard, chain: chainBoard, rps: rpsBoard,
+      truths: truthsBoard,
+    };
     const seatsEl = $('.demo-seats', box);
     const boardEl = $('.demo-board', box);
     const tipEl = $('.demo-tip', box);
     const replay = $('.js-replay', box);
     let timer = null;
 
+    /* Some of these games only work because one side can't see something,
+       and the walkthrough should not be the one place that gives it away —
+       so it is drawn through the very same redaction the server sends over
+       the wire. That is also what makes the hangman word fill in one letter
+       at a time instead of sitting there in full. */
+    const view = (state) => window.CTGames?.redactGame(state) || state;
+
+    /* Most boards are drawn as a spectator sees them, so nothing invites a
+       tap. A few are worth showing switched on — the legal squares in
+       reversi, the letter keys in hangman, the box you type a guess into —
+       because that is half of what someone is here to learn. Taps are off
+       in CSS either way. */
+    const playable = !!DEMOS[kind].live;
+
     const paint = (state, tip) => {
+      const s = view(state);
       seatsEl.innerHTML = [DEMO_A, DEMO_B]
         .map((p, i) => {
-          const live = !state.over && state.turn === i;
+          // in a game where both choose at once, whoever hasn't chosen is up
+          const live = !s.over && (s.chosen ? !s.chosen[i] : s.turn === i);
           return `<span class="g-seat ${live ? 'live' : ''}">
             <span class="g-disc p${i + 1}"></span>${p.avatar} ${esc(p.name)}
-            <b>${state.scores[i]}</b></span>`;
+            <b>${s.scores[i]}</b></span>`;
         })
         .join('');
-      // drawn as a spectator sees it, so nothing invites a tap
-      boardEl.innerHTML = boards[kind](state, -1, false);
+      boardEl.innerHTML = boards[kind](s, playable ? s.turn : -1, playable);
       tipEl.textContent = tip;
     };
 
@@ -1886,40 +2201,48 @@
       }
 
       const { steps, speed } = DEMOS[kind];
+      // a written-out script, or a habit that decides each move as it comes —
+      // reversi is sixty moves long and nobody wants to read that
+      const nextStep = typeof steps === 'function' ? steps : (st, i) => steps[i];
       let n = 0;
       const tick = () => {
         // the modal may be long gone by now
         if (!document.body.contains(boardEl)) return;
-        if (n >= steps.length) {
+        const step = nextStep(state, n++);
+        if (!step) {
           markHowSeen(kind);
           showShapes(state);
           return;
         }
-        const step = steps[n++];
+        // whoever is about to move — in a simultaneous game the script says
+        // who, everywhere else the turn does
+        const seat = step.seat ?? state.turn;
         if (step.move) {
-          const move = step.truthsWrite
-            ? { statements: [t('demoTruth1'), t('demoLie'), t('demoTruth2')], lie: 1 }
-            : step.move;
-          G.applyMove(state, state.turn, move);
+          G.applyMove(state, seat, typeof step.move === 'function' ? step.move() : step.move);
         }
         const who = state.over
           ? [DEMO_A, DEMO_B][state.over.winner === 'draw' ? 0 : state.over.winner]
-          : [DEMO_A, DEMO_B][state.turn === 0 ? 1 : 0];
+          : [DEMO_A, DEMO_B][seat];
         let tip;
         if (state.over) {
-          // dots wins on a count, so say the count — extra keys are simply
-          // not present in the other games' strings
-          const [a, bx] = state.over.boxes || [];
+          // a game won on a count should say the count; games won some other
+          // way simply don't mention these, and unused keys cost nothing
+          const [a, bx] = state.over.boxes || state.over.wins || [];
           tip = state.over.winner === 'draw'
             ? t('gameDrawMsg')
             : t('demoWins', {
                 name: who.name,
-                how: t(DEMO_HOW[kind], { a: Math.max(a, bx), b: Math.min(a, bx) }),
+                how: t(DEMO_HOW[kind], {
+                  a: Math.max(a, bx),
+                  b: Math.min(a, bx),
+                  word: state.over.word || '',
+                  n: state.over.tries ?? state.over.length ?? state.wrong ?? 0,
+                }),
               });
         } else if (step.tip) {
           tip = t(step.tip, { name: who.name });
         } else if (state.again) {
-          tip = t('demoBox', { name: who.name });
+          tip = t(DEMO_AGAIN[kind] || 'demoBox', { name: who.name });
         } else {
           tip = t('demoPlays', { name: who.name });
         }
@@ -1933,8 +2256,12 @@
           showShapes(state);
           return;
         }
-        // linger on the good bits so a box closing actually registers
-        timer = setTimeout(tick, state.again ? Math.max(speed, 650) : speed);
+        // linger on the good bits — a box closing, two hands opening — so
+        // they actually register before the board moves on
+        timer = setTimeout(
+          tick,
+          state.again ? Math.max(speed, 650) : state.reveal ? Math.max(speed, 1200) : speed
+        );
       };
       timer = setTimeout(tick, 900);
     }
@@ -1945,6 +2272,57 @@
 
   function wireGameBoard(kind, body, s, myTurn, move) {
     if (!myTurn) return;
+    /** an input plus its send button, the shape half of these games use */
+    const wireEntry = (inputSel, btnSel, build) => {
+      const input = $(inputSel, body);
+      const go = () => {
+        const value = input.value.trim();
+        if (!value) return input.focus();
+        const m = build(value);
+        if (m) move(m);
+        input.value = '';
+      };
+      $(btnSel, body).onclick = go;
+      input.addEventListener('keydown', (e) => e.key === 'Enter' && go());
+    };
+
+    if (kind === 'reversi') {
+      $$('.g-rvcell:not([disabled])', body).forEach(
+        (b) => (b.onclick = () => move({ at: Number(b.dataset.at) }))
+      );
+    }
+    if (kind === 'hangman') {
+      if ($('.js-hsend', body)) wireEntry('.js-hword', '.js-hsend', (word) => ({ word }));
+      $$('.g-key:not([disabled])', body).forEach(
+        (b) => (b.onclick = () => move({ letter: b.dataset.letter }))
+      );
+    }
+    if (kind === 'code') {
+      if ($('.js-csend', body)) wireEntry('.js-csecret', '.js-csend', (secret) => ({ secret }));
+      if ($('.js-cgo', body)) wireEntry('.js-cguess', '.js-cgo', (guess) => ({ guess }));
+    }
+    if (kind === 'chain') {
+      if ($('.js-chgo', body)) wireEntry('.js-chword', '.js-chgo', (word) => ({ word }));
+      const quit = $('.js-chgiveup', body);
+      if (quit) {
+        quit.onclick = async () => {
+          const sure = await confirmModal({
+            title: t('gameChainGiveUp'),
+            body: t('gameChainGiveUpAsk'),
+            yesLabel: t('gameChainGiveUpYes'),
+          });
+          if (sure) move({ giveUp: true });
+        };
+      }
+    }
+    if (kind === 'rps') {
+      const key = rpsKey;
+      $$('.g-pick', body).forEach((b) => (b.onclick = () => {
+        rpsPicks.set(key, b.dataset.pick);
+        if (rpsPicks.size > 20) rpsPicks.delete(rpsPicks.keys().next().value);
+        move({ pick: b.dataset.pick });
+      }));
+    }
     if (kind === 'xox') {
       $$('.g-cell:not([disabled])', body).forEach((b) => (b.onclick = () => move({ cell: Number(b.dataset.cell) })));
     }
