@@ -5,6 +5,11 @@
   const $ = (sel, root = document) => root.querySelector(sel);
   const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
 
+  /* Someone who has asked their phone to calm down should not get confetti.
+     The stylesheet already honours this, but the celebrations that build
+     their own elements or drive a canvas had to be asked separately. */
+  const REDUCED = matchMedia('(prefers-reduced-motion: reduce)').matches;
+
   // ------------------------------------------------------------ i18n
   let lang = localStorage.getItem('ct:lang') ||
     ((navigator.language || '').toLowerCase().startsWith('tr') ? 'tr' : 'en');
@@ -232,7 +237,10 @@
       heart: { notes: [880, 1175], step: 0.05, len: 0.14, vol: 0.11, buzz: [10, 40, 10] },
     };
 
-    const enabled = () => localStorage.getItem(KEY) !== '0';
+    /* Read once instead of on every incoming message — this is on the path of
+       every card update and every chat line. */
+    let on = localStorage.getItem(KEY) !== '0';
+    const enabled = () => on;
 
     /* iOS only buzzes for a `switch` checkbox being clicked. One hidden one,
        reused; harmless everywhere it does nothing. */
@@ -255,12 +263,31 @@
       return true;
     }
 
+    /* A running audio context keeps a real-time render thread alive and the
+       phone's audio route open, so it is put back to sleep once the last note
+       has finished rather than left humming for the whole session. */
+    let sleepAt = null;
+    const doze = (until) => {
+      clearTimeout(sleepAt);
+      sleepAt = setTimeout(() => audio && audio.state === 'running' && audio.suspend(), until);
+    };
+
     function play(voice) {
       const Ctx = window.AudioContext || window.webkitAudioContext;
       if (!Ctx) return;
       // browsers only allow this after the person has touched something
       if (!audio) audio = new Ctx();
-      if (audio.state === 'suspended') audio.resume().catch(() => {});
+      if (audio.state === 'running') return schedule(voice);
+      /* A context that is asleep has a frozen clock, so notes written against
+         it would sit in the queue unplayed and unreleased — and then all fire
+         at once whenever it woke up. Wait for it to actually wake. */
+      audio
+        .resume()
+        .then(() => audio.state === 'running' && schedule(voice))
+        .catch(() => {});
+    }
+
+    function schedule(voice) {
       const now = audio.currentTime;
       voice.notes.forEach((freq, i) => {
         const at = now + i * voice.step;
@@ -274,7 +301,12 @@
         osc.connect(gain).connect(audio.destination);
         osc.start(at);
         osc.stop(at + voice.len + 0.02);
+        osc.onended = () => {
+          osc.disconnect();
+          gain.disconnect();
+        };
       });
+      doze((voice.notes.length * voice.step + voice.len) * 1000 + 800);
     }
 
     function fire(kind) {
@@ -292,6 +324,7 @@
     fire.enabled = enabled;
     fire.toggle = () => {
       const next = !enabled();
+      on = next;
       localStorage.setItem(KEY, next ? '1' : '0');
       if (next) fire('good'); // let them hear what they just turned on
       return next;
@@ -355,9 +388,23 @@
     return modalBox;
   }
 
+  /* Anything the modal minted a blob URL for. They live in the document, not
+     in the heap, so dropping the last reference is not enough — closing the
+     sheet with a picked photo still in it used to strand the whole image. */
+  const modalBlobs = new Set();
+  const keepBlob = (url) => (modalBlobs.add(url), url);
+  const dropBlob = (url) => {
+    if (!url) return;
+    modalBlobs.delete(url);
+    URL.revokeObjectURL(url);
+  };
+
   function closeModal() {
     overlay.hidden = true;
+    overlay.classList.remove('busy');
     modalBox.innerHTML = '';
+    for (const url of modalBlobs) URL.revokeObjectURL(url);
+    modalBlobs.clear();
   }
 
   overlay.addEventListener('click', (e) => {
@@ -446,6 +493,7 @@
 
   function sparklesAt(el) {
     if (!el) return;
+    if (REDUCED) return;
     const rect = el.getBoundingClientRect();
     const types = ['✨', '⭐', '🌟'];
     for (let i = 0; i < 4; i++) {
@@ -460,6 +508,10 @@
   }
 
   function heartsRain() {
+    if (REDUCED) return;
+    // the other person holding the ❤️ button could otherwise pile thousands
+    // of falling emoji onto your phone at ten bursts a second
+    if (document.querySelectorAll('.heart-fx').length > 60) return;
     const hearts = ['💖', '💕', '💗', '🩷', '💘'];
     for (let i = 0; i < 26; i++) {
       const h = document.createElement('div');
@@ -481,8 +533,14 @@
   let confettiRunning = false;
 
   function confetti() {
-    confettiCanvas.width = innerWidth;
-    confettiCanvas.height = innerHeight;
+    if (REDUCED) return;
+    // resizing a canvas clears it, so only do it when the window really moved
+    if (confettiCanvas.width !== innerWidth || confettiCanvas.height !== innerHeight) {
+      confettiCanvas.width = innerWidth;
+      confettiCanvas.height = innerHeight;
+    }
+    // bursts can land on top of each other in a fast game; keep the pile sane
+    if (confettiParticles.length > 300) confettiParticles.splice(0, confettiParticles.length - 300);
     const colors = ['#ffb86b', '#ff9eb5', '#b7a4ff', '#8be9c9', '#ffd7a8', '#fff'];
     for (let i = 0; i < 130; i++) {
       confettiParticles.push({
@@ -857,7 +915,10 @@
     if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(obj));
   };
 
-  setInterval(() => send({ t: 'ping' }), 25000);
+  /* The server already pings this socket every 30s at the protocol level, so
+     all this adds is the clock offset — no reason to wake a sleeping phone's
+     radio for that. */
+  setInterval(() => !document.hidden && send({ t: 'ping' }), 55000);
 
   // Tell the server when we stop looking, so it knows to push instead of
   // relying on the in-app toast nobody is there to see.
@@ -903,7 +964,7 @@
 
       case 'chat:new': {
         chatMsgs.push(msg.msg);
-        if (chatMsgs.length > 200) chatMsgs.shift();
+        if (chatMsgs.length > CHAT_KEEP) chatMsgs.shift();
         appendChatMsg(msg.msg, true);
         if (!isMine(msg.msg)) feel('msg');
         if (!chatOpen && !isMine(msg.msg)) {
@@ -1660,6 +1721,16 @@
 
   function dotsBoard(s, mySeat, myTurn) {
     const parts = [];
+    /* A closed box has all four of its edges drawn, so the edge that was just
+       drawn can only belong to a box it closed this move. That is what earns
+       the little pop — the other fifteen have been sitting there. */
+    const justClosed = (r, c) => {
+      const l = s.last;
+      if (!l) return false;
+      return l.dir === 'h'
+        ? l.i === r * (DOTS_N - 1) + c || l.i === (r + 1) * (DOTS_N - 1) + c
+        : l.i === r * DOTS_N + c || l.i === r * DOTS_N + c + 1;
+    };
     for (let r = 0; r < DOTS_N; r++) {
       for (let c = 0; c < DOTS_N; c++) {
         parts.push(`<span class="g-dot" style="grid-row:${r * 2 + 1};grid-column:${c * 2 + 1}"></span>`);
@@ -1682,7 +1753,8 @@
             ${on || !myTurn ? 'disabled' : ''}></button>`);
           if (c < DOTS_N - 1) {
             const b = r * (DOTS_N - 1) + c;
-            parts.push(`<span class="g-box ${s.boxes[b] ? 'p' + s.boxes[b] : ''}"
+            parts.push(`<span class="g-box ${s.boxes[b] ? 'p' + s.boxes[b] : ''}
+              ${s.boxes[b] && justClosed(r, c) ? 'fresh' : ''}"
               style="grid-row:${r * 2 + 2};grid-column:${c * 2 + 2}">
               ${s.boxes[b] ? (s.boxes[b] === 1 ? '●' : '○') : ''}</span>`);
           }
@@ -1720,11 +1792,13 @@
 
     const lives = HANGMAN_LIVES - (s.wrong || 0);
     const word = s.phase === 'done' && s.over?.word ? [...s.over.word] : null;
+    const newest = s.guessed?.[s.guessed.length - 1]; // only these letters just landed
     const slots = (word || s.mask || [])
       .map((c, i) => {
         const shown = word ? word[i] : c;
         const found = word ? s.guessed?.includes(word[i]) : !!c;
-        return `<span class="g-slot ${found ? 'got' : 'miss'}">${shown && found ? esc(shown) : (word ? esc(shown) : '')}</span>`;
+        return `<span class="g-slot ${found ? 'got' : 'miss'} ${found && shown === newest ? 'fresh' : ''}"
+          >${shown && found ? esc(shown) : (word ? esc(shown) : '')}</span>`;
       })
       .join('');
 
@@ -1793,7 +1867,8 @@
     return `<div class="g-chain">
       ${words.length
         ? `<div class="g-links">${words
-            .map((w) => `<span class="g-link p${w.by + 1}">${esc(w.text)}</span>`)
+            .map((w, i) => `<span class="g-link p${w.by + 1} ${i === words.length - 1 ? 'last' : ''}"
+              >${esc(w.text)}</span>`)
             .join('')}</div>`
         : `<p class="sub-label">${esc(t('gameChainStart'))}</p>`}
       ${!s.over && myTurn
@@ -1841,6 +1916,7 @@
      both are in — which is the point — so the only copy we can show back is
      the one we just sent. Keyed by card and round so a stale one is ignored
      rather than shown against the wrong hand. */
+  const CHAT_KEEP = 200; // messages kept in memory, and bubbles kept on screen
   const rpsPicks = new Map();
   let rpsKey = '';
 
@@ -2121,6 +2197,8 @@
         <button class="btn btn-ghost js-replay" hidden>${esc(t('demoReplay'))}</button>
         <button class="btn btn-primary js-close">${esc(t('gotIt'))}</button>
       </div>`);
+    // this one redraws its board constantly; the scrim behind it goes flat
+    $('#modal-overlay').classList.add('busy');
     $('.js-close', box).onclick = closeModal;
 
     const boards = {
@@ -2550,6 +2628,7 @@
   }
 
   function coinRain(cardEl) {
+    if (REDUCED) return;
     if (!cardEl) return;
     const rect = cardEl.getBoundingClientRect();
     for (let i = 0; i < 7; i++) {
@@ -2719,14 +2798,29 @@
     };
   }
 
+  /* One formatter per language instead of a fresh one per call — this used to
+     be rebuilt twice a second to produce a date that changes once a day. */
+  const dateFmts = new Map();
+  const longDate = (at) => {
+    const loc = lang === 'tr' ? 'tr-TR' : 'en-US';
+    let f = dateFmts.get(loc);
+    if (!f) {
+      f = new Intl.DateTimeFormat(loc, { day: 'numeric', month: 'long', year: 'numeric' });
+      dateFmts.set(loc, f);
+    }
+    return f.format(at);
+  };
+
   function updateStreakBody(body, card) {
     const days = Math.max(0, Math.floor((serverNow() - card.state.startAt) / 86400000));
-    $('.js-days', body).innerHTML = `${days}<small>${esc(days === 1 ? t('day') : t('days'))}</small>`;
-    const date = new Date(card.state.startAt).toLocaleDateString(
-      lang === 'tr' ? 'tr-TR' : 'en-US',
-      { day: 'numeric', month: 'long', year: 'numeric' }
-    );
-    $('.js-since', body).textContent = t('sinceStart', { date });
+    const daysEl = $('.js-days', body);
+    if (daysEl.dataset.n !== String(days)) {
+      daysEl.dataset.n = String(days);
+      daysEl.innerHTML = `${days}<small>${esc(days === 1 ? t('day') : t('days'))}</small>`;
+    }
+    const since = t('sinceStart', { date: longDate(card.state.startAt) });
+    const sinceEl = $('.js-since', body);
+    if (sinceEl.textContent !== since) sinceEl.textContent = since;
   }
 
   // ---- timer
@@ -2779,7 +2873,10 @@
     const grid = $('.js-count', body);
     if (!grid) return;
     if (diff <= 0) {
-      grid.innerHTML = `<div class="big-number" style="font-size:1.8rem">${esc(t('countdownDone'))}</div>`;
+      if (grid.dataset.done !== '1') {
+        grid.dataset.done = '1';
+        grid.innerHTML = `<div class="big-number" style="font-size:1.8rem">${esc(t('countdownDone'))}</div>`;
+      }
       if (target && !countdownCelebrated.has(card.id)) {
         countdownCelebrated.add(card.id);
         confetti();
@@ -2792,26 +2889,56 @@
     const m = Math.floor((total % 3600) / 60);
     const s = total % 60;
     const pad = (n) => String(n).padStart(2, '0');
-    const unit = (v, label) => `<div class="count-cell"><b>${v}</b><span>${label}</span></div>`;
     const dayLabel = lang === 'tr' ? 'gün' : 'days';
-    grid.innerHTML =
-      (d ? unit(d, dayLabel) : '') +
-      unit(pad(h), lang === 'tr' ? 'saat' : 'hrs') +
-      unit(pad(m), lang === 'tr' ? 'dk' : 'min') +
-      unit(pad(s), lang === 'tr' ? 'sn' : 'sec');
+    const cells = [
+      ...(d ? [[String(d), dayLabel]] : []),
+      [pad(h), lang === 'tr' ? 'saat' : 'hrs'],
+      [pad(m), lang === 'tr' ? 'dk' : 'min'],
+      [pad(s), lang === 'tr' ? 'sn' : 'sec'],
+    ];
+    /* Only the seconds change from one tick to the next, so the cells are
+       built once and then written into. Rebuilding them from HTML every
+       second meant tearing down and re-parsing sixteen elements — and a
+       relayout — for one digit. */
+    const shape = cells.map(([, l]) => l).join(',');
+    if (grid.dataset.shape !== shape || grid.dataset.done === '1') {
+      delete grid.dataset.done;
+      grid.dataset.shape = shape;
+      grid.innerHTML = cells
+        .map(([v, l]) => `<div class="count-cell"><b>${v}</b><span>${esc(l)}</span></div>`)
+        .join('');
+      return;
+    }
+    const nums = $$('.count-cell b', grid);
+    cells.forEach(([v], i) => {
+      if (nums[i] && nums[i].textContent !== v) nums[i].textContent = v;
+    });
   }
 
-  // ticker for live displays
-  setInterval(() => {
-    if (!room) return;
+  /* The ticker for anything that counts by itself. It used to wake twice a
+     second for every card on the board — running or not, visible or not —
+     and did a document-wide lookup per card before it even checked the type.
+     Now it only asks about cards that actually move, only while someone is
+     looking, and once a second, which is all a seconds display can show. */
+  const TICKING = new Set(['timer', 'countdown', 'streak']);
+  const tickOnce = () => {
+    if (!room || document.hidden) return;
     for (const card of cards.values()) {
+      if (!TICKING.has(card.type)) continue;
       const el = $(`.card[data-id="${card.id}"] .card-body`);
       if (!el) continue;
       if (card.type === 'timer' && card.state.running) updateTimerBody(el, card);
       if (card.type === 'countdown') updateCountdownBody(el, card);
       if (card.type === 'streak') updateStreakBody(el, card);
     }
-  }, 500);
+  };
+  // land just after each second turns over, rather than free-running
+  const tickLoop = () => {
+    tickOnce();
+    setTimeout(tickLoop, 1000 - (Date.now() % 1000) + 20);
+  };
+  tickLoop();
+  document.addEventListener('visibilitychange', () => !document.hidden && tickOnce());
 
   // ------------------------------------------------------------ card add/edit modal
   const PACKS = {
@@ -3129,11 +3256,11 @@
          so "Create" has nothing left to wait for. */
       const startUpload = (i, picked) => {
         const g = goalDraft[i];
-        if (g.preview) URL.revokeObjectURL(g.preview);
+        dropBlob(g.preview);
         // the thumbnail appears now, straight off the picked file — shrinking
         // first would leave an empty square for a second on a phone
         Object.assign(g, {
-          preview: URL.createObjectURL(picked),
+          preview: keepBlob(URL.createObjectURL(picked)),
           photo: '',
           busy: true,
           failed: false,
@@ -3144,9 +3271,9 @@
           const blob = await queueProcess(picked);
           // swap in the small copy so the full-size decode can be released
           const old = g.preview;
-          g.preview = URL.createObjectURL(blob);
+          g.preview = keepBlob(URL.createObjectURL(blob));
           paintPhoto(i);
-          if (old) URL.revokeObjectURL(old);
+          dropBlob(old);
           const url = await uploadBlob(blob);
           g.photo = url;
           return url;
@@ -3193,7 +3320,7 @@
           if (del) {
             del.onclick = () => {
               const [gone] = goalDraft.splice(i, 1);
-              if (gone?.preview) URL.revokeObjectURL(gone.preview);
+              dropBlob(gone?.preview);
               drawGoals();
             };
           }
@@ -3442,6 +3569,10 @@
     $('.chat-empty', list)?.remove();
     const nearBottom = list.scrollHeight - list.scrollTop - list.clientHeight < 140;
     list.appendChild(chatMsgEl(m));
+    /* The message list is capped at 200 but the elements it drew were not, so
+       a long evening left thousands of bubbles behind — and renderSeen walks
+       every one of them on every message. */
+    while (list.children.length > CHAT_KEEP) list.firstChild.remove();
     if (nearBottom || isMine(m)) list.scrollTop = list.scrollHeight;
     renderSeen();
     markSeen();

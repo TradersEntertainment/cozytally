@@ -21,7 +21,7 @@
     <link rel="stylesheet"
       href="https://fonts.googleapis.com/css2?family=Quicksand:wght@400;500;600;700&family=Caveat:wght@500;700&display=swap">
   </noscript>
-  <link rel="stylesheet" href="/style.css">
+  <link rel="stylesheet" href="/style.css?v=dev">
 </head>
 <body>
 
@@ -242,14 +242,14 @@
   <div id="toasts" class="toasts" aria-live="polite"></div>
   <canvas id="confetti-canvas"></canvas>
 
-  <!-- The game rules, the same module the server referees with. Only the
-       how-to-play demo needs them, which is always a tap away, so a deferred
-       module is soon enough. -->
+  <!-- The game rules, the same module the server referees with. The reversi
+       board and the word chain ask it what is legal as they draw, so it has
+       to be here by the first render, not only when the demo opens. -->
   <script type="module">
-    import * as games from '/games.js';
+    import * as games from '/games.js?v=dev';
     window.CTGames = games;
   </script>
-  <script src="/i18n.js"></script>
-  <script src="/app.js"></script>
+  <script src="/i18n.js?v=dev"></script>
+  <script src="/app.js?v=dev"></script>
 </body>
 </html>

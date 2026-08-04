@@ -4,6 +4,7 @@ import http from 'node:http';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import express from 'express';
+import compression from 'compression';
 import { WebSocketServer } from 'ws';
 import Database from 'better-sqlite3';
 import webpush from 'web-push';
@@ -21,6 +22,10 @@ fs.mkdirSync(DATA_DIR, { recursive: true });
 
 const db = new Database(path.join(DATA_DIR, 'cozytally.db'));
 db.pragma('journal_mode = WAL');
+/* Without a limit the write-ahead log only ever grows: ours had settled at
+   4 MB against a 114 KB database, none of it live, and every backup copied
+   all of it. SQLite hands the space back at the next checkpoint. */
+db.pragma('journal_size_limit = 33554432');
 db.exec(`
   CREATE TABLE IF NOT EXISTS rooms (
     code        TEXT PRIMARY KEY,
@@ -393,6 +398,7 @@ const store = {
    keeps the last 20 entries, so anything older stays unattributed rather
    than being guessed at — it shows up as its own "earlier" slice. */
 const LEGACY_PREFIX = 'name:';
+const setCardState = db.prepare('UPDATE cards SET state = ? WHERE id = ?');
 const backfillMoney = db.transaction(() => {
   const rows = db.prepare("SELECT id, state FROM cards WHERE type = 'money'").all();
   let touched = 0;
@@ -424,15 +430,20 @@ const backfillMoney = db.transaction(() => {
     if (older > 0) by['legacy:earlier'] = { name: 'önceki', avatar: '🕰️', net: older };
 
     state.by = by;
-    db.prepare('UPDATE cards SET state = ? WHERE id = ?').run(enc(JSON.stringify(state)), row.id);
+    setCardState.run(enc(JSON.stringify(state)), row.id);
     touched++;
   }
   return touched;
 });
 
+const MONEY_BACKFILL_KEY = 'money_backfill_v1';
 try {
-  const n = backfillMoney();
-  if (n) console.log(`Backfilled contributions on ${n} piggy bank(s) from their history`);
+  // it scanned every card on every boot to find work it had already done
+  if (!q.getMeta.get(MONEY_BACKFILL_KEY)) {
+    const n = backfillMoney();
+    q.setMeta.run(MONEY_BACKFILL_KEY, String(Date.now()));
+    if (n) console.log(`Backfilled contributions on ${n} piggy bank(s) from their history`);
+  }
 } catch (err) {
   console.error('money backfill skipped:', err.message);
 }
@@ -646,7 +657,37 @@ function rowToCard(row) {
 // ---------------------------------------------------------------- http
 const app = express();
 app.use(express.json({ limit: '16kb' }));
-app.use(express.static(path.join(__dirname, 'public')));
+/* The whole client is 292 KB of text and none of it was compressed. Over a
+   phone connection that is the single biggest thing standing between tapping
+   a link and seeing your cards — it comes down to 81 KB. */
+app.use(compression());
+
+/* A stamp that changes once per deploy. Every asset is asked for as
+   /app.js?v=<stamp>, which means a phone can hold on to it for a year and
+   still pick up new code the moment it ships. Without it the browser has to
+   ask about all five files on every single launch before anything can run. */
+const BUILD = process.env.RAILWAY_GIT_COMMIT_SHA?.slice(0, 8) || String(Date.now());
+const INDEX = fs
+  .readFileSync(path.join(__dirname, 'public', 'index.html'), 'utf8')
+  .replaceAll('?v=dev', `?v=${BUILD}`);
+const sendIndex = (_req, res) => {
+  // the shell itself must never be held on to — it is what names the stamp
+  res.set('Cache-Control', 'no-cache').type('html').send(INDEX);
+};
+app.get('/', sendIndex);
+app.get('/r/:code', sendIndex);
+
+app.use(
+  express.static(path.join(__dirname, 'public'), {
+    setHeaders(res, filePath) {
+      if (/(index\.html|sw\.js|manifest\.webmanifest)$/.test(filePath)) {
+        res.setHeader('Cache-Control', 'no-cache');
+      } else if (res.req.query?.v) {
+        res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+      }
+    },
+  })
+);
 
 app.get('/healthz', (_req, res) => res.json({ ok: true }));
 
@@ -885,7 +926,16 @@ app.get('/u/:name', (req, res) => {
 
 // ---------------------------------------------------------------- websocket
 const server = http.createServer(app);
-const wss = new WebSocketServer({ server, path: '/ws', maxPayload: 16 * 1024 });
+const wss = new WebSocketServer({
+  server,
+  path: '/ws',
+  maxPayload: 16 * 1024,
+  /* Everything on this socket is JSON with the same handful of keys over and
+     over, which deflate eats alive: a room you join drops from 19 KB to 4, and
+     a whole game of reversi from 40 KB to 2. Below the threshold a pong is
+     smaller than the machinery, so those go out plain. */
+  perMessageDeflate: { threshold: 256, zlibDeflateOptions: { level: 6, memLevel: 8 } },
+});
 
 /** code -> Set<ws> */
 const roomSockets = new Map();
@@ -901,9 +951,12 @@ function membersOf(code) {
 function broadcast(code, msg, exceptWs = null) {
   const set = roomSockets.get(code);
   if (!set) return;
-  const data = JSON.stringify(msg);
+  /* Encoded once: handed a string, ws measures and re-encodes it for every
+     socket. It must still go out as a text frame, though — a Buffer would
+     otherwise be sent as binary and arrive as a Blob. */
+  const data = Buffer.from(JSON.stringify(msg));
   for (const s of set) {
-    if (s !== exceptWs && s.readyState === s.OPEN) s.send(data);
+    if (s !== exceptWs && s.readyState === s.OPEN) s.send(data, { binary: false });
   }
 }
 
@@ -969,11 +1022,27 @@ setInterval(() => {
 
 setInterval(() => {
   for (const ws of wss.clients) {
-    if (!ws.isAlive) return ws.terminate();
+    // `return` here would end the whole sweep at the first dead socket and
+    // leave everyone after it un-checked for another half minute
+    if (!ws.isAlive) {
+      ws.terminate();
+      continue;
+    }
     ws.isAlive = false;
     ws.ping();
   }
 }, 30000);
+
+/* "when was this room last used" only ever needs to be right to the minute,
+   but it was being written on every single message — and in WAL mode bumping
+   one integer still costs a whole 4 KB page, so it was doubling everything
+   this app writes to disk. */
+const touched = new Map();
+function touchRoom(code, now) {
+  if (now - (touched.get(code) || 0) < 60_000) return;
+  touched.set(code, now);
+  q.touchRoom.run(now, code);
+}
 
 function handleMessage(ws, msg) {
   const now = Date.now();
@@ -1015,7 +1084,7 @@ function handleMessage(ws, msg) {
     if (!set) roomSockets.set(code, (set = new Set()));
     set.add(ws);
 
-    q.touchRoom.run(now, code);
+    touchRoom(code, now);
     sendTo(ws, {
       t: 'room',
       room: { code: room.code, name: room.name },
@@ -1040,7 +1109,7 @@ function handleMessage(ws, msg) {
   if (!ws.meta.joined) return sendTo(ws, { t: 'error', code: 'not-joined' });
   const code = ws.meta.room;
   const by = { name: ws.meta.name, avatar: ws.meta.avatar, id: ws.meta.id };
-  q.touchRoom.run(now, code);
+  touchRoom(code, now);
 
   switch (msg.t) {
     case 'room:rename': {
@@ -1547,3 +1616,22 @@ function handleMessage(ws, msg) {
 server.listen(PORT, () => {
   console.log(`CozyTally listening on :${PORT} (data: ${DATA_DIR})`);
 });
+
+/* Every deploy used to kill this process outright, so the log was never
+   finalised and a backup taken from the .db file alone could be missing the
+   last few minutes. Closing folds it back in. */
+let closing = false;
+for (const sig of ['SIGTERM', 'SIGINT']) {
+  process.on(sig, () => {
+    if (closing) return;
+    closing = true;
+    server.close();
+    for (const ws of wss.clients) ws.close(1001, 'restart');
+    try {
+      db.close();
+    } catch (err) {
+      console.error('db close:', err.message);
+    }
+    process.exit(0);
+  });
+}

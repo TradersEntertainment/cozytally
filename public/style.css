@@ -131,11 +131,10 @@ body {
   -webkit-user-select: none;
   user-select: none;
   -webkit-tap-highlight-color: transparent;
-  background:
-    radial-gradient(1200px 620px at 82% -12%, rgba(183, 164, 255, 0.16), transparent 62%),
-    radial-gradient(920px 520px at 8% 112%, rgba(255, 158, 181, 0.12), transparent 60%),
-    linear-gradient(180deg, var(--night-1) 0%, var(--night-2) 44%, var(--night-3) 78%, var(--horizon) 100%);
-  background-attachment: fixed;
+  /* the night itself lives on #sky, which is already fixed and contained —
+     as a fixed background here it had to be re-resolved against the viewport
+     on every scroll frame, underneath every card */
+  background: var(--night-2);
 }
 
 /* text the user may actually want to copy */
@@ -185,11 +184,13 @@ a:focus-visible {
    it costs nothing to scroll.
    ============================================================ */
 
-/* live glass — only for surfaces that don't scroll */
+/* Live glass — only for surfaces that don't scroll, and only where the blur
+   can actually be seen. The modal and the chat drawer paint a 0.86-0.92 alpha
+   fill straight over their own blur, so almost none of it reached the eye —
+   and both of them slide in, which means re-blurring the whole panel every
+   frame of the animation. The walkthrough, which redraws its board six times
+   a second inside the modal, ran at 30fps because of it and runs at 60 now. */
 .glass,
-.panel,
-.modal-box,
-.chat-drawer,
 .dock,
 .toast {
   position: relative;
@@ -202,6 +203,9 @@ a:focus-visible {
 
 /* baked glass — same look, no per-frame blur */
 .card,
+.panel,
+.modal-box,
+.chat-drawer,
 .chip,
 .type-btn,
 .pack-btn,
@@ -247,16 +251,19 @@ a:focus-visible {
   z-index: 0;
   pointer-events: none;
   overflow: hidden;
+  background:
+    radial-gradient(1200px 620px at 82% -12%, rgba(183, 164, 255, 0.16), transparent 62%),
+    radial-gradient(920px 520px at 8% 112%, rgba(255, 158, 181, 0.12), transparent 60%),
+    linear-gradient(180deg, var(--night-1) 0%, var(--night-2) 44%, var(--night-3) 78%, var(--horizon) 100%);
   /* the sky can never affect anything else's layout or paint */
   contain: strict;
 }
 
-/* nobody is looking — stop burning battery on twinkling */
-body.away .star,
-body.away .bulb,
-body.away .firefly,
-body.away .zz,
-body.away .breathe { animation-play-state: paused; }
+/* Nobody is looking — stop burning battery. Named one by one this went stale
+   the moment anything new started moving, so it is everything or nothing. */
+body.away *,
+body.away *::before,
+body.away *::after { animation-play-state: paused !important; }
 
 .star {
   position: absolute;
@@ -481,8 +488,7 @@ body.away .breathe { animation-play-state: paused; }
 
 .btn-ghost {
   background: rgba(255, 255, 255, 0.08);
-  backdrop-filter: blur(18px) saturate(160%);
-  -webkit-backdrop-filter: blur(18px) saturate(160%);
+  /* sits on an already-opaque modal — a third nested blur bought nothing */
   border: 0.5px solid var(--hairline);
   color: var(--ink);
   box-shadow: var(--specular-soft);
@@ -1973,7 +1979,11 @@ body.reordering {
 .g-cell.last { border-color: color-mix(in srgb, var(--accent) 70%, transparent); }
 .g-cell.win { background: rgba(255, 215, 168, 0.18); border-color: rgba(255, 215, 168, 0.6); }
 
-.g-mark { color: var(--pc, var(--ink)); font-weight: 700; animation: g-pop 0.3s var(--spring); }
+/* Boards are redrawn whole on every move, so an entrance animation that
+   isn't scoped to the piece that changed re-plays on every piece — up to 64
+   at once in reversi, and connect four's discs visibly re-drop each time. */
+.g-mark { color: var(--pc, var(--ink)); font-weight: 700; }
+.g-cell.last .g-mark { animation: g-pop 0.3s var(--spring); }
 
 @keyframes g-pop {
   from { transform: scale(0.4); opacity: 0; }
@@ -1982,6 +1992,8 @@ body.reordering {
 
 /* ---- connect four */
 .g-c4 {
+  max-width: 320px;
+  margin: 0 auto;
   display: flex;
   gap: 4px;
   padding: 6px;
@@ -2020,8 +2032,8 @@ body.reordering {
 .g-hole .g-disc {
   width: 82%;
   height: 82%;
-  animation: g-drop 0.34s var(--spring);
 }
+.g-hole.last .g-disc { animation: g-drop 0.34s var(--spring); }
 
 .g-hole.win { box-shadow: inset 0 0 0 2px rgba(255, 215, 168, 0.85); }
 .g-hole.last .g-disc { box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.45), 0 0 10px 2px var(--glow-amber); }
@@ -2078,8 +2090,9 @@ body.reordering {
   transition: background 0.3s var(--ease);
 }
 
-.g-box.p1 { background: color-mix(in srgb, var(--pink) 55%, transparent); animation: g-pop 0.3s var(--spring); }
-.g-box.p2 { background: color-mix(in srgb, var(--sky) 55%, transparent); animation: g-pop 0.3s var(--spring); }
+.g-box.p1 { background: color-mix(in srgb, var(--pink) 55%, transparent); }
+.g-box.p2 { background: color-mix(in srgb, var(--sky) 55%, transparent); }
+.g-box.fresh { animation: g-pop 0.3s var(--spring); }
 
 /* ---- reversi */
 .g-rv {
@@ -2112,8 +2125,8 @@ body.reordering {
 .g-rvcell .g-disc {
   width: 78%;
   height: 78%;
-  animation: g-pop 0.28s var(--spring);
 }
+.g-rvcell.last .g-disc { animation: g-pop 0.28s var(--spring); }
 
 /* a dot where you could legally drop one — the rules still live on the server */
 .g-rvcell.can {
@@ -2168,7 +2181,8 @@ body.reordering {
   letter-spacing: 0.02em;
 }
 
-.g-slot.got { border-bottom-color: var(--accent); animation: g-pop 0.26s var(--spring); }
+.g-slot.got { border-bottom-color: var(--accent); }
+.g-slot.got.fresh { animation: g-pop 0.26s var(--spring); }
 .g-slot.miss { color: var(--pink); }
 
 .g-misses {
@@ -2254,8 +2268,9 @@ body.reordering {
   border-radius: var(--r-pill);
   font-size: var(--t-footnote);
   font-weight: 700;
-  animation: g-pop 0.26s var(--spring);
 }
+
+.g-link.last { animation: g-pop 0.26s var(--spring); }
 
 .g-link.p1 { background: color-mix(in srgb, var(--pink) 32%, transparent); }
 .g-link.p2 { background: color-mix(in srgb, var(--sky) 32%, transparent); }
@@ -2403,17 +2418,29 @@ body.kb-open .dock-veil {
   font-size: var(--t-callout);
   font-weight: 700;
   cursor: pointer;
-  box-shadow: var(--specular-soft), 0 0 0 0 color-mix(in srgb, var(--accent) 45%, transparent);
+  box-shadow: var(--specular-soft);
+  position: relative;
+}
+
+/* The glow pulses on a layer of its own. Animating the button's own
+   box-shadow repainted it every frame, forever, on a card that scrolls —
+   opacity the compositor can do without waking the main thread at all. */
+.g-howto::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  box-shadow: 0 0 16px 2px color-mix(in srgb, var(--accent) 45%, transparent);
   animation: howto-glow 2.4s var(--ease) infinite;
 }
 
 .g-howto:hover { background: color-mix(in srgb, var(--accent) 28%, transparent); }
 .g-howto:active { transform: scale(0.97); }
 
-/* opacity and box-shadow only — nothing here forces a layout pass */
 @keyframes howto-glow {
-  0%, 100% { box-shadow: var(--specular-soft), 0 0 0 0 color-mix(in srgb, var(--accent) 45%, transparent); }
-  50% { box-shadow: var(--specular-soft), 0 0 16px 2px color-mix(in srgb, var(--accent) 45%, transparent); }
+  0%, 100% { opacity: 0; }
+  50% { opacity: 1; }
 }
 
 /* ---- the how-to-play walkthrough */
@@ -2601,8 +2628,8 @@ body.kb-open .dock-veil {
   border-left: 0.5px solid var(--hairline);
   border-radius: 0;
   background: var(--mat-thick);
-  backdrop-filter: blur(34px) saturate(180%);
-  -webkit-backdrop-filter: blur(34px) saturate(180%);
+  /* --mat-thick is 0.86-0.92 alpha, so a blur under it was invisible and
+     paid for on every frame this panel slides or its contents change */
   box-shadow: var(--shadow-3);
   transform: translateX(102%);
   transition: transform 0.42s var(--ease-out);
@@ -2775,6 +2802,16 @@ body.kb-open .dock-veil {
   animation: fade-in 0.24s var(--ease);
 }
 
+/* The scrim's blur is cheap over a board that is sitting still, and anything
+   but over the walkthrough, which redraws its board six times a second right
+   on top of it — every one of those redraws makes the browser re-blur the
+   whole screen underneath. So for that one modal it goes darker instead. */
+.modal-overlay.busy {
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  background: rgba(8, 6, 20, 0.74);
+}
+
 @keyframes fade-in {
   from { opacity: 0; }
   to { opacity: 1; }
@@ -2789,8 +2826,8 @@ body.kb-open .dock-veil {
   border-radius: var(--r-2xl);
   padding: 30px;
   background: var(--mat-thick);
-  backdrop-filter: blur(34px) saturate(180%);
-  -webkit-backdrop-filter: blur(34px) saturate(180%);
+  /* --mat-thick is 0.86-0.92 alpha, so a blur under it was invisible and
+     paid for on every frame this panel slides or its contents change */
   box-shadow: var(--specular), var(--shadow-3);
   animation: modal-in 0.36s var(--spring);
   scrollbar-width: thin;
