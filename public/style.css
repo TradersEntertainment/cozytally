@@ -2540,6 +2540,59 @@ body.kb-open .dock-veil {
    position:fixed to the *layout* viewport, so without this the dock strands
    itself mid-screen when the keyboard closes. Set from JS; 0 everywhere
    that behaves. */
+/* The row of things you can make rain, sitting just above the dock. It rides
+   the visible bottom the same way the dock does, so an iPhone keyboard
+   opening and closing can't strand it in the middle of the screen. */
+.rain-pick {
+  position: fixed;
+  z-index: 41;
+  left: 50%;
+  bottom: calc(18px + var(--dock-h) + 14px + var(--safe-b) + var(--vv-bottom, 0px));
+  transform: translateX(-50%);
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 6px;
+  padding: 10px;
+  width: min(360px, calc(100vw - 28px));
+  border-radius: var(--r-xl);
+  background: var(--mat-thick);
+  border: 0.5px solid var(--hairline);
+  box-shadow: var(--specular), var(--shadow-3);
+  animation: rain-pick-in 0.22s var(--spring);
+}
+
+@keyframes rain-pick-in {
+  from { opacity: 0; transform: translateX(-50%) translateY(10px) scale(0.96); }
+  to { opacity: 1; transform: translateX(-50%) translateY(0) scale(1); }
+}
+
+.rain-opt {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  padding: 9px 4px 7px;
+  border: 1px solid transparent;
+  border-radius: var(--r-md);
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--ink-2);
+  font-family: inherit;
+  font-size: var(--t-caption);
+  font-weight: 600;
+  line-height: 1.1;
+  cursor: pointer;
+  transition: background 0.16s var(--ease), transform 0.16s var(--spring);
+}
+
+.rain-opt span { font-size: 1.45rem; line-height: 1; }
+.rain-opt:hover { background: rgba(255, 255, 255, 0.11); }
+.rain-opt:active { transform: scale(0.94); }
+.rain-opt.on {
+  border-color: color-mix(in srgb, var(--accent) 55%, transparent);
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  color: var(--ink);
+}
+
 .dock-veil {
   position: fixed;
   left: 0;
@@ -2622,6 +2675,9 @@ body.kb-open .dock-veil {
   0%, 100% { box-shadow: var(--specular-soft), 0 8px 26px var(--glow-amber); }
   50% { box-shadow: var(--specular-soft), 0 8px 26px var(--glow-amber), 0 0 0 15px rgba(255, 184, 107, 0.15); }
 }
+
+/* the picker takes the same strip of screen, and it asked first */
+body.rain-open .hint-bubble { opacity: 0; pointer-events: none; }
 
 .hint-bubble {
   position: fixed;

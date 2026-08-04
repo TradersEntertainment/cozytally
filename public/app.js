@@ -621,12 +621,81 @@
     }
   }
 
-  function heartsRain() {
+  /**
+   * The 💖 button, which is no longer only hearts. Tapping it opens a little
+   * row of things you can make rain on both screens; tapping one sends it and
+   * closes. Whatever you picked last becomes the button's face, so it stays
+   * one tap away and starts to feel like yours.
+   */
+  function initRainPicker() {
+    const fab = $('#fab-love');
+    const box = $('#rain-picker');
+    if (!fab || !box) return;
+
+    const KEY = 'ct:rain';
+    let chosen = RAIN[localStorage.getItem(KEY)] ? localStorage.getItem(KEY) : 'love';
+    const wear = () => {
+      fab.textContent = RAIN[chosen].pick;
+      fab.title = t('rain_' + chosen);
+    };
+
+    box.innerHTML = RAIN_KEYS.map((k) =>
+      `<button class="rain-opt ${k === chosen ? 'on' : ''}" data-rain="${k}"
+        title="${esc(t('rain_' + k))}"><span>${RAIN[k].pick}</span>${esc(t('rain_' + k))}</button>`
+    ).join('');
+
+    const open = (yes) => {
+      box.hidden = !yes;
+      // the "add your first card" nudge lives in the same strip of screen
+      document.body.classList.toggle('rain-open', yes);
+      fab.setAttribute('aria-expanded', yes ? 'true' : 'false');
+      if (yes) $$('.rain-opt', box).forEach((b) => b.classList.toggle('on', b.dataset.rain === chosen));
+    };
+
+    fab.setAttribute('aria-haspopup', 'true');
+    fab.onclick = (e) => {
+      e.stopPropagation();
+      open(box.hidden);
+    };
+
+    $$('.rain-opt', box).forEach((b) => {
+      b.onclick = (e) => {
+        e.stopPropagation();
+        chosen = b.dataset.rain;
+        localStorage.setItem(KEY, chosen);
+        wear();
+        open(false);
+        send({ t: 'cheer', kind: chosen });
+      };
+    });
+
+    // anywhere else, and it goes away
+    document.addEventListener('click', () => open(false));
+    document.addEventListener('keydown', (e) => e.key === 'Escape' && open(false));
+    wear();
+  }
+
+  /* What you can make rain on the other person's screen. Only the key travels
+     — the emoji live here, so both screens agree without the server needing
+     to know or care what any of it looks like. */
+  const RAIN = {
+    love: { pick: '💖', fall: ['💖', '💕', '💗', '🩷', '💘'] },
+    smile: { pick: '😄', fall: ['😄', '😊', '🥰', '😁', '☺️'] },
+    party: { pick: '🎉', fall: ['🎉', '🎊', '✨', '🥳', '🎈'] },
+    star: { pick: '⭐', fall: ['⭐', '🌟', '✨', '💫', '🌠'] },
+    flower: { pick: '🌸', fall: ['🌸', '🌷', '🌼', '🌺', '🪷'] },
+    laugh: { pick: '😂', fall: ['😂', '🤣', '😹', '😆', '😝'] },
+    hug: { pick: '🤗', fall: ['🤗', '🧸', '🫂', '💞', '🍀'] },
+    sleepy: { pick: '😴', fall: ['😴', '🌙', '💤', '☁️', '🫧'] },
+  };
+  const RAIN_KEYS = Object.keys(RAIN);
+
+  function heartsRain(kind) {
     if (REDUCED) return;
-    // the other person holding the ❤️ button could otherwise pile thousands
-    // of falling emoji onto your phone at ten bursts a second
+    // the other person holding the button could otherwise pile thousands of
+    // falling emoji onto your phone at ten bursts a second
     if (document.querySelectorAll('.heart-fx').length > 60) return;
-    const hearts = ['💖', '💕', '💗', '🩷', '💘'];
+    const hearts = (RAIN[kind] || RAIN.love).fall;
     for (let i = 0; i < 26; i++) {
       const h = document.createElement('div');
       h.className = 'heart-fx';
@@ -1182,16 +1251,24 @@
         return;
 
       case 'checkin:cover':
-        heartsRain();
+        heartsRain('love');
         feel('heart');
         centerCheer(t('coveredCheer', { name: msg.by }));
         return;
 
-      case 'cheer':
-        heartsRain();
+      case 'cheer': {
+        const rain = RAIN[msg.kind] || RAIN.love;
+        heartsRain(msg.kind);
         feel('heart');
-        if (msg.by?.id !== myId) toast(t('toastHearts', { name: msg.by.name }));
+        if (msg.by?.id !== myId) {
+          toast(t('toastRain', {
+            name: msg.by.name,
+            what: t('rain_' + (RAIN[msg.kind] ? msg.kind : 'love')),
+            emoji: rain.pick,
+          }));
+        }
         return;
+      }
     }
   }
 
@@ -3912,7 +3989,7 @@
     onScroll();
 
     $('#fab-add').onclick = openTypePicker;
-    $('#fab-love').onclick = () => send({ t: 'cheer', kind: 'hearts' });
+    initRainPicker();
 
     const feelBtn = $('#feel-btn');
     const paintFeelBtn = () => {

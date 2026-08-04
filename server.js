@@ -193,7 +193,7 @@ const PUSH_STR = {
     noteComment: (n, c, t) => `${n} “${c}” notuna yorum yaptı 💬 ${t}`,
     gameComment: (n, c, t) => `${n} oyunda yazdı 💬 ${c}: ${t}`,
     chat: (n, t) => `${n}: ${t}`,
-    cheer: (n) => `${n} 💖✨`,
+    cheer: (n, e) => `${n} ${e}✨`,
     timerStart: (n, c) => `${n} başlattı: ${c} ⏳`,
     timerPause: (n, c) => `${n} durdurdu: ${c} 🌙`,
     streakReset: (n, c) => `${n}: ${c} sıfırlandı 🌧️`,
@@ -223,7 +223,7 @@ const PUSH_STR = {
     noteComment: (n, c, t) => `${n} commented on “${c}” 💬 ${t}`,
     gameComment: (n, c, t) => `${n} said in the game 💬 ${c}: ${t}`,
     chat: (n, t) => `${n}: ${t}`,
-    cheer: (n) => `${n} 💖✨`,
+    cheer: (n, e) => `${n} ${e}✨`,
     timerStart: (n, c) => `${n} started: ${c} ⏳`,
     timerPause: (n, c) => `${n} paused: ${c} 🌙`,
     streakReset: (n, c) => `${n}: ${c} was reset 🌧️`,
@@ -736,6 +736,14 @@ function allowAuth(ip) {
   b.count++;
   return b.count <= 30;
 }
+
+/* Keep in step with RAIN in public/app.js — the key travels, the client
+   decides what it looks like, and the emoji here is only for the push text. */
+const CHEER_EMOJI = {
+  love: '💖', smile: '😄', party: '🎉', star: '⭐',
+  flower: '🌸', laugh: '😂', hug: '🤗', sleepy: '😴',
+};
+const CHEER_KINDS = new Set(Object.keys(CHEER_EMOJI));
 
 const clientIp = (req) =>
   req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.socket.remoteAddress || '?';
@@ -1605,9 +1613,15 @@ function handleMessage(ws, msg) {
     }
 
     case 'cheer': {
-      const kind = msg.kind === 'confetti' ? 'confetti' : 'hearts';
+      /* What each of these looks like when it falls is the client's business
+         — see RAIN in public/app.js. The server only checks that it is one of
+         the things we know about, so nothing unexpected reaches a screen. */
+      const kind = CHEER_KINDS.has(msg.kind) ? msg.kind : 'love';
       broadcast(code, { t: 'cheer', kind, by });
-      pushToRoom(code, 'cheer', [ws.meta.name], ws.meta.cid, { key: 'cheer', windowMs: 20000 });
+      pushToRoom(code, 'cheer', [ws.meta.name, CHEER_EMOJI[kind]], ws.meta.cid, {
+        key: 'cheer',
+        windowMs: 20000,
+      });
       return;
     }
   }
