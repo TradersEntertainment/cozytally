@@ -1614,6 +1614,42 @@
     truths: 'demoHowTruths',
   };
 
+  /* After the demo game is won, run through the other ways it could have
+     been. A scripted match can only ever show one of them, and a vertical
+     four leaves people wondering whether sideways counts. Dots and Truths
+     are won on a count and a guess, so they have no shapes to show. */
+  const c4At = (r, c) => r * C4_COLS + c;
+  const WIN_SHAPES = {
+    xox: [
+      { tip: 'demoShapeRow', line: [0, 1, 2] },
+      { tip: 'demoShapeCol', line: [0, 3, 6] },
+      { tip: 'demoShapeDiag', line: [0, 4, 8] },
+      { tip: 'demoShapeDiag2', line: [2, 4, 6] },
+    ],
+    connect4: [
+      { tip: 'demoShapeRow', line: [1, 2, 3, 4].map((c) => c4At(5, c)) },
+      { tip: 'demoShapeCol', line: [2, 3, 4, 5].map((r) => c4At(r, 3)) },
+      { tip: 'demoShapeDiag', line: [[2, 1], [3, 2], [4, 3], [5, 4]].map(([r, c]) => c4At(r, c)) },
+      { tip: 'demoShapeDiag2', line: [[5, 1], [4, 2], [3, 3], [2, 4]].map(([r, c]) => c4At(r, c)) },
+    ],
+  };
+
+  /** a board showing just this shape, with the discs it would be resting on */
+  function shapeBoard(kind, line) {
+    const board = Array(kind === 'xox' ? 9 : C4_COLS * C4_ROWS).fill(0);
+    for (const i of line) board[i] = 1;
+    if (kind === 'connect4') {
+      // discs can't float, so prop each one up with the other colour
+      for (const i of line) {
+        const c = i % C4_COLS;
+        for (let r = Math.floor(i / C4_COLS) + 1; r < C4_ROWS; r++) {
+          if (!board[c4At(r, c)]) board[c4At(r, c)] = 2;
+        }
+      }
+    }
+    return board;
+  }
+
   function openHowToPlay(kind) {
     const meta = GAME_META[kind] || GAME_META.xox;
     const box = openModal(`
@@ -1664,14 +1700,38 @@
       G.seatOf(state, DEMO_B);
       paint(state, t('demoStart'));
 
+      /** the encore: every other line that would also have won */
+      function showShapes(finished) {
+        const shapes = WIN_SHAPES[kind];
+        if (!shapes) {
+          replay.hidden = false;
+          return;
+        }
+        let k = 0;
+        const next = () => {
+          if (!document.body.contains(boardEl)) return;
+          if (k >= shapes.length) {
+            replay.hidden = false;
+            return;
+          }
+          const shape = shapes[k++];
+          paint(
+            { ...finished, board: shapeBoard(kind, shape.line), last: -1, over: { winner: 0, line: shape.line } },
+            t('demoShapeTip', { how: t(shape.tip) })
+          );
+          timer = setTimeout(next, 1500);
+        };
+        timer = setTimeout(next, 1400); // let the win land first
+      }
+
       const { steps, speed } = DEMOS[kind];
       let n = 0;
       const tick = () => {
         // the modal may be long gone by now
         if (!document.body.contains(boardEl)) return;
         if (n >= steps.length) {
-          replay.hidden = false;
           markHowSeen(kind);
+          showShapes(state);
           return;
         }
         const step = steps[n++];
@@ -1706,9 +1766,10 @@
 
         if (state.over) {
           confetti();
-          replay.hidden = false;
-          // watched it through to the end — that is what "seen" means
+          // watched the game out — that is what "seen" means; the shapes
+          // that follow are a bonus, not something to sit through
           markHowSeen(kind);
+          showShapes(state);
           return;
         }
         // linger on the good bits so a box closing actually registers
