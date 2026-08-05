@@ -260,6 +260,7 @@
     chain: { emoji: '🔗', nameKey: 'gameChain', descKey: 'gameChainDesc' },
     rps: { emoji: '✊', nameKey: 'gameRps', descKey: 'gameRpsDesc' },
     closest: { emoji: '🎯', nameKey: 'gameClosest', descKey: 'gameClosestDesc' },
+    mangala: { emoji: '🌰', nameKey: 'gameMangala', descKey: 'gameMangalaDesc' },
     truths: { emoji: '🤥', nameKey: 'gameTruths', descKey: 'gameTruthsDesc' },
   };
   const C4_COLS = 7;
@@ -2334,12 +2335,14 @@
             ? t('gameChainLen', { n: s.words.length })
             : kind === 'closest' && s.total
               ? t('gameClosestAt', { n: Math.min(s.at + 1, s.total), of: s.total })
-              : '';
+              : kind === 'mangala'
+                ? t('gameMangalaStones', { a: s.pits[6], b: s.pits[13] })
+                : '';
 
     const boards = {
       xox: xoxBoard, connect4: c4Board, reversi: reversiBoard, dots: dotsBoard,
       hangman: hangmanBoard, code: codeBoard, chain: chainBoard, rps: rpsBoard,
-      closest: closestBoard, truths: truthsBoard,
+      closest: closestBoard, mangala: mangalaBoard, truths: truthsBoard,
     };
 
     /** the tick, the cheer and the coins — the same whether we drew or patched */
@@ -2351,7 +2354,7 @@
         if (s.over.winner === mySeat) coinRain(body.closest('.card'));
       } else if (mine) {
         // closing a box and keeping the turn deserves better than a plain tick
-        feel(s.again ? 'good' : 'move');
+        feel(s.again || s.took?.length ? 'good' : 'move');
       }
     };
 
@@ -2377,7 +2380,7 @@
       ${/* the chair you're in, or the one your first move would put you in —
             reversi needs it to know which squares are legal for you, and
             rock-paper-scissors to know whether to offer you the hands */ ''}
-      ${boards[kind](s, playSeat, myTurn)}
+      ${boards[kind](s, playSeat, myTurn, opts.verb === 'game:move')}
       <div class="g-foot">
         <span class="sub-label">${esc(t('gameRound', { n: s.round || 1 }))}${boxes ? ' · ' + esc(boxes) : ''}</span>
         ${s.over ? `<button class="btn btn-primary btn-sm js-gnext">${esc(t('gameNext'))}</button>` : ''}
@@ -2539,6 +2542,74 @@
           ${v ? `<span class="g-disc p${v}"></span>` : ''}
         </button>`).join('')}
     </div>`;
+  }
+
+  /* Stones scattered in a hole. The number is what you actually read; the
+     dots are texture, so a hole with eight in it looks heavier than one with
+     two before you have counted either. The offsets come from a fixed table
+     rather than Math.random, so a hole redrawn on someone else's move doesn't
+     shuffle its stones for no reason. */
+  const SEED_SPOTS = [
+    [50, 32], [30, 46], [70, 48], [40, 66], [62, 68], [50, 52],
+  ];
+  const seeds = (n, dropped) => SEED_SPOTS.slice(0, Math.min(n, SEED_SPOTS.length))
+    .map(([x, y], i, all) => `<i class="${dropped && i === all.length - 1 ? 'drop' : ''}"
+      style="left:${x}%;top:${y}%"></i>`).join('');
+
+  /**
+   * Mangala, drawn from the chair you are sitting in: your six holes along the
+   * bottom with your treasury to their right, theirs along the top. The top
+   * row runs the other way so that the ring reads as a ring — follow the holes
+   * from your left hand and you are travelling the way the stones do.
+   */
+  function mangalaBoard(s, mySeat, myTurn, animate) {
+    const seat = mySeat >= 0 ? mySeat : 0; // a spectator watches over seat 0's shoulder
+    const pits = s.pits || [];
+    const mine = seat === 0 ? [0, 1, 2, 3, 4, 5] : [7, 8, 9, 10, 11, 12];
+    const theirs = seat === 0 ? [12, 11, 10, 9, 8, 7] : [5, 4, 3, 2, 1, 0];
+    const myStore = seat === 0 ? 6 : 13;
+    const theirStore = seat === 0 ? 13 : 6;
+
+    /* The holes the last move dropped a stone into, so the board can play the
+       sowing back rather than just showing where it ended. Asked of the same
+       rules the server used — and it takes the hole and the handful, not the
+       board, because by now that hole has already been emptied. */
+    const path = animate && s.from >= 0 && s.sow && window.CTGames
+      ? window.CTGames.mangalaPath(s.from, s.sow, s.from <= 5 ? 0 : 1)
+      : [];
+
+    const hole = (i, own) => {
+      const at = path.indexOf(i);
+      const can = own && myTurn && pits[i] > 0;
+      const cls = [
+        'g-pit', `p${i <= 6 ? 1 : 2}`, can ? 'can' : '',
+        at >= 0 ? 'sown' : '', animate && i === s.last ? 'last' : '',
+        animate && s.took?.includes(i) ? 'took' : '',
+      ].filter(Boolean).join(' ');
+      // --k is how many stones fell before this one; the delays come off it
+      return `<button class="${cls}" data-pit="${i}" style="--k:${at < 0 ? 0 : at}"
+        ${can ? '' : 'disabled'}>
+        <span class="g-seeds">${seeds(pits[i], at >= 0)}</span><b>${pits[i]}</b>
+      </button>`;
+    };
+    const store = (i, who) =>
+      `<div class="g-store p${i === 6 ? 1 : 2} ${who}"><b>${pits[i]}</b></div>`;
+
+    return `<div class="g-mangala ${myTurn ? 'playable' : ''}">
+      ${store(theirStore, 'theirs')}
+      <div class="g-rows">
+        <div class="g-prow">${theirs.map((i) => hole(i, false)).join('')}</div>
+        <div class="g-prow">${mine.map((i) => hole(i, true)).join('')}</div>
+      </div>
+      ${store(myStore, 'mine')}
+    </div>
+    ${/* the rule that decides most sets deserves saying out loud, or the
+          last handful of stones looks like it moved by itself */ ''}
+    ${s.over && s.swept >= 0
+      ? `<p class="sub-label g-swept">${esc(t('gameMangalaSwept', {
+          name: (s.players || [])[s.swept]?.name || '',
+        }))}</p>`
+      : ''}`;
   }
 
   /**
@@ -2765,6 +2836,7 @@
   /* "You go again" reads differently depending on why. */
   const AGAIN_MSG = {
     dots: 'gameAgain',
+    mangala: 'gameMangalaAgain',
     reversi: 'gameReversiPass',
     hangman: 'gameHangmanGo',
     code: 'gameCodeGo',
@@ -2965,6 +3037,55 @@
     return step ? { move: { letter: step.letter }, tip: step.tip } : null;
   }
 
+  /**
+   * What one hole would do if it were played, without playing it. The
+   * walkthrough needs this to pick a move that shows a rule off, and it is
+   * cheaper — and far less fragile — than hand-counting twenty moves into a
+   * script that quietly rots the first time a rule changes.
+   */
+  function mangalaPeek(pits, from, seat) {
+    const n = pits[from];
+    if (!n || !window.CTGames) return null;
+    const path = window.CTGames.mangalaPath(from, n, seat);
+    const after = [...pits];
+    after[from] = n === 1 ? 0 : 1;
+    for (const i of path) after[i]++;
+    const last = path[path.length - 1];
+    const own = seat === 0 ? last <= 5 : last >= 7 && last <= 12;
+    const theirs = seat === 0 ? last >= 7 && last <= 12 : last <= 5;
+    let kind = '';
+    if (last === (seat === 0 ? 6 : 13)) kind = 'store';
+    else if (theirs && after[last] % 2 === 0) kind = 'even';
+    else if (own && after[last] === 1 && after[12 - last] > 0) kind = 'empty';
+    return { from, kind, n };
+  }
+
+  const MANGALA_TIP = {
+    store: 'demoMangalaAgain',
+    even: 'demoMangalaEven',
+    empty: 'demoMangalaEmpty',
+  };
+
+  /* Rabia plays to teach: whenever one of the three rules worth seeing is
+     available she takes it, in the order they are easiest to follow. Ömer just
+     empties his fullest hole, so the board keeps moving and the walkthrough
+     isn't two people being clever at each other. Neither needs a script, so
+     neither can drift away from the rules. */
+  function mangalaDemoStep(state) {
+    const seat = state.turn;
+    const mine = seat === 0 ? [0, 1, 2, 3, 4, 5] : [7, 8, 9, 10, 11, 12];
+    const opts = mine.map((i) => mangalaPeek(state.pits, i, seat)).filter(Boolean);
+    if (!opts.length) return null;
+    const fullest = opts.reduce((a, b) => (b.n > a.n ? b : a));
+    const pick = seat === 0
+      ? opts.find((o) => o.kind === 'store')
+        || opts.find((o) => o.kind === 'even')
+        || opts.find((o) => o.kind === 'empty')
+        || fullest
+      : fullest;
+    return { move: { pit: pick.from }, tip: MANGALA_TIP[pick.kind] };
+  }
+
   const DEMOS = {
     xox: {
       speed: 950,
@@ -3020,6 +3141,7 @@
         { seat: 1, move: { pick: b }, tip: a === b ? 'demoRpsDraw' : 'demoRpsShow' },
       ]),
     },
+    mangala: { speed: 620, live: true, steps: mangalaDemoStep },
     closest: {
       /* Three questions played out end to end: both write a number, the
          answer lands, the nearer one takes it, and the round is decided on
@@ -3069,6 +3191,7 @@
     chain: 'demoHowChain',
     rps: 'demoHowRps',
     closest: 'demoHowClosest',
+    mangala: 'demoHowMangala',
     truths: 'demoHowTruths',
   };
 
@@ -3076,6 +3199,7 @@
      again" on its own would be a riddle. */
   const DEMO_AGAIN = {
     dots: 'demoBox',
+    mangala: 'demoMangalaAgain',
     reversi: 'demoRvPass',
     hangman: 'demoHangGo',
     code: 'demoCodeGo',
@@ -3139,7 +3263,7 @@
     const boards = {
       xox: xoxBoard, connect4: c4Board, reversi: reversiBoard, dots: dotsBoard,
       hangman: hangmanBoard, code: codeBoard, chain: chainBoard, rps: rpsBoard,
-      closest: closestBoard, truths: truthsBoard,
+      closest: closestBoard, mangala: mangalaBoard, truths: truthsBoard,
     };
     const seatsEl = $('.demo-seats', box);
     const boardEl = $('.demo-board', box);
@@ -3172,7 +3296,7 @@
             <b>${s.scores[i]}</b></span>`;
         })
         .join('');
-      boardEl.innerHTML = boards[kind](s, playable ? s.turn : -1, playable);
+      boardEl.innerHTML = boards[kind](s, playable ? s.turn : -1, playable, true);
       tipEl.textContent = tip;
     };
 
@@ -3240,7 +3364,7 @@
         if (state.over) {
           // a game won on a count should say the count; games won some other
           // way simply don't mention these, and unused keys cost nothing
-          const [a, bx] = state.over.boxes || state.over.wins || [];
+          const [a, bx] = state.over.boxes || state.over.wins || state.over.stones || [];
           tip = state.over.winner === 'draw'
             ? t('gameDrawMsg')
             : t('demoWins', {
@@ -3367,6 +3491,11 @@
     if (kind === 'dots') {
       $$('.g-edge:not([disabled])', body).forEach(
         (b) => (b.onclick = () => move({ dir: b.dataset.dir, i: Number(b.dataset.i) }))
+      );
+    }
+    if (kind === 'mangala') {
+      $$('.g-pit:not([disabled])', body).forEach(
+        (b) => (b.onclick = () => move({ pit: Number(b.dataset.pit) }))
       );
     }
     if (kind === 'truths') {

@@ -26,6 +26,7 @@ export const GAMES = {
   chain: { emoji: '🔗', titleKey: 'gameChain' },
   rps: { emoji: '✊', titleKey: 'gameRps' },
   closest: { emoji: '🎯', titleKey: 'gameClosest' },
+  mangala: { emoji: '🌰', titleKey: 'gameMangala' },
   truths: { emoji: '🤥', titleKey: 'gameTruths' },
 };
 
@@ -96,6 +97,13 @@ function freshBoard(game, opts = {}) {
   }
   if (game === 'rps') {
     return { picks: [null, null], wins: [0, 0], history: [], reveal: null };
+  }
+  if (game === 'mangala') {
+    // twelve holes of four, and two empty treasuries at 6 and 13
+    const pits = Array(14).fill(4);
+    pits[6] = 0;
+    pits[13] = 0;
+    return { pits, from: -1, sow: 0, last: -1, took: [], swept: -1 };
   }
   if (game === 'closest') {
     /* The questions are dealt in by whoever starts the round — the server, so
@@ -551,6 +559,106 @@ function dotsMove(state, seat, move) {
   return true;
 }
 
+/* ---------------------------------------------------------------- mangala
+ *
+ * The Turkish sowing game. Fourteen holes in a ring: 0-5 belong to the first
+ * player and 7-12 to the second, with each one's treasury sitting at the end
+ * of their own row (6 and 13). Stones travel anticlockwise — which on a board
+ * drawn this way means simply "the next index" — and you sow past your own
+ * treasury but never into theirs, which is what makes the ring fourteen holes
+ * long for one of you and thirteen for the other.
+ *
+ * Rules are the Ata Sporları Federasyonu ones. Two of them are what make this
+ * Turkish rather than any other mancala: you leave one stone behind in the
+ * hole you emptied, and whoever clears their own side FIRST takes everything
+ * still sitting on the other side. That second one is worth reading twice —
+ * running out is how you win, not how you lose.
+ */
+const MG_STORE = [6, 13];
+/** the hole facing this one across the board */
+const mgAcross = (i) => 12 - i;
+const mgOwns = (i, seat) => (seat === 0 ? i >= 0 && i <= 5 : i >= 7 && i <= 12);
+const mgSide = (seat) => (seat === 0 ? [0, 1, 2, 3, 4, 5] : [7, 8, 9, 10, 11, 12]);
+
+/**
+ * The holes one move drops a stone into, in the order they get one.
+ *
+ * Pure arithmetic over "which hole, how many stones, whose turn" — it never
+ * looks at the board. That matters: the browser has to replay the sowing
+ * after the fact, when the hole it started from has already been emptied.
+ * The move below walks this same list, so what you watch is what happened.
+ */
+export function mangalaPath(from, count, seat) {
+  if (!(count > 0)) return [];
+  const theirs = MG_STORE[seat === 0 ? 1 : 0];
+  // a lone stone simply moves along; any more and one of them stays home
+  const drop = count === 1 ? 1 : count - 1;
+  const path = [];
+  let i = from;
+  while (path.length < drop) {
+    i = (i + 1) % 14;
+    if (i === theirs) continue;
+    path.push(i);
+  }
+  return path;
+}
+
+function mangalaMove(state, seat, move) {
+  const from = Number(move?.pit);
+  if (!Number.isInteger(from) || !mgOwns(from, seat)) return false;
+  const pits = state.pits;
+  if (!pits[from]) return false; // nothing to pick up
+
+  const sow = pits[from];
+  const path = mangalaPath(from, sow, seat);
+  pits[from] = sow === 1 ? 0 : 1; // the one left behind
+  for (const i of path) pits[i]++;
+
+  const last = path[path.length - 1];
+  const mine = MG_STORE[seat];
+  state.from = from;
+  state.sow = sow; // what was in hand, so the board can replay the journey
+  state.last = last;
+  state.took = [];
+  state.swept = -1;
+
+  if (last === mine) {
+    state.again = true; // home in one — go again
+  } else if (mgOwns(last, seat === 0 ? 1 : 0) && pits[last] % 2 === 0) {
+    // landing on their side and evening the hole out takes all of it
+    pits[mine] += pits[last];
+    pits[last] = 0;
+    state.took = [last];
+  } else if (mgOwns(last, seat) && pits[last] === 1 && pits[mgAcross(last)] > 0) {
+    // your last stone found one of your own holes empty: it and everything
+    // facing it are yours
+    const across = mgAcross(last);
+    pits[mine] += pits[across] + 1;
+    pits[across] = 0;
+    pits[last] = 0;
+    state.took = [last, across];
+  }
+
+  const empty = [0, 1].map((s) => mgSide(s).every((i) => !pits[i]));
+  if (empty[0] || empty[1]) {
+    /* Whoever's side is bare takes whatever is left on the other. It reads
+       oddly the first time — you are rewarded for running out — but it is the
+       rule, and it turns the endgame into a race rather than a stall. */
+    const done = empty[0] ? 0 : 1;
+    let swept = 0;
+    for (const i of mgSide(done === 0 ? 1 : 0)) {
+      swept += pits[i];
+      pits[i] = 0;
+    }
+    pits[MG_STORE[done]] += swept;
+    state.swept = swept ? done : -1;
+    state.again = false;
+    const [a, b] = [pits[6], pits[13]];
+    state.over = { winner: a === b ? 'draw' : a > b ? 0 : 1, stones: [a, b] };
+  }
+  return true;
+}
+
 // ---------------------------------------------------------------- two truths
 function truthsMove(state, seat, move) {
   if (state.phase === 'writing') {
@@ -601,6 +709,7 @@ export function applyMove(state, seat, move) {
     chain: chainMove,
     rps: rpsMove,
     closest: closestMove,
+    mangala: mangalaMove,
     truths: truthsMove,
   }[state.game]?.(state, seat, move);
   if (!ok) return { ok: false };

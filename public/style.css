@@ -2837,6 +2837,147 @@ body.reordering {
 .g-cpips.p2 .g-cpip.on { background: var(--sky); box-shadow: 0 0 6px var(--sky); }
 .g-cpip.tie { background: rgba(255, 255, 255, 0.4); }
 
+/* ---- mangala
+   Sized to the same 320px box Connect Four already proved on a phone: two
+   treasuries at the ends, six holes between them, and the row you can touch
+   along the bottom. Only the numbers are load-bearing — the little stones are
+   there so a heavy hole looks heavy before you have read it. */
+.g-mangala {
+  /* every delay in here is a multiple of --sow, which is what lets the whole
+     journey be switched off with one line further down */
+  --sow: 70ms;
+  width: 100%;
+  max-width: 320px;
+  margin: 0 auto;
+  display: flex;
+  align-items: stretch;
+  gap: 5px;
+  padding: 6px;
+  border-radius: var(--r-sm);
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--hairline);
+}
+
+.g-rows {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.g-prow { display: flex; gap: 4px; }
+
+.g-pit {
+  flex: 1 1 0;
+  min-width: 0;
+  position: relative;
+  aspect-ratio: 3 / 4; /* narrow, but tall enough for a thumb */
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 40%;
+  background: rgba(20, 16, 44, 0.5);
+  box-shadow: inset 0 2px 5px rgba(0, 0, 0, 0.4);
+  cursor: default;
+  overflow: hidden;
+  transition: background 0.16s var(--ease), border-color 0.16s var(--ease);
+}
+
+.g-pit b {
+  position: relative;
+  font-size: var(--t-footnote);
+  font-weight: 700;
+  color: var(--ink-1);
+  text-shadow: 0 1px 3px rgba(10, 8, 24, 0.9);
+}
+
+.g-mangala.playable .g-pit.can {
+  cursor: pointer;
+  border-color: var(--accent);
+  background: rgba(255, 184, 107, 0.14);
+}
+
+/* the stones themselves — scattered, never centred, so they read as loose */
+.g-seeds { position: absolute; inset: 0; }
+
+.g-seeds i {
+  position: absolute;
+  width: 22%;
+  height: 16%;
+  margin: -8% 0 0 -11%;
+  border-radius: 50%;
+  background: var(--pc, rgba(255, 255, 255, 0.5));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.4);
+  opacity: 0.75;
+}
+
+/* The stone that just arrived comes in from the side it travelled from, and
+   `backwards` is what makes this a journey rather than a commentary: without
+   it the stone is already sitting there while a light sweeps over a board
+   that finished changing, which is a different and much worse thing to
+   watch. Which side is a property of the row, not of the move — the bottom
+   row always receives from the left, the top row from the right — so no
+   JavaScript has to work it out. */
+.g-seeds i.drop { animation: g-drops 0.3s var(--spring) calc(var(--k) * var(--sow)) backwards; }
+
+.g-prow:first-child .g-seeds i.drop { --from: 260%; }
+.g-prow:last-child .g-seeds i.drop { --from: -260%; }
+
+@keyframes g-drops {
+  from { transform: translateX(var(--from, -260%)) scale(0.4); opacity: 0; }
+  to { transform: translateX(0) scale(1); opacity: 0.75; }
+}
+
+.g-pit.p1 { --pc: var(--pink); }
+.g-pit.p2 { --pc: var(--sky); }
+
+.g-store {
+  flex: 0 0 38px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: rgba(20, 16, 44, 0.5);
+  box-shadow: inset 0 2px 6px rgba(0, 0, 0, 0.45);
+}
+
+.g-store b {
+  font-size: var(--t-body);
+  font-weight: 700;
+  color: var(--pc);
+}
+
+.g-store.p1 { --pc: var(--pink); }
+.g-store.p2 { --pc: var(--sky); }
+.g-store.mine { box-shadow: inset 0 2px 6px rgba(0, 0, 0, 0.45), 0 0 0 1px var(--pc); }
+
+/* The sowing, played back. Each hole knows how many stones fell before its
+   own, so the whole journey is one delay per hole and no JavaScript per
+   frame — the stones travel, the last one lands, and anything captured
+   drains away after them. */
+.g-pit.sown { animation: g-sow 0.3s var(--spring) calc(var(--k) * var(--sow)) both; }
+.g-pit.last { animation: g-pop 0.3s var(--spring) calc(var(--k) * var(--sow)) both; }
+.g-pit.took { animation: g-take 0.45s var(--ease) calc(var(--k) * var(--sow) + 0.2s) both; }
+
+@keyframes g-sow {
+  0% { transform: scale(1); }
+  45% { transform: scale(1.14); }
+  100% { transform: scale(1); }
+}
+
+@keyframes g-take {
+  0% { opacity: 1; transform: scale(1); }
+  100% { opacity: 0.55; transform: scale(0.82); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* The blanket rule further down shortens durations but leaves delays alone,
+     and a delayed animation that fills `backwards` holds its opening frame —
+     which here means invisible stones for half a second. Collapsing the step
+     is enough: the board arrives at the right picture, all at once. */
+  .g-mangala { --sow: 0ms; }
+}
+
 /* ---- two truths, one lie */
 .g-truths {
   display: flex;
