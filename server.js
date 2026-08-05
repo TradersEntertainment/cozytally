@@ -14,6 +14,7 @@ import {
   isGame, newGameState, nextRound, seatOf, applyMove, redactGame, CLOSEST_ROUND,
   chainTimeout, useDictionary,
 } from './public/games.js';
+import { newPetState, act as petAct, isKind, mood as petMood } from './public/pet.js';
 import { QUESTIONS } from './questions.js';
 import { WORDS } from './words.js';
 
@@ -202,6 +203,7 @@ const PUSH_STR = {
     gameComment: (n, c, t) => `${n} oyunda yazdı 💬 ${c}: ${t}`,
     chat: (n, t) => `${n}: ${t}`,
     cheer: (n, e) => `${n} ${e}✨`,
+    pet: (n, p) => `${n}, ${p} ile ilgilendi 🐾`,
     timerStart: (n, c) => `${n} başlattı: ${c} ⏳`,
     timerPause: (n, c) => `${n} durdurdu: ${c} 🌙`,
     streakReset: (n, c) => `${n}: ${c} sıfırlandı 🌧️`,
@@ -231,6 +233,7 @@ const PUSH_STR = {
     noteComment: (n, c, t) => `${n} commented on “${c}” 💬 ${t}`,
     gameComment: (n, c, t) => `${n} said in the game 💬 ${c}: ${t}`,
     chat: (n, t) => `${n}: ${t}`,
+    pet: (n, p) => `${n} looked after ${p} 🐾`,
     cheer: (n, e) => `${n} ${e}✨`,
     timerStart: (n, c) => `${n} started: ${c} ⏳`,
     timerPause: (n, c) => `${n} paused: ${c} 🌙`,
@@ -543,10 +546,10 @@ function newRoomCode() {
 }
 
 const CARD_TYPES = new Set([
-  'tally', 'streak', 'timer', 'countdown', 'note', 'money', 'list', 'checkin', 'game',
+  'tally', 'streak', 'timer', 'countdown', 'note', 'money', 'list', 'checkin', 'game', 'pet',
 ]);
 /** cards that carry a little conversation of their own */
-const COMMENTABLE = new Set(['note', 'game']);
+const COMMENTABLE = new Set(['note', 'game', 'pet']);
 const MAX_LIST_ITEMS = 60;
 const MAX_GOALS = 6;
 const KEEP_DAYS = 90;
@@ -598,6 +601,10 @@ const toInt = (v, min, max, dflt) => {
 function sanitizeConfig(type, raw) {
   const src = raw && typeof raw === 'object' ? raw : {};
   const out = {};
+  if (type === 'pet') {
+    out.kind = isKind(src.kind) ? src.kind : 'cat';
+    out.petName = clampStr(src.petName, 24);
+  }
   if (type === 'game') {
     out.game = isGame(src.game) ? src.game : 'xox';
     // word chain's house rules, agreed when the card is made
@@ -664,6 +671,7 @@ const gameOpts = (game, from) =>
       : {};
 
 function defaultState(type, now, config) {
+  if (type === 'pet') return newPetState(config?.kind, config?.petName, now);
   if (type === 'game') {
     const game = isGame(config?.game) ? config.game : 'xox';
     return newGameState(game, gameOpts(game, config));
@@ -1707,6 +1715,29 @@ function handleMessage(ws, msg) {
       store.updateCardState(JSON.stringify(state), row.id);
       broadcastCard(code, row.id, by, 'note:set');
       pushToRoom(code, 'note', [ws.meta.name, state.text.slice(0, 90)], ws.meta.cid);
+      return;
+    }
+
+    case 'pet:act': {
+      const row = store.getCard(clampStr(msg.id, 40), code);
+      if (!row || row.type !== 'pet') return;
+      const state = JSON.parse(row.state);
+      const before = petMood(state, now);
+      /* Everything a pet needs is worked out from the clock, so the server
+         doing the acting is the whole of the enforcement — a browser can ask,
+         it can't decide that the cat is hungry. */
+      const done = petAct(state, clampStr(msg.act, 12), now, ws.meta);
+      if (!done) return sendTo(ws, { t: 'pet:no', id: row.id, act: clampStr(msg.act, 12) });
+
+      store.updateCardState(JSON.stringify(state), row.id);
+      broadcastCard(code, row.id, by, `pet:${done.action}`);
+      // worth a nudge when somebody has actually turned it around
+      if (before !== 'happy' && done.mood === 'happy') {
+        pushToRoom(code, 'pet', [ws.meta.name, state.name || row.title], ws.meta.cid, {
+          key: `pet:${row.id}`,
+          windowMs: 120000,
+        });
+      }
       return;
     }
 

@@ -2520,6 +2520,215 @@ body.reordering {
 .g-pick:hover { background: rgba(255, 255, 255, 0.14); }
 .g-pick:active { transform: scale(0.92); }
 
+/* ---- the pet
+   Drawn rather than fetched, so it takes the room's colours, scales to any
+   screen and costs no requests. Everything that moves is transform or opacity,
+   which keeps a creature that breathes all evening off the main thread. */
+.pet-stage {
+  position: relative;
+  display: flex;
+  justify-content: center;
+  width: 100%;
+  padding: 2px 0 4px;
+}
+
+.pet-art { width: 168px; height: 158px; overflow: visible; }
+.pet-art .pet-coat { fill: var(--coat); }
+.pet-art .pet-coat-fill path,
+.pet-art .pet-coat-fill circle,
+.pet-art .pet-coat-fill ellipse,
+.pet-art .pet-back path,
+.pet-art .pet-back circle { fill: var(--coat); }
+.pet-art .pet-belly { fill: var(--belly); }
+.pet-art .pet-inner path,
+.pet-art .pet-inner circle,
+.pet-art .pet-inner ellipse { fill: var(--belly); }
+.pet-art .pet-blush { fill: #ff9eb5; opacity: 0.5; }
+.pet-art .pet-eye { fill: var(--ink); }
+.pet-art .pet-face path { fill: none; stroke: var(--ink); stroke-width: 3; stroke-linecap: round; }
+.pet-art .pet-shadow { fill: rgba(0, 0, 0, 0.28); }
+.pet-art .pet-face path[d*="h-14"],
+.pet-art .pet-face path[d*="h14"] { stroke-width: 2; opacity: 0.5; }
+.pet--cat .pet-back path:last-child { stroke: var(--ink); stroke-width: 2; opacity: 0.45; fill: none; }
+.pet--dragon .pet-inner path { fill: #ffb86b; }
+
+/* it breathes; that is most of what makes it feel alive */
+.pet-body { transform-origin: 60px 110px; animation: pet-breathe 3.4s var(--ease) infinite; }
+.pet-art.is-sleepy .pet-body { animation-duration: 5s; }
+.pet-art.is-happy .pet-body { animation: pet-bob 2.2s var(--ease) infinite; }
+
+@keyframes pet-breathe {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.025); }
+}
+
+@keyframes pet-bob {
+  0%, 100% { transform: translateY(0) scale(1); }
+  50% { transform: translateY(-4px) scale(1.02); }
+}
+
+.pet-eye { animation: pet-blink 5.2s steps(1, end) infinite; transform-origin: center; }
+.pet-art .pet-eye:nth-of-type(2) { animation-delay: 0.06s; }
+
+@keyframes pet-blink {
+  0%, 94%, 100% { transform: scaleY(1); }
+  96%, 98% { transform: scaleY(0.1); }
+}
+
+.pet-tail { transform-origin: 104px 94px; animation: pet-wag 2.6s var(--ease) infinite; }
+.pet-art.is-sleepy .pet-tail { animation: none; }
+
+@keyframes pet-wag {
+  0%, 100% { transform: rotate(-6deg); }
+  50% { transform: rotate(10deg); }
+}
+
+.pet-zzz text {
+  fill: var(--ink-dim);
+  font-size: 15px;
+  font-weight: 700;
+  animation: zz-float 3.2s ease-in-out infinite;
+}
+.pet-zzz text:last-child { animation-delay: 0.6s; }
+
+.pet-art.is-hungry .pet-body,
+.pet-art.is-bored .pet-body { filter: saturate(0.75); }
+
+.pet-stage.bounce .pet-art { animation: pet-pop 0.5s var(--spring); }
+
+@keyframes pet-pop {
+  0% { transform: scale(1); }
+  40% { transform: scale(1.12) rotate(-3deg); }
+  100% { transform: scale(1); }
+}
+
+.pet-fx { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
+
+.pet-bit {
+  position: absolute;
+  bottom: 18%;
+  font-size: 1.1rem;
+  animation: pet-bit-up 1.4s var(--ease) forwards;
+}
+
+@keyframes pet-bit-up {
+  0% { opacity: 0; transform: translateY(6px) scale(0.7); }
+  25% { opacity: 1; transform: translateY(-8px) scale(1); }
+  100% { opacity: 0; transform: translateY(-58px) scale(0.9); }
+}
+
+.pet-says {
+  margin: 0;
+  text-align: center;
+  font-size: var(--t-callout);
+  color: var(--ink-2);
+  text-wrap: balance;
+}
+
+.pet-needs { display: flex; gap: 10px; width: 100%; }
+.pet-need { flex: 1 1 0; display: flex; align-items: center; gap: 5px; min-width: 0; }
+.pet-need-em { font-size: 0.9rem; }
+
+.pet-need-bar {
+  flex: 1;
+  height: 7px;
+  border-radius: var(--r-pill);
+  background: rgba(255, 255, 255, 0.09);
+  overflow: hidden;
+}
+
+.pet-need-bar i {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--mint), var(--sky));
+  transition: width 0.5s var(--ease);
+}
+
+.pet-need.low .pet-need-bar i { background: linear-gradient(90deg, var(--pink), var(--amber)); }
+.pet-need.low .pet-need-em { animation: pet-nag 1.6s var(--ease) infinite; }
+
+@keyframes pet-nag {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-2px); }
+}
+
+.pet-bond { display: flex; align-items: center; gap: 8px; width: 100%; }
+.pet-lvl { font-size: var(--t-footnote); font-weight: 700; color: var(--accent); white-space: nowrap; }
+
+.pet-bond-bar {
+  flex: 1;
+  height: 5px;
+  border-radius: var(--r-pill);
+  background: rgba(255, 255, 255, 0.09);
+  overflow: hidden;
+}
+
+.pet-bond-bar i {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent);
+  transition: width 0.5s var(--ease);
+}
+
+.pet-acts { display: grid; grid-template-columns: repeat(4, 1fr); gap: 7px; width: 100%; }
+
+.pet-act {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 9px 3px 7px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-md);
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--ink-2);
+  font-family: inherit;
+  font-size: var(--t-caption);
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.16s var(--ease), transform 0.16s var(--spring);
+}
+
+.pet-act span { font-size: 1.25rem; line-height: 1; }
+.pet-act:hover { background: rgba(255, 255, 255, 0.11); }
+.pet-act:active { transform: scale(0.94); }
+.pet-last { margin: 0; text-align: center; }
+
+/* picking which creature, when the card is made */
+.pet-pick { display: grid; grid-template-columns: repeat(4, 1fr); gap: 7px; }
+
+.pet-opt {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  padding: 8px 3px 6px;
+  line-height: 1.1;
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-md);
+  background: rgba(255, 255, 255, 0.04);
+  cursor: pointer;
+  font-size: var(--t-caption);
+  color: var(--ink-dim);
+  transition: background 0.16s var(--ease);
+}
+
+.pet-opt input { position: absolute; inset: 0; opacity: 0; }
+/* the drawing normally spills past its box on purpose (ears, tails); in a
+   thumbnail that would land on the name underneath it */
+.pet-opt .pet-art { width: 100%; height: 46px; overflow: hidden; }
+.pet-opt .pet-body { animation: none; } /* eight of them breathing at once is a lot */
+.pet-opt:hover { background: rgba(255, 255, 255, 0.09); }
+
+.pet-opt:has(input:checked) {
+  border-color: color-mix(in srgb, var(--accent) 60%, transparent);
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  color: var(--ink);
+}
+
 /* ---- closest guess */
 .g-closest {
   display: flex;

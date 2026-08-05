@@ -243,6 +243,7 @@
     money: { emoji: '💰', nameKey: 'typeMoney', descKey: 'typeMoneyDesc' },
     list: { emoji: '📝', nameKey: 'typeList', descKey: 'typeListDesc' },
     checkin: { emoji: '🤝', nameKey: 'typeCheckin', descKey: 'typeCheckinDesc' },
+    pet: { emoji: '🐾', nameKey: 'typePet', descKey: 'typePetDesc' },
     game: { emoji: '🎲', nameKey: 'typeGame', descKey: 'typeGameDesc' },
   };
 
@@ -1258,6 +1259,12 @@
         centerCheer(t('coveredCheer', { name: msg.by }));
         return;
 
+      case 'pet:no': {
+        // the only thing it ever says no to is being over-fed or over-rested
+        toast(t('petNo_' + msg.act));
+        return;
+      }
+
       case 'game:no': {
         const why = {
           1: 'chainNoLetters', 2: 'chainNoLetter', 3: 'chainNoRepeat', 4: 'chainNoDict',
@@ -1620,6 +1627,7 @@
     if (card.type === 'list') renderListBody(body, card);
     if (card.type === 'checkin') renderCheckinBody(body, card);
     if (card.type === 'game') renderGameBody(body, card, opts);
+    if (card.type === 'pet') renderPetBody(body, card, opts);
 
     if (typing) {
       const again = el.querySelector('input.' + typing.cls.trim().split(/\s+/).join('.'));
@@ -1637,6 +1645,231 @@
   }
 
   // ---- together check-in
+  /* ---- the pet
+     Eight creatures out of one body, drawn here rather than fetched: the app
+     ships as a single self-contained page with no external hosts, and an SVG
+     that scales and takes the room's colours beats a picture that doesn't.
+     Each kind changes the palette, the ears and one small extra — which is
+     enough for them to read as different animals without eight drawings. */
+  const PET_ART = {
+    cat: {
+      coat: '#f0c99a', belly: '#fde7c7', ink: '#6b4a36',
+      ears: '<path d="M28,36 L26,14 L46,26 Z"/><path d="M92,36 L94,14 L74,26 Z"/>',
+      inner: '<path d="M32,32 L31,22 L41,27 Z"/><path d="M88,32 L89,22 L79,27 Z"/>',
+      extra: '<path class="pet-tail" d="M104,96 q22,-4 16,-26" />' +
+        '<path d="M42,60 h-14 M42,64 h-15 M78,60 h14 M78,64 h15"/>',
+    },
+    dog: {
+      coat: '#d7a06a', belly: '#f6ddbb', ink: '#5b3b28',
+      ears: '<path d="M24,30 q-14,4 -10,30 q3,16 16,10 Z"/><path d="M96,30 q14,4 10,30 q-3,16 -16,10 Z"/>',
+      inner: '',
+      extra: '<path class="pet-tail" d="M104,94 q20,2 14,-18"/>',
+    },
+    bunny: {
+      coat: '#e9dcf6', belly: '#faf3ff', ink: '#6a5a86',
+      ears: '<ellipse cx="44" cy="12" rx="9" ry="26"/><ellipse cx="76" cy="12" rx="9" ry="26"/>',
+      inner: '<ellipse cx="44" cy="14" rx="4" ry="17" opacity=".55"/><ellipse cx="76" cy="14" rx="4" ry="17" opacity=".55"/>',
+      extra: '<circle class="pet-tail" cx="106" cy="92" r="9"/>',
+    },
+    fox: {
+      coat: '#f09a5e', belly: '#ffe2c4', ink: '#6b3a20',
+      ears: '<path d="M26,34 L22,8 L48,24 Z"/><path d="M94,34 L98,8 L72,24 Z"/>',
+      inner: '<path d="M31,30 L29,17 L41,25 Z"/><path d="M89,30 L91,17 L79,25 Z"/>',
+      extra: '<path class="pet-tail" d="M104,92 q26,-2 22,-28 q-2,18 -22,20 Z"/>',
+    },
+    bear: {
+      coat: '#b98a63', belly: '#e6cbab', ink: '#4d3221',
+      ears: '<circle cx="34" cy="22" r="13"/><circle cx="86" cy="22" r="13"/>',
+      inner: '<circle cx="34" cy="22" r="6" opacity=".5"/><circle cx="86" cy="22" r="6" opacity=".5"/>',
+      extra: '',
+    },
+    panda: {
+      coat: '#f4f2f6', belly: '#ffffff', ink: '#3b3548',
+      ears: '<circle cx="34" cy="22" r="13" fill="#3b3548"/><circle cx="86" cy="22" r="13" fill="#3b3548"/>',
+      inner: '<ellipse cx="46" cy="58" rx="11" ry="13" fill="#3b3548" opacity=".85"/>' +
+        '<ellipse cx="74" cy="58" rx="11" ry="13" fill="#3b3548" opacity=".85"/>',
+      extra: '',
+    },
+    penguin: {
+      coat: '#4b5a86', belly: '#f6f2ff', ink: '#2b3350',
+      ears: '',
+      inner: '',
+      extra: '<path d="M22,84 q-12,10 2,14 Z"/><path d="M98,84 q12,10 -2,14 Z"/>' +
+        '<path d="M54,66 L66,66 L60,76 Z" fill="#ffb86b"/>',
+    },
+    dragon: {
+      coat: '#8ad9b6', belly: '#e2fff3', ink: '#2f6b53',
+      ears: '<path d="M30,34 L20,12 L46,26 Z"/><path d="M90,34 L100,12 L74,26 Z"/>',
+      inner: '<path d="M52,4 L60,18 L68,4 Z" opacity=".8"/>',
+      extra: '<path class="pet-tail" d="M104,94 q24,0 18,-22 l8,6 -6,-16 -12,10 6,2 q4,14 -14,14 Z"/>',
+    },
+  };
+
+  /**
+   * The creature itself. One SVG, every part always in it — the eyes are
+   * swapped rather than the drawing redrawn, so a blink or a nap is a class
+   * change and nothing has to be rebuilt.
+   */
+  function petArt(kind, mood) {
+    const a = PET_ART[kind] || PET_ART.cat;
+    const asleep = mood === 'sleepy';
+    const sad = mood === 'hungry' || mood === 'bored';
+    const eyes = asleep
+      ? '<path d="M38,58 q8,7 16,0" /><path d="M66,58 q8,7 16,0" />'
+      : `<circle class="pet-eye" cx="46" cy="58" r="5.5"/><circle class="pet-eye" cx="74" cy="58" r="5.5"/>
+         <circle cx="48" cy="56" r="2" fill="#fff"/><circle cx="76" cy="56" r="2" fill="#fff"/>`;
+    const mouth = asleep
+      ? '<path d="M55,76 q5,5 10,0" />'
+      : sad
+        ? '<path d="M53,80 q7,-6 14,0" />'
+        : '<path d="M53,74 q7,7 14,0" />';
+
+    return `<svg class="pet-art pet--${kind} is-${mood}" viewBox="0 0 132 124" role="img"
+      style="--coat:${a.coat}; --belly:${a.belly}; --ink:${a.ink}">
+      <ellipse class="pet-shadow" cx="60" cy="116" rx="34" ry="6"/>
+      <g class="pet-body">
+        <g class="pet-back">${a.extra}</g>
+        <ellipse class="pet-coat" cx="60" cy="92" rx="34" ry="26"/>
+        <ellipse class="pet-belly" cx="60" cy="96" rx="20" ry="18"/>
+        <g class="pet-coat-fill">${a.ears}</g>
+        <g class="pet-inner">${a.inner}</g>
+        <circle class="pet-coat" cx="60" cy="56" r="34"/>
+        <g class="pet-face">
+          ${eyes}
+          <ellipse class="pet-blush" cx="32" cy="68" rx="6" ry="3.6"/>
+          <ellipse class="pet-blush" cx="88" cy="68" rx="6" ry="3.6"/>
+          ${mouth}
+        </g>
+      </g>
+      ${asleep ? '<g class="pet-zzz"><text x="98" y="34">z</text><text x="110" y="22">z</text></g>' : ''}
+    </svg>`;
+  }
+
+  const PET_ACTS = [
+    { act: 'feed', emoji: '🍚', key: 'petFeed' },
+    { act: 'play', emoji: '🧶', key: 'petPlay' },
+    { act: 'rest', emoji: '🌙', key: 'petRest' },
+    { act: 'pet', emoji: '🫶', key: 'petPet' },
+  ];
+
+  function renderPetBody(body, card, opts = {}) {
+    const P = window.CTPet;
+    const s = card.state || {};
+    const now = serverNow();
+    if (!P) {
+      body.innerHTML = `<div class="g-truths waiting">${esc(t('petLoading'))}</div>`;
+      return;
+    }
+    const n = P.needs(s, now);
+    const feeling = P.mood(s, now);
+    const b = P.bond(s);
+    const name = card.title || s.name; // renaming the card renames the pet
+    const days = Math.max(0, Math.floor((now - (s.born || now)) / 86400000));
+
+    const bar = (key, value, emoji) => `
+      <div class="pet-need ${value < 0.2 ? 'low' : ''}" title="${esc(t(key))}">
+        <span class="pet-need-em">${emoji}</span>
+        <span class="pet-need-bar"><i style="width:${Math.round(value * 100)}%"></i></span>
+      </div>`;
+
+    body.innerHTML = `
+      <div class="pet-stage mood-${feeling}">
+        ${petArt(s.kind || 'cat', feeling)}
+        <div class="pet-fx"></div>
+      </div>
+      <p class="pet-says">${esc(t('petMood_' + feeling, { name }))}</p>
+
+      <div class="pet-needs">
+        ${bar('petFood', n.food, '🍚')}
+        ${bar('petJoy', n.joy, '💛')}
+        ${bar('petEnergy', n.energy, '⚡')}
+      </div>
+
+      <div class="pet-bond">
+        <span class="pet-lvl">${esc(t('petLevel', { n: b.level }))}</span>
+        <span class="pet-bond-bar"><i style="width:${Math.round((b.into / b.span) * 100)}%"></i></span>
+        <span class="sub-label">${esc(t('petDays', { n: days }))}</span>
+      </div>
+
+      <div class="pet-acts">
+        ${PET_ACTS.map((a) => `
+          <button class="pet-act js-pet" data-act="${a.act}">
+            <span>${a.emoji}</span>${esc(t(a.key))}
+          </button>`).join('')}
+      </div>
+
+      ${s.last?.by
+        ? `<p class="sub-label pet-last">${esc(t('petLastCare', {
+            name: s.last.by, what: t('petDid_' + s.last.act),
+          }))}</p>`
+        : ''}
+      ${commentsHtml(card, 'petCommentPh')}`;
+
+    $$('.js-pet', body).forEach((btn) => {
+      btn.onclick = () => send({ t: 'pet:act', id: card.id, act: btn.dataset.act });
+    });
+    wireComments(body, card);
+
+    // somebody just did something — let it land on both screens
+    if (opts.verb?.startsWith('pet:')) {
+      const what = opts.verb.slice(4);
+      petCheer(body, what);
+      feel(what === 'pet' ? 'heart' : opts.by?.id === myId ? 'good' : 'theirs');
+    }
+  }
+
+  /* Needs drain by the clock, so the card has to keep up on its own. Only the
+     numbers that moved are written — redrawing the whole card twice a minute
+     would throw away a comment somebody was halfway through typing. */
+  function updatePetBody(body, card) {
+    const P = window.CTPet;
+    if (!P) return;
+    const s = card.state || {};
+    const now = serverNow();
+    const n = P.needs(s, now);
+    const bars = $$('.pet-need', body);
+    [n.food, n.joy, n.energy].forEach((v, i) => {
+      const el = bars[i];
+      if (!el) return;
+      const fill = $('i', el);
+      const pct = Math.round(v * 100) + '%';
+      if (fill && fill.style.width !== pct) fill.style.width = pct;
+      el.classList.toggle('low', v < 0.2);
+    });
+    const feeling = P.mood(s, now);
+    const stage = $('.pet-stage', body);
+    if (stage && !stage.classList.contains('mood-' + feeling)) {
+      // the face itself changes with the mood, so that part is redrawn
+      stage.className = `pet-stage mood-${feeling}`;
+      const art = $('.pet-art', stage);
+      if (art) art.outerHTML = petArt(s.kind || 'cat', feeling);
+      const says = $('.pet-says', body);
+      if (says) says.textContent = t('petMood_' + feeling, { name: card.title || s.name });
+    }
+  }
+
+  /** a little burst over the creature, whichever of you set it off */
+  function petCheer(body, what) {
+    if (REDUCED) return;
+    const stage = $('.pet-stage', body);
+    const fx = $('.pet-fx', body);
+    if (!stage || !fx) return;
+    stage.classList.remove('bounce');
+    void stage.offsetWidth; // let the animation start over
+    stage.classList.add('bounce');
+    const bits = { feed: ['🍚', '🍗', '🐟'], play: ['🧶', '⚽', '✨'], rest: ['💤', '🌙', '☁️'], pet: ['💖', '💕', '🫶'] }[what]
+      || ['✨'];
+    for (let i = 0; i < 7; i++) {
+      const el = document.createElement('span');
+      el.className = 'pet-bit';
+      el.textContent = bits[Math.floor(Math.random() * bits.length)];
+      el.style.left = 12 + Math.random() * 76 + '%';
+      el.style.animationDelay = (Math.random() * 0.35).toFixed(2) + 's';
+      fx.appendChild(el);
+      setTimeout(() => el.remove(), 1600);
+    }
+  }
+
   function renderCheckinBody(body, card) {
     const state = card.state || {};
     const mode = card.config.mode || 'all';
@@ -3307,7 +3540,8 @@
     }
   }
 
-  const TICKING = new Set(['timer', 'countdown', 'streak']);
+  // a pet gets hungry on the clock, so its card is redrawn like the others
+  const TICKING = new Set(['timer', 'countdown', 'streak', 'pet']);
   const tickOnce = () => {
     if (!room || document.hidden) return;
     paintClocks();
@@ -3318,6 +3552,7 @@
       if (card.type === 'timer' && card.state.running) updateTimerBody(el, card);
       if (card.type === 'countdown') updateCountdownBody(el, card);
       if (card.type === 'streak') updateStreakBody(el, card);
+      if (card.type === 'pet') updatePetBody(el, card);
     }
   };
   // land just after each second turns over, rather than free-running
@@ -3555,6 +3790,23 @@
           <input id="cf-target" type="datetime-local" value="${targetVal}">
         </div>`;
     }
+    if (type === 'pet') {
+      const kinds = ['cat', 'dog', 'bunny', 'fox', 'bear', 'panda', 'penguin', 'dragon'];
+      const chosen = existing?.config?.kind || 'cat';
+      extraFields = `
+        <div class="field">
+          <label>${esc(t('petPickKind'))}</label>
+          <div class="pet-pick">
+            ${kinds.map((k) => `
+              <label class="pet-opt ${k === chosen ? 'on' : ''}" title="${esc(t('petKind_' + k))}">
+                <input type="radio" name="cf-kind" value="${k}" ${k === chosen ? 'checked' : ''}>
+                ${petArt(k, 'happy')}
+                <span>${esc(t('petKind_' + k))}</span>
+              </label>`).join('')}
+          </div>
+        </div>
+`;
+    }
     if (type === 'checkin') {
       const modeNow = existing?.config?.mode || 'all';
       extraFields = `
@@ -3607,7 +3859,8 @@
       <h2>${headEmoji} ${esc(isEdit ? t('editCardTitle') : headName)}</h2>
       <div class="field">
         <label>${esc(t('fieldTitle'))}</label>
-        <input id="cf-title" type="text" maxlength="60" placeholder="${esc(t('fieldTitlePh'))}"
+        <input id="cf-title" type="text" maxlength="60"
+          placeholder="${esc(type === 'pet' ? t('petNamePh') : t('fieldTitlePh'))}"
           value="${esc(titleValue)}" autocomplete="off">
       </div>
       <div class="field">
@@ -3788,6 +4041,10 @@
         if (!v) return $('#cf-target', box).focus();
         config.targetAt = new Date(v).getTime();
         countdownCelebrated.delete(existing?.id);
+      }
+      if (type === 'pet') {
+        config.kind = $('input[name="cf-kind"]:checked', box)?.value || 'cat';
+        config.petName = $('#cf-title', box).value.trim(); // its name is the card's
       }
       if (type === 'checkin') config.mode = mode;
       if (type === 'note' && !isEdit) {
