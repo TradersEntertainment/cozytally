@@ -1585,14 +1585,30 @@
       $('#board').appendChild(el);
     }
 
-    // A card re-renders whenever anyone touches it. Don't yank the text out
-    // from under someone who is mid-typing in this card's input.
-    const typing = el.contains(document.activeElement) && document.activeElement.tagName === 'INPUT'
-      ? { cls: document.activeElement.className, value: document.activeElement.value }
+    /* The word chain keeps its box on screen for the whole game so that a
+       phone keyboard can stay up — and a keyboard only stays up while the
+       element it belongs to does. Throwing the card away and building it
+       again would close it, and it could not be reopened, because focusing
+       from an arriving socket message is not a user gesture. So while the
+       caret is in that box the card is updated around it: the title in
+       place, and the body left for renderGameBody to patch. */
+    const held = document.activeElement;
+    const keepBody = card.type === 'game' && el.contains(held)
+      && held.classList?.contains('js-chword') && !!$('.card-body', el);
+
+    /* And for every other card — and for the chain when the patch turns out
+       not to be enough — don't yank the text out from under someone who is
+       mid-typing in this card's input. */
+    const typing = el.contains(held) && held.tagName === 'INPUT'
+      ? { cls: held.className, value: held.value }
       : null;
 
     el.className = `card card--${card.type}`;
-    el.innerHTML = `
+    if (keepBody) {
+      $('.card-emoji', el).textContent = card.emoji || TYPE_META[card.type].emoji;
+      $('.card-title', el).textContent = card.title;
+    } else {
+      el.innerHTML = `
       <div class="card-head">
         <span class="card-emoji">${esc(card.emoji || TYPE_META[card.type].emoji)}</span>
         <span class="card-title">${esc(card.title)}</span>
@@ -1605,9 +1621,12 @@
         <button class="icon-btn js-del" title="${esc(t('del'))}">🗑️</button>
       </div>
       <div class="card-body"></div>`;
+    }
 
+    // assigned, not added, so re-running over a kept head can't stack them up
     $('.js-edit', el).onclick = () => openCardModal(card.type, card);
-    $('.js-how', el)?.addEventListener('click', () => openHowToPlay(card.config?.game || 'xox'));
+    const how = $('.js-how', el);
+    if (how) how.onclick = () => openHowToPlay(card.config?.game || 'xox');
     $('.js-del', el).onclick = async () => {
       const ok = await confirmModal({
         title: t('confirmDeleteTitle'),
@@ -1629,7 +1648,7 @@
     if (card.type === 'game') renderGameBody(body, card, opts);
     if (card.type === 'pet') renderPetBody(body, card, opts);
 
-    if (typing) {
+    if (typing && document.activeElement !== held) {
       const again = el.querySelector('input.' + typing.cls.trim().split(/\s+/).join('.'));
       if (again) {
         again.value = typing.value;
@@ -2098,6 +2117,33 @@
       hangman: hangmanBoard, code: codeBoard, chain: chainBoard, rps: rpsBoard,
       closest: closestBoard, truths: truthsBoard,
     };
+
+    /** the tick, the cheer and the coins — the same whether we drew or patched */
+    const feedback = () => {
+      if (opts.verb !== 'game:move' && opts.verb !== 'game:next') return;
+      const mine = opts.by?.id === myId;
+      if (s.over) {
+        feel(s.over.winner === 'draw' ? 'draw' : s.over.winner === mySeat ? 'win' : 'lose');
+        if (s.over.winner === mySeat) coinRain(body.closest('.card'));
+      } else if (mine) {
+        // closing a box and keeping the turn deserves better than a plain tick
+        feel(s.again ? 'good' : 'move');
+      }
+    };
+
+    /* On a phone, replacing the box you are typing into closes the keyboard —
+       and it cannot be reopened, because refocusing from an arriving socket
+       message is not a user gesture. So while a word chain box has the caret,
+       only the bits that actually changed are written and the box itself is
+       left exactly where it is. */
+    if (kind === 'chain'
+      && patchChainBody(body, card, s, {
+        status, myTurn, playSeat, boxes, seats: seatChip(0) + seatChip(1),
+      })) {
+      feedback();
+      return;
+    }
+
     body.innerHTML = `
       <div class="g-seats">${seatChip(0)}${seatChip(1)}</div>
       <div class="g-status ${myTurn ? 'mine' : ''} ${s.over ? 'over' : ''}">${esc(status)}</div>
@@ -2119,17 +2165,69 @@
     $('.js-how-big', body)?.addEventListener('click', () => openHowToPlay(kind));
     wireGameBoard(kind, body, s, myTurn, move);
     wireComments(body, card);
+    feedback();
+  }
 
-    if (opts.verb === 'game:move' || opts.verb === 'game:next') {
-      const mine = opts.by?.id === myId;
-      if (s.over) {
-        feel(s.over.winner === 'draw' ? 'draw' : s.over.winner === mySeat ? 'win' : 'lose');
-        if (s.over.winner === mySeat) coinRain(body.closest('.card'));
-      } else if (mine) {
-        // closing a box and keeping the turn deserves better than a plain tick
-        feel(s.again ? 'good' : 'move');
-      }
+  /**
+   * Update a word chain card around the box somebody is typing in. Returns
+   * false — meaning "draw it properly" — for anything this can't express, so
+   * a full render is always the fallback and never a wrong picture.
+   */
+  function patchChainBody(body, card, s, { status, myTurn, playSeat, boxes, seats }) {
+    const input = $('.js-chword', body);
+    if (!input || document.activeElement !== input) return false;
+    if (s.over || playSeat < 0) return false; // the box is going away anyway
+    // a comment arriving needs the list rebuilt, and that is rare enough
+    if ($$('.ncom', body).length !== (card.state?.comments || []).length) return false;
+
+    const words = s.words || [];
+    const next = words.length && window.CTGames
+      ? window.CTGames.chainLetter(words[words.length - 1].text)
+      : null;
+
+    const links = $('.g-links', body);
+    if (!links) return false;
+    links.innerHTML = words
+      .map((w, i) => `<span class="g-link p${w.by + 1} ${i === words.length - 1 ? 'last' : ''}"
+        >${esc(w.text)}</span>`)
+      .join('');
+    if (words.length) $('.js-chstart', body)?.remove(); // "you start" — they did
+
+    // whose light is on, and the second chair filling up mid-game
+    const chairs = $('.g-seats', body);
+    if (chairs) chairs.innerHTML = seats;
+
+    const st = $('.g-status', body);
+    if (st) {
+      st.textContent = status;
+      st.classList.toggle('mine', myTurn);
     }
+    input.placeholder = chainHint(s, next, myTurn);
+    const go = $('.js-chgo', body);
+    if (go) go.disabled = !myTurn;
+    const quit = $('.js-chgiveup', body);
+    if (quit) quit.disabled = !myTurn;
+
+    let clock = $('.g-clock', body);
+    if (s.limit && s.deadline) {
+      if (!clock) {
+        // the clock only starts once somebody has moved; hang it off the rules
+        const rules = $('.g-rules', body);
+        if (!rules) return false;
+        clock = document.createElement('div');
+        clock.className = 'g-clock';
+        clock.innerHTML = '<div class="g-clock-bar"><i></i></div><span class="g-clock-num"></span>';
+        rules.after(clock);
+      }
+      clock.dataset.deadline = String(s.deadline);
+      clock.dataset.limit = String(s.limit);
+    } else if (clock) {
+      clock.remove();
+    }
+
+    const foot = $('.g-foot .sub-label', body);
+    if (foot) foot.textContent = t('gameRound', { n: s.round || 1 }) + (boxes ? ' · ' + boxes : '');
+    return true;
   }
 
   const discOf = (v) => (v ? `<span class="g-disc p${v}"></span>` : '');
@@ -2341,6 +2439,14 @@
     </div>`;
   }
 
+  /** what the box asks for: a letter when it's your go, patience when it isn't */
+  const chainHint = (s, next, myTurn) =>
+    myTurn
+      ? next
+        ? t('gameChainNext', { letter: next })
+        : t('gameChainAny')
+      : t('gameChainWait', { letter: next || '' });
+
   function chainBoard(s, mySeat, myTurn) {
     const words = s.words || [];
     const next = words.length && window.CTGames
@@ -2358,24 +2464,32 @@
             <span class="g-clock-num"></span>
           </div>`
         : ''}
-      ${words.length
-        ? `<div class="g-links">${words
-            .map((w, i) => `<span class="g-link p${w.by + 1} ${i === words.length - 1 ? 'last' : ''}"
-              >${esc(w.text)}</span>`)
-            .join('')}</div>`
-        : `<p class="sub-label">${esc(t('gameChainStart'))}</p>`}
+      ${/* the list is here from the start, empty — so that the first word can
+            be dropped into it without rebuilding the card around the box */ ''}
+      <div class="g-links">${words
+        .map((w, i) => `<span class="g-link p${w.by + 1} ${i === words.length - 1 ? 'last' : ''}"
+          >${esc(w.text)}</span>`)
+        .join('')}</div>
+      ${words.length ? '' : `<p class="sub-label js-chstart">${esc(t('gameChainStart'))}</p>`}
       ${s.over?.timeout
         ? `<p class="sub-label">${esc(t('gameChainTimedOut', {
             name: (s.players || [])[s.timedOut]?.name || '',
           }))}</p>`
         : ''}
-      ${!s.over && myTurn
+      ${!s.over && mySeat >= 0
         ? `<div class="g-guessrow">
+            ${/* Kept on screen even when it isn't your turn — on a phone an
+                 input that goes away takes the keyboard with it, and it takes
+                 a tap to get it back. This way you can line your word up while
+                 you wait, and the send button is what waits for the turn. */ ''}
             <input type="text" class="js-chword" maxlength="24" autocomplete="off"
-              placeholder="${esc(next ? t('gameChainNext', { letter: next }) : t('gameChainAny'))}">
-            <button class="btn btn-primary btn-sm js-chgo">${esc(t('gameChainSend'))}</button>
+              enterkeyhint="send"
+              placeholder="${esc(chainHint(s, next, myTurn))}">
+            <button class="btn btn-primary btn-sm js-chgo" ${myTurn ? '' : 'disabled'}
+              >${esc(t('gameChainSend'))}</button>
           </div>
-          <button class="g-giveup js-chgiveup">${esc(t('gameChainGiveUp'))}</button>`
+          <button class="g-giveup js-chgiveup" ${myTurn ? '' : 'disabled'}
+            >${esc(t('gameChainGiveUp'))}</button>`
         : ''}
     </div>`;
   }
@@ -2941,18 +3055,29 @@
   }
 
   function wireGameBoard(kind, body, s, myTurn, move) {
-    if (!myTurn) return;
+    /* Word chain keeps its box on screen the whole game so a phone keyboard can
+       stay up, which means it has to be wired even when it isn't your turn. */
+    if (!myTurn && kind !== 'chain') return;
+
     /** an input plus its send button, the shape half of these games use */
     const wireEntry = (inputSel, btnSel, build) => {
       const input = $(inputSel, body);
+      const btn = $(btnSel, body);
       const go = () => {
+        /* The chain box outlives the render that wired it, so the turn this
+           closure was born with goes stale. Its send button doesn't: the
+           patch keeps that enabled or not, and that is what "is it me" means
+           from in here. */
+        if (btn.disabled) return toast(t('gameChainNotYou'));
         const value = input.value.trim();
         if (!value) return input.focus();
         const m = build(value);
         if (m) move(m);
         input.value = '';
+        // keep the caret where it was; on a phone that keeps the keyboard up
+        input.focus();
       };
-      $(btnSel, body).onclick = go;
+      btn.onclick = go;
       input.addEventListener('keydown', (e) => e.key === 'Enter' && go());
     };
 
@@ -2972,7 +3097,7 @@
       if ($('.js-cgo', body)) wireEntry('.js-cguess', '.js-cgo', (guess) => ({ guess }));
     }
     if (kind === 'chain') {
-      if ($('.js-chgo', body)) wireEntry('.js-chword', '.js-chgo', (word) => ({ word }));
+      if ($('.js-chword', body)) wireEntry('.js-chword', '.js-chgo', (word) => ({ word }));
       const quit = $('.js-chgiveup', body);
       if (quit) {
         quit.onclick = async () => {

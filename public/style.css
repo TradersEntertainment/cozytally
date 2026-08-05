@@ -2427,10 +2427,14 @@ body.reordering {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
+  /* it is on screen before the first word so the box never has to be rebuilt
+     around it — until then it should take up no room at all */
   max-height: 190px;
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
 }
+
+.g-links:empty { display: none; }
 
 .g-link {
   padding: 5px 11px;
