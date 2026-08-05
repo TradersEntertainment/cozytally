@@ -48,6 +48,8 @@ window.I18N = {
 
     soundOn: 'Ses ve titreşim açık 🔊',
     soundOff: 'Ses ve titreşim kapalı 🔇',
+    musicOn: 'Müzik açık 🎶',
+    musicOff: 'Müzik kapalı 🎵',
     copyLink: 'Linki kopyala',
     linkCopied: 'Link kopyalandı! 🔗',
     online: 'çevrimiçi',
@@ -511,6 +513,8 @@ window.I18N = {
 
     soundOn: 'Sound and buzz on 🔊',
     soundOff: 'Sound and buzz off 🔇',
+    musicOn: 'Music on 🎶',
+    musicOff: 'Music off 🎵',
     copyLink: 'Copy link',
     linkCopied: 'Link copied! 🔗',
     online: 'online',

@@ -49,6 +49,12 @@ Ayrıca her odada:
   ayrı ayrı. Sesler dosya değil, anlık üretiliyor — indirilecek bir şey yok. Üstteki
   🔊 düğmesiyle kapanır, arka plandaki sekmede hiç çalmaz (o iş bildirimin).
   *Titreşim iPhone'da Safari desteklemediği için çalışmayabilir; hissiyatı ses taşır*
+- 🎶 **Müzik** — odanın altında çalan tatlı bir ninni. O da dosya değil, anlık
+  üretiliyor: yavaş bir yastık akor, altında bir bas ve seyrek bir müzik kutusu
+  ezgisi; ezgi pentatonik bir diziden seçildiği için yanlış nota diye bir şey yok
+  ve hiçbir tur bir öncekinin aynısı olmuyor, yani döngü kulağı tırmalamıyor.
+  Kapalı başlar, üstteki 🎵 düğmesiyle açılır, seçimin hatırlanır; sekmeyi
+  bıraktığında susar, döndüğünde kaldığı yerden devam eder
 - 📱 **PWA** — telefonda "Ana Ekrana Ekle" ile gerçek uygulama gibi kurulur
 
 Hesap yok, şifre yok — sadece takma ad + oda kodu. TR/EN dil desteği var.
