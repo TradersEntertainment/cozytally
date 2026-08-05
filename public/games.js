@@ -27,15 +27,21 @@ export const GAMES = {
   rps: { emoji: '✊', titleKey: 'gameRps' },
   closest: { emoji: '🎯', titleKey: 'gameClosest' },
   mangala: { emoji: '🌰', titleKey: 'gameMangala' },
+  battle: { emoji: '🚢', titleKey: 'gameBattle' },
   truths: { emoji: '🤥', titleKey: 'gameTruths' },
 };
 
 export const isGame = (g) => Object.prototype.hasOwnProperty.call(GAMES, g);
 
-/* Rock-paper-scissors is the odd one out: both people choose at once and
-   nothing is revealed until the second choice lands, so the usual "is it
-   your turn" gate would lock one of them out. */
-const SIMULTANEOUS = new Set(['rps', 'closest']);
+/* Games that keep their own door rather than being locked to state.turn.
+   Rock-paper-scissors and Closest have no turn at all — you both answer at
+   once, and the usual gate would lock one of you out. Battleship does have a
+   turn, but only in its second half: while the fleets are being laid out you
+   are both busy, so it opens its own door and closes it again once the
+   shooting starts. */
+const SELF_GATED = new Set(['rps', 'closest', 'battle']);
+/** ...and of those, the two with no turn to hand over at all. */
+const TURNLESS = new Set(['rps', 'closest']);
 
 const C4_COLS = 7;
 const C4_ROWS = 6;
@@ -97,6 +103,18 @@ function freshBoard(game, opts = {}) {
   }
   if (game === 'rps') {
     return { picks: [null, null], wins: [0, 0], history: [], reveal: null };
+  }
+  if (game === 'battle') {
+    return {
+      phase: 'placing',
+      fleets: [btDeal(), btDeal()],
+      ready: [false, false],
+      // shots[s] is what s has fired at the OTHER sea: 0 nothing, 1 miss, 2 hit
+      shots: [Array(BT_N * BT_N).fill(0), Array(BT_N * BT_N).fill(0)],
+      sunk: [[], []], // which of each fleet has gone down
+      last: -1,
+      sank: -1,
+    };
   }
   if (game === 'mangala') {
     // twelve holes of four, and two empty treasuries at 6 and 13
@@ -659,6 +677,111 @@ function mangalaMove(state, seat, move) {
   return true;
 }
 
+/* ---------------------------------------------------------------- battleship
+ *
+ * The only game here where the two of you are looking at genuinely different
+ * pictures: my fleet is mine to know and yours is yours, and neither of us
+ * may see the other's until we have shot it. Every other secret in this file
+ * is a secret from both browsers at once — a word nobody has guessed, a hand
+ * nobody has opened — and could be held back with one rule for everyone.
+ * This one cannot, which is why redactGame learned to ask who is asking.
+ *
+ * Laying out is done by dealing rather than dragging: you take a fleet,
+ * reshuffle it as often as you like, and say when you are happy. On a phone
+ * that is a better game than nudging four rectangles around a grid, and the
+ * arrangement you end up with is no less yours for having been offered.
+ */
+export const BT_N = 7; // a 7×7 sea; 8×8 makes for a long hunt on a phone
+export const BT_FLEET = [4, 3, 2, 2];
+const btAt = (r, c) => r * BT_N + c;
+
+/** Lay a fleet down at random, never touching, never overlapping. */
+function btDeal() {
+  for (let attempt = 0; attempt < 200; attempt++) {
+    const taken = new Set(); // hulls and the water around them
+    const hull = new Set();
+    const ships = [];
+    let ok = true;
+    for (const len of BT_FLEET) {
+      let placed = false;
+      for (let go = 0; go < 200 && !placed; go++) {
+        const down = Math.random() < 0.5;
+        const r = Math.floor(Math.random() * (down ? BT_N - len + 1 : BT_N));
+        const c = Math.floor(Math.random() * (down ? BT_N : BT_N - len + 1));
+        const cells = Array.from({ length: len }, (_, k) => (down ? btAt(r + k, c) : btAt(r, c + k)));
+        if (cells.some((i) => taken.has(i))) continue;
+        cells.forEach((i) => hull.add(i));
+        /* Ships may not touch, not even corner to corner — otherwise two of
+           them read as one long one and the hunt stops making sense. */
+        for (const i of cells) {
+          const rr = Math.floor(i / BT_N);
+          const cc = i % BT_N;
+          for (let dr = -1; dr <= 1; dr++) {
+            for (let dc = -1; dc <= 1; dc++) {
+              const nr = rr + dr;
+              const nc = cc + dc;
+              if (nr >= 0 && nr < BT_N && nc >= 0 && nc < BT_N) taken.add(btAt(nr, nc));
+            }
+          }
+        }
+        ships.push({ len, cells });
+        placed = true;
+      }
+      if (!placed) { ok = false; break; }
+    }
+    if (ok) return ships;
+  }
+  return []; // unreachable with this fleet on this board, but never loop forever
+}
+
+const btSunk = (ship, shots) => ship.cells.every((i) => shots[i] === 2);
+
+function battleMove(state, seat, move) {
+  const other = seat === 0 ? 1 : 0;
+
+  if (state.phase === 'placing') {
+    if (state.ready[seat]) return false; // you already said you were happy
+    if (move?.shuffle) {
+      state.fleets[seat] = btDeal();
+      return true;
+    }
+    if (!move?.ready) return false;
+    state.ready[seat] = true;
+    if (state.ready[0] && state.ready[1]) {
+      state.phase = 'firing';
+      state.turn = seat === 0 ? 1 : 0; // whoever finished first has been waiting
+    }
+    return true;
+  }
+
+  if (state.turn !== seat) return false; // the gate this game keeps itself
+  const cell = Number(move?.cell);
+  if (!Number.isInteger(cell) || cell < 0 || cell >= BT_N * BT_N) return false;
+  const shots = state.shots[seat];
+  if (shots[cell]) return false; // no shooting the same water twice
+
+  const hit = state.fleets[other].find((sh) => sh.cells.includes(cell));
+  shots[cell] = hit ? 2 : 1;
+  state.last = cell;
+  state.sank = -1;
+
+  if (!hit) {
+    state.turn = other; // a miss is what ends your go
+    return true;
+  }
+  state.again = true; // a hit earns another shot
+  const which = state.fleets[other].indexOf(hit);
+  if (btSunk(hit, shots)) {
+    state.sunk[other].push(which);
+    state.sank = hit.len;
+  }
+  if (state.sunk[other].length === state.fleets[other].length) {
+    state.again = false;
+    state.over = { winner: seat, left: state.fleets[seat].length - state.sunk[seat].length };
+  }
+  return true;
+}
+
 // ---------------------------------------------------------------- two truths
 function truthsMove(state, seat, move) {
   if (state.phase === 'writing') {
@@ -695,7 +818,7 @@ export function applyMove(state, seat, move) {
   // the turn is the only gate that matters: after you play it belongs to the
   // other chair, and you can't sit in two chairs at once. Games where both
   // choose at the same time police themselves instead.
-  if (!SIMULTANEOUS.has(state.game) && state.turn !== seat) return { ok: false };
+  if (!SELF_GATED.has(state.game) && state.turn !== seat) return { ok: false };
 
   state.again = false;
   const before = state.turn;
@@ -710,17 +833,19 @@ export function applyMove(state, seat, move) {
     rps: rpsMove,
     closest: closestMove,
     mangala: mangalaMove,
+    battle: battleMove,
     truths: truthsMove,
   }[state.game]?.(state, seat, move);
   if (!ok) return { ok: false };
 
-  if (!state.over && !state.again && !SIMULTANEOUS.has(state.game)) {
+  if (!state.over && !state.again && !SELF_GATED.has(state.game)) {
     state.turn = seat === 0 ? 1 : 0;
   }
   if (state.over && state.over.winner !== 'draw') state.scores[state.over.winner]++;
-  // in a simultaneous game the nudge belongs to the other person the moment
-  // you have chosen and they have not
-  const passed = SIMULTANEOUS.has(state.game)
+  /* Whether the nudge belongs to the other person now. Anything with a turn
+     answers that by whether the turn moved; the two games without one hand it
+     over the moment you have answered and they have not. */
+  const passed = TURNLESS.has(state.game)
     ? !state.reveal && !state.over
     : state.turn !== before;
   return { ok: true, passed };
@@ -734,8 +859,33 @@ export function applyMove(state, seat, move) {
  * secret — send it and anyone can read it straight out of the page, and
  * the game is over before it starts.
  */
-export function redactGame(state) {
+export function redactGame(state, forKey) {
   if (!state) return state;
+
+  if (state.game === 'battle') {
+    /* The one game where the two of you are owed different pictures, so this
+       is the one place that has to know who is asking. Your own fleet comes
+       through whole; theirs arrives as bare hull lengths — enough to know
+       what is still out there, nothing about where. A ship you have sunk is
+       yours to see, and once it is over so is everything. Someone watching
+       from a third chair is told no more than the wrecks. */
+    const players = state.players || [];
+    const sat = players.findIndex((p) => p.key === forKey);
+    /* Chairs are taken by playing, so the second person has not got one yet
+       when the card first reaches them — and laying out a fleet you cannot
+       see would be a poor game. The chair they would take is the one the
+       browser would seat them in, and the fleet waiting in it belongs to
+       nobody until they do. Once both chairs are full this closes, and
+       anyone else watching is back to seeing only the wrecks. */
+    const me = sat >= 0 ? sat : players.length < 2 ? players.length : -1;
+    const done = !!state.over;
+    return {
+      ...state,
+      fleets: state.fleets.map((fleet, s) =>
+        fleet.map((ship, i) =>
+          done || s === me || state.sunk[s].includes(i) ? ship : { len: ship.len })),
+    };
+  }
 
   if (state.game === 'truths' && state.phase === 'guessing') {
     const { lie, ...rest } = state;

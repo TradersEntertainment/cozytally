@@ -687,7 +687,7 @@ function defaultState(type, now, config) {
   return {};
 }
 
-function rowToCard(row) {
+function rowToCard(row, forKey) {
   const state = JSON.parse(row.state);
   return {
     id: row.id,
@@ -695,9 +695,11 @@ function rowToCard(row) {
     title: row.title,
     emoji: row.emoji,
     config: JSON.parse(row.config),
-    // the only funnel card state takes to reach a browser, so it is also the
-    // only place a game's secrets have to be held back
-    state: row.type === 'game' ? redactGame(state) : state,
+    /* The only funnel card state takes to reach a browser, so it is also the
+       only place a game's secrets have to be held back. `forKey` is who the
+       copy is for: most games keep the same secret from everyone and ignore
+       it, but battleship owes the two of you different pictures. */
+    state: row.type === 'game' ? redactGame(state, forKey) : state,
     sort: row.sort,
     createdAt: row.created_at,
   };
@@ -1083,7 +1085,18 @@ function broadcastCard(code, cardId, by, verb, ref) {
   if (!row) return;
   // `ref` is echoed straight back from the sender's card:add so they can
   // recognise the card they just made and finish filling it in
-  broadcast(code, { t: 'card:update', card: rowToCard(row), by, verb, ref, now: Date.now() });
+  const now = Date.now();
+  if (row.type !== 'game') {
+    broadcast(code, { t: 'card:update', card: rowToCard(row), by, verb, ref, now });
+    return;
+  }
+  /* A game card is redacted for whoever is receiving it, so it cannot be
+     encoded once and handed round — everyone gets their own copy. Two
+     serialisations instead of one, in a room of two people. */
+  for (const s of roomSockets.get(code) || []) {
+    if (s.readyState !== s.OPEN) continue;
+    sendTo(s, { t: 'card:update', card: rowToCard(row, personKey(s)), by, verb, ref, now });
+  }
 }
 
 wss.on('connection', (ws) => {
@@ -1197,7 +1210,7 @@ function handleMessage(ws, msg) {
     sendTo(ws, {
       t: 'room',
       room: { code: room.code, name: room.name },
-      cards: store.roomCards(code).map(rowToCard),
+      cards: store.roomCards(code).map((r) => rowToCard(r, personKey(ws))),
       members: membersOf(code),
       you: ws.meta.id,
       seen: store.seenForRoom(code),

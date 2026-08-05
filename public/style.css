@@ -2837,6 +2837,106 @@ body.reordering {
 .g-cpips.p2 .g-cpip.on { background: var(--sky); box-shadow: 0 0 6px var(--sky); }
 .g-cpip.tie { background: rgba(255, 255, 255, 0.4); }
 
+/* ---- battleship
+   Two seas will not both fit at a size you can aim at, so only one of them is
+   ever full size — the one where the next thing happens — and the other sits
+   underneath at half scale, big enough to read and too small to poke. */
+.g-battle {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+}
+
+.g-seaname { margin: 2px 0 0; }
+
+.g-sea {
+  width: 100%;
+  max-width: 300px;
+  display: grid;
+  grid-template-columns: repeat(var(--n, 7), 1fr);
+  gap: 3px;
+  padding: 5px;
+  border-radius: var(--r-sm);
+  background: rgba(60, 90, 160, 0.16);
+  border: 1px solid var(--hairline);
+}
+
+.g-sea.small {
+  max-width: 168px;
+  gap: 2px;
+  padding: 3px;
+}
+
+.g-wave {
+  aspect-ratio: 1;
+  padding: 0;
+  border: 0;
+  border-radius: var(--r-xs);
+  background: rgba(140, 180, 255, 0.13);
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.28);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: default;
+  transition: background 0.16s var(--ease);
+}
+
+/* your own hulls, and only ever your own — the other sea has nothing to show
+   until you have put a hole in it */
+.g-wave.ship { background: rgba(255, 255, 255, 0.34); }
+.g-wave.miss { background: rgba(140, 180, 255, 0.07); }
+.g-wave.miss::after {
+  content: '';
+  width: 26%;
+  height: 26%;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.34);
+}
+.g-wave.hit { background: var(--peach); }
+.g-wave.hit::after {
+  content: '';
+  width: 46%;
+  height: 46%;
+  border-radius: 50%;
+  background: rgba(60, 20, 10, 0.5);
+}
+.g-wave.wreck { background: rgba(255, 138, 138, 0.55); }
+.g-wave.last { animation: g-pop 0.34s var(--spring); }
+
+.g-sea.live .g-wave:not([disabled]) { cursor: pointer; }
+.g-sea.live .g-wave:not([disabled]):active { background: rgba(255, 184, 107, 0.4); }
+
+/* what is still afloat on each side, drawn to length: the one number that
+   says how the hunt is going without saying where anything is */
+.g-fleet {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 8px;
+}
+
+.g-hull {
+  display: block;
+  width: calc(var(--len) * 7px);
+  height: 6px;
+  border-radius: 3px;
+  background: var(--pc);
+  transition: opacity 0.2s var(--ease);
+}
+
+.g-hull.p1 { --pc: var(--pink); }
+.g-hull.p2 { --pc: var(--sky); }
+.g-hull.down { background: rgba(255, 255, 255, 0.16); }
+
+.g-lay {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
 /* ---- mangala
    Sized to the same 320px box Connect Four already proved on a phone: two
    treasuries at the ends, six holes between them, and the row you can touch

@@ -261,6 +261,7 @@
     rps: { emoji: '✊', nameKey: 'gameRps', descKey: 'gameRpsDesc' },
     closest: { emoji: '🎯', nameKey: 'gameClosest', descKey: 'gameClosestDesc' },
     mangala: { emoji: '🌰', nameKey: 'gameMangala', descKey: 'gameMangalaDesc' },
+    battle: { emoji: '🚢', nameKey: 'gameBattle', descKey: 'gameBattleDesc' },
     truths: { emoji: '🤥', nameKey: 'gameTruths', descKey: 'gameTruthsDesc' },
   };
   const C4_COLS = 7;
@@ -2274,13 +2275,20 @@
        the round is done, and choosing again is what starts the next one — so
        an open reveal is an invitation, not a wait. */
     const together = kind === 'rps' || kind === 'closest';
-    const waitingOnMe = together && (!!s.reveal || !s.chosen?.[playSeat]);
-    const myTurn = playSeat >= 0 && !s.over && (together ? waitingOnMe : s.turn === playSeat);
+    /* Battleship has a turn, but not while the fleets are going down — there
+       you are both busy, and you are finished when you say you are. */
+    const laying = kind === 'battle' && s.phase === 'placing';
+    const waitingOnMe = together
+      ? !!s.reveal || !s.chosen?.[playSeat]
+      : laying && !s.ready?.[playSeat];
+    const myTurn = playSeat >= 0 && !s.over
+      && (together || laying ? waitingOnMe : s.turn === playSeat);
     if (together) rpsKey = `${card.id}:${s.round}:${(s.history || []).length}`;
 
     const seatChip = (i) => {
       const p = seats[i];
-      const live = !s.over && (together ? !s.chosen?.[i] && !s.reveal : s.turn === i);
+      const live = !s.over
+        && (together ? !s.chosen?.[i] && !s.reveal : laying ? !s.ready?.[i] : s.turn === i);
       if (!p) {
         return `<span class="g-seat empty ${live ? 'live' : ''}">
           <span class="g-disc p${i + 1}"></span>${esc(t('gameFreeSeat'))}</span>`;
@@ -2304,6 +2312,10 @@
       status = s.reveal.winner === 'draw'
         ? t(tie)
         : t(took, { name: seats[s.reveal.winner]?.name || '?' });
+    } else if (laying) {
+      status = myTurn ? t('gameBattleLay') : t('gameBattleWait');
+    } else if (kind === 'battle' && s.sank > 0 && myTurn) {
+      status = t('gameBattleSank', { n: s.sank }); // outranks "your turn" — you earned it
     } else if (myTurn && mySeat < 0) {
       status = t('gameSitDown'); // your move is what puts you in the chair
     } else if (myTurn) {
@@ -2337,12 +2349,18 @@
               ? t('gameClosestAt', { n: Math.min(s.at + 1, s.total), of: s.total })
               : kind === 'mangala'
                 ? t('gameMangalaStones', { a: s.pits[6], b: s.pits[13] })
-                : '';
+                : kind === 'battle' && s.phase === 'firing'
+                  ? t('gameBattleLeft', {
+                      a: s.fleets[0].length - s.sunk[0].length,
+                      b: s.fleets[1].length - s.sunk[1].length,
+                    })
+                  : '';
 
     const boards = {
       xox: xoxBoard, connect4: c4Board, reversi: reversiBoard, dots: dotsBoard,
       hangman: hangmanBoard, code: codeBoard, chain: chainBoard, rps: rpsBoard,
-      closest: closestBoard, mangala: mangalaBoard, truths: truthsBoard,
+      closest: closestBoard, mangala: mangalaBoard, battle: battleBoard,
+      truths: truthsBoard,
     };
 
     /** the tick, the cheer and the coins — the same whether we drew or patched */
@@ -2541,6 +2559,92 @@
           ${s.flipped?.includes(i) ? 'flip' : ''}" data-at="${i}" ${legal.has(i) ? '' : 'disabled'}>
           ${v ? `<span class="g-disc p${v}"></span>` : ''}
         </button>`).join('')}
+    </div>`;
+  }
+
+  /**
+   * Battleship, from your chair. Two seas will not both fit on a card at a
+   * size you can aim at, so only one of them is ever full size: the one
+   * where the next thing happens. While the fleets go down that is your own
+   * sea; once the shooting starts it is theirs, and yours shrinks to a
+   * corner where you can still see what has been done to it.
+   */
+  function battleBoard(s, mySeat, myTurn, animate) {
+    const seat = mySeat >= 0 ? mySeat : 0; // a spectator watches over seat 0's shoulder
+    const foe = seat === 0 ? 1 : 0;
+    const N = window.CTGames?.BT_N || 7;
+    const laying = s.phase === 'placing';
+
+    /** every cell any of these ships sits on — a ship with no cells is one
+        the server would not tell us about, and contributes nothing */
+    const hulls = (fleet) => {
+      const on = new Set();
+      for (const sh of fleet || []) for (const i of sh.cells || []) on.add(i);
+      return on;
+    };
+    const wrecks = (fleet, sunk) => {
+      const on = new Set();
+      for (const k of sunk || []) for (const i of fleet?.[k]?.cells || []) on.add(i);
+      return on;
+    };
+
+    const sea = ({ ships, sunk, shots, live, small, mark }) => `
+      <div class="g-sea ${small ? 'small' : ''} ${live ? 'live' : ''}"
+        style="--n:${N}">
+        ${Array.from({ length: N * N }, (_, i) => {
+          const shot = shots?.[i] || 0;
+          const cls = [
+            'g-wave', ships.has(i) ? 'ship' : '', sunk.has(i) ? 'wreck' : '',
+            shot === 2 ? 'hit' : shot === 1 ? 'miss' : '',
+            animate && mark && i === s.last ? 'last' : '',
+          ].filter(Boolean).join(' ');
+          return live
+            ? `<button class="${cls}" data-cell="${i}" ${shot ? 'disabled' : ''}></button>`
+            : `<span class="${cls}"></span>`;
+        }).join('')}
+      </div>`;
+
+    /* What is still afloat, drawn to length. It is the one number that says
+       how the hunt is going without giving away where anything is. */
+    const fleet = (side) => `<div class="g-fleet">
+      ${(s.fleets?.[side] || []).map((sh, k) => `<i class="g-hull p${side + 1}
+        ${s.sunk?.[side]?.includes(k) ? 'down' : ''}" style="--len:${sh.len}"></i>`).join('')}
+    </div>`;
+
+    if (laying) {
+      const set = !!s.ready?.[seat];
+      return `<div class="g-battle">
+        ${sea({
+          ships: hulls(s.fleets?.[seat]), sunk: new Set(), shots: null,
+          live: false, small: false, mark: false,
+        })}
+        ${fleet(seat)}
+        ${mySeat < 0
+          ? ''
+          : set
+            ? `<p class="sub-label">${esc(t('gameBattleWait'))}</p>`
+            : `<div class="g-lay">
+                <button class="btn btn-ghost btn-sm js-btshuffle">${esc(t('gameBattleShuffle'))}</button>
+                <button class="btn btn-primary btn-sm js-btready">${esc(t('gameBattleReady'))}</button>
+              </div>`}
+      </div>`;
+    }
+
+    return `<div class="g-battle">
+      <p class="sub-label g-seaname">${esc(t('gameBattleTheirs', {
+        name: (s.players || [])[foe]?.name || '',
+      }))}</p>
+      ${sea({
+        ships: new Set(), sunk: hulls(s.fleets?.[foe]),
+        shots: s.shots?.[seat], live: myTurn, small: false, mark: s.turn !== seat,
+      })}
+      ${fleet(foe)}
+      <p class="sub-label g-seaname">${esc(t('gameBattleMine'))}</p>
+      ${sea({
+        ships: hulls(s.fleets?.[seat]), sunk: wrecks(s.fleets?.[seat], s.sunk?.[seat]),
+        shots: s.shots?.[foe], live: false, small: true, mark: s.turn === seat,
+      })}
+      ${fleet(seat)}
     </div>`;
   }
 
@@ -2837,6 +2941,7 @@
   const AGAIN_MSG = {
     dots: 'gameAgain',
     mangala: 'gameMangalaAgain',
+    battle: 'gameBattleAgain',
     reversi: 'gameReversiPass',
     hangman: 'gameHangmanGo',
     code: 'gameCodeGo',
@@ -3086,6 +3191,46 @@
     return { move: { pit: pick.from }, tip: MANGALA_TIP[pick.kind] };
   }
 
+  /* Battleship plays itself the way Reversi does, because a hand-written
+     script would have to know where the fleets landed and they are dealt at
+     random. Both sides lay out, then whoever is firing hunts: finish off a
+     ship that is already wounded, otherwise take a square that could still
+     hold one. The tips come off what actually happened rather than off a
+     move number, so they stay true however the deal came out. */
+  function battleDemoStep(state) {
+    const G = window.CTGames;
+    if (!G) return null;
+    if (state.phase === 'placing') {
+      const seat = state.ready[0] ? 1 : 0;
+      return { seat, move: { ready: true }, tip: seat === 0 ? 'demoBattleLay' : undefined };
+    }
+    const seat = state.turn;
+    const foe = seat === 0 ? 1 : 0;
+    const shots = state.shots[seat];
+    const N = G.BT_N;
+    // a hit with water still round it is a ship half found — finish it
+    const wounded = [];
+    for (let i = 0; i < N * N; i++) {
+      if (shots[i] !== 2) continue;
+      for (const [dr, dc] of [[0, 1], [0, -1], [1, 0], [-1, 0]]) {
+        const r = Math.floor(i / N) + dr;
+        const c = (i % N) + dc;
+        if (r < 0 || r >= N || c < 0 || c >= N) continue;
+        if (!shots[r * N + c]) wounded.push(r * N + c);
+      }
+    }
+    const open = [];
+    for (let i = 0; i < N * N; i++) if (!shots[i]) open.push(i);
+    const cell = wounded.length ? wounded[0] : open[Math.floor(open.length / 3)];
+    if (cell === undefined) return null;
+    const hit = state.fleets[foe].some((sh) => sh.cells.includes(cell));
+    return {
+      seat,
+      move: { cell },
+      tip: hit ? 'demoBattleHit' : 'demoBattleMiss',
+    };
+  }
+
   const DEMOS = {
     xox: {
       speed: 950,
@@ -3142,6 +3287,7 @@
       ]),
     },
     mangala: { speed: 620, live: true, steps: mangalaDemoStep },
+    battle: { speed: 520, live: true, steps: battleDemoStep },
     closest: {
       /* Three questions played out end to end: both write a number, the
          answer lands, the nearer one takes it, and the round is decided on
@@ -3192,6 +3338,7 @@
     rps: 'demoHowRps',
     closest: 'demoHowClosest',
     mangala: 'demoHowMangala',
+    battle: 'demoHowBattle',
     truths: 'demoHowTruths',
   };
 
@@ -3200,6 +3347,7 @@
   const DEMO_AGAIN = {
     dots: 'demoBox',
     mangala: 'demoMangalaAgain',
+    battle: 'demoBattleHit',
     reversi: 'demoRvPass',
     hangman: 'demoHangGo',
     code: 'demoCodeGo',
@@ -3263,7 +3411,8 @@
     const boards = {
       xox: xoxBoard, connect4: c4Board, reversi: reversiBoard, dots: dotsBoard,
       hangman: hangmanBoard, code: codeBoard, chain: chainBoard, rps: rpsBoard,
-      closest: closestBoard, mangala: mangalaBoard, truths: truthsBoard,
+      closest: closestBoard, mangala: mangalaBoard, battle: battleBoard,
+      truths: truthsBoard,
     };
     const seatsEl = $('.demo-seats', box);
     const boardEl = $('.demo-board', box);
@@ -3373,7 +3522,7 @@
                   a: Math.max(a, bx),
                   b: Math.min(a, bx),
                   word: state.over.word || '',
-                  n: state.over.tries ?? state.over.length ?? state.wrong ?? 0,
+                  n: state.over.tries ?? state.over.length ?? state.over.left ?? state.wrong ?? 0,
                 }),
               });
         } else if (step.tip) {
@@ -3491,6 +3640,13 @@
     if (kind === 'dots') {
       $$('.g-edge:not([disabled])', body).forEach(
         (b) => (b.onclick = () => move({ dir: b.dataset.dir, i: Number(b.dataset.i) }))
+      );
+    }
+    if (kind === 'battle') {
+      $('.js-btshuffle', body)?.addEventListener('click', () => move({ shuffle: true }));
+      $('.js-btready', body)?.addEventListener('click', () => move({ ready: true }));
+      $$('.g-sea.live .g-wave:not([disabled])', body).forEach(
+        (b) => (b.onclick = () => move({ cell: Number(b.dataset.cell) }))
       );
     }
     if (kind === 'mangala') {
