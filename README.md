@@ -97,12 +97,17 @@ Lokalde veriler `./data/` klasörüne yazılır.
 - **Sunucu:** Node.js + Express + WebSocket (`ws`)
 - **Veritabanı:** SQLite (`better-sqlite3`), tek dosya, WAL modu
 - **İstemci:** Bağımlılıksız vanilla JS — build adımı yok
-- **Kelime Zinciri'nin sözlüğü** (`words.js`) de aynı sebeple `public/` dışında:
-  bir kelimenin geçip geçmediğine sunucu karar veriyor. 947 gündelik Türkçe
-  kelimeden oluşan bir liste — TDK'nın tamamı değil, ikinizin de öngörebileceği
-  kadar bir zorluk. Süreli modda sayacı da sunucu tutuyor: bitiş anı ikinizin
-  ekranında aynı, ve karşı taraf uygulamayı kapatıp gitse bile süre gerçekten
-  doluyor
+- **Kelime Zinciri'nin sözlüğü** (`words.txt`, `words.js` ile okunuyor) aynı
+  sebeple `public/` dışında: bir kelimenin geçip geçmediğine sunucu karar
+  veriyor ve 60 bin kelimeyi tarayıcıya göndermenin bir anlamı yok. İçinde
+  **61.684 kelime** var — TDK madde başlarından derlenmiş iki açık listenin
+  birleşimi (şapkalılar düz yazımına indirgendi: *rüzgâr → RÜZGAR*), üstüne
+  sözlüklerin atladığı ama herkesin oynadığı **özel isimler**: 81 il, tanınmış
+  ilçe ve şehirler, ülkeler ve yaygın Türkçe adlar. *Not: kaynak depoların
+  hiçbiri lisans belirtmiyor; gerekirse `words.txt` koda dokunmadan başka bir
+  listeyle değiştirilebilir.* Süreli modda sayacı da sunucu tutuyor: bitiş anı
+  ikinizin ekranında aynı, ve karşı taraf uygulamayı kapatıp gitse bile süre
+  gerçekten doluyor
 - **En Yakın'ın soru havuzu** (`questions.js`) bilerek `public/` dışında duruyor:
   yalnızca `public/` sunuluyor, dolayısıyla cevaplar hiçbir zaman tarayıcıya
   inmiyor. Sunucu her tura 111 sorudan 10'unu tekrarsız dağıtıyor, karta yalnız
