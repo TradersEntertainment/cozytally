@@ -2590,8 +2590,13 @@
               ${chosen[i] ? '✅' : '✍️'} ${esc(seats[i]?.name || t('gameFreeSeat'))}
             </span>`).join('')}</div>`}
 
-      <div class="g-cpips">${pips(0)}</div>
-      <div class="g-cpips">${pips(1)}</div>
+      ${/* one row of lights each, in that person's colour, so you can see the
+            round going one way or the other without waiting for the end */ ''}
+      ${[0, 1].map((i) => `<div class="g-cpips p${i + 1}">
+        <span class="g-cwho">${esc(seats[i]?.avatar || (i ? '🔵' : '🔴'))}</span>
+        ${pips(i)}
+        <b>${s.wins?.[i] ?? 0}</b>
+      </div>`).join('')}
 
       ${mySeat < 0 || s.over
         ? ''

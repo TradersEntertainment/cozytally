@@ -111,7 +111,7 @@ Lokalde veriler `./data/` klasörüne yazılır.
   gerçekten doluyor
 - **En Yakın'ın soru havuzu** (`questions.js`) bilerek `public/` dışında duruyor:
   yalnızca `public/` sunuluyor, dolayısıyla cevaplar hiçbir zaman tarayıcıya
-  inmiyor. Sunucu her tura 111 sorudan 10'unu tekrarsız dağıtıyor, karta yalnız
+  inmiyor. Sunucu her tura 428 sorudan 10'unu tekrarsız dağıtıyor, karta yalnız
   soru metni gidiyor, sayı ikiniz de yazana kadar sunucuda kalıyor. Cevaplar
   yuvarlanmış yaklaşık değerler — oyun kimin tam bildiği değil, kimin daha yakın
   olduğu üzerine

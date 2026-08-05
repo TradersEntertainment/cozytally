@@ -2813,17 +2813,28 @@ body.reordering {
 .g-waiter.in { color: var(--ink-2); background: rgba(139, 233, 201, 0.14); }
 
 /* one dot per question, filled in as they are taken */
-.g-cpips { display: flex; gap: 4px; }
+.g-cpips {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+
+.g-cwho { font-size: var(--t-caption); margin-right: 2px; }
+.g-cpips b { font-size: var(--t-caption); margin-left: 4px; min-width: 1ch; }
 
 .g-cpip {
   width: 9px;
   height: 9px;
   border-radius: 50%;
   background: rgba(255, 255, 255, 0.12);
+  transition: background 0.25s ease, box-shadow 0.25s ease;
 }
 
-.g-cpips:first-of-type .g-cpip.on { background: var(--pink); }
-.g-cpips:last-of-type .g-cpip.on { background: var(--sky); }
+/* Which row is whose has to come from the row's own class: :first-of-type
+   counts every div in the card, and the answer and the guess box are divs
+   too, so it never once landed on a row of lights. */
+.g-cpips.p1 .g-cpip.on { background: var(--pink); box-shadow: 0 0 6px var(--pink); }
+.g-cpips.p2 .g-cpip.on { background: var(--sky); box-shadow: 0 0 6px var(--sky); }
 .g-cpip.tie { background: rgba(255, 255, 255, 0.4); }
 
 /* ---- two truths, one lie */
