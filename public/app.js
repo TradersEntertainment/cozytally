@@ -221,6 +221,11 @@
   const roomCode = location.pathname.startsWith('/r/')
     ? decodeURIComponent(location.pathname.slice(3)).toLowerCase()
     : null;
+  /* An invite link. Rooms are no longer opened by knowing their name — this is
+     the thing that actually lets somebody in. */
+  const inviteToken = location.pathname.startsWith('/j/')
+    ? decodeURIComponent(location.pathname.slice(3))
+    : null;
 
   let ws = null;
   let room = null;
@@ -1253,6 +1258,47 @@
     ).join('');
   }
 
+  /** What this browser is, as far as any room is concerned. */
+  const meBody = () => ({
+    cid: myCid,
+    name: localStorage.getItem('ct:name') || '',
+    avatar: localStorage.getItem('ct:avatar') || '🐻',
+  });
+
+  /* Opening an invite. The token is spent here rather than by the server on
+     the way in, because getting in means being written down, and only the
+     browser knows which device and which account is asking. */
+  async function acceptInvite() {
+    $('#view-landing').hidden = false;
+    renderAccountBtn();
+    try {
+      const data = await api('/api/invites/' + encodeURIComponent(inviteToken) + '/accept', {
+        method: 'POST',
+        body: { me: meBody() },
+      });
+      rememberRoom(data.code, data.name);
+      location.replace('/r/' + encodeURIComponent(data.code));
+    } catch {
+      shutOut();
+    }
+  }
+
+  /* One screen for every way a door can be closed — the invite ran out, it was
+     called back, the room is not yours, the room is not there. The server
+     answers all four the same way on purpose, so this must too, or the screen
+     hands back the very thing the server refuses to say. */
+  function shutOut() {
+    $('#view-landing').hidden = false;
+    $('#view-room').hidden = true;
+    const box = openModal(`
+      <h2>${esc(t('noEntryTitle'))} 🔒</h2>
+      <p class="tour-body">${esc(t('noEntryBody'))}</p>
+      <div class="modal-actions">
+        <button class="btn btn-primary js-home">${esc(t('noEntryHome'))}</button>
+      </div>`);
+    $('.js-home', box).onclick = () => location.replace('/');
+  }
+
   function initLanding() {
     $('#view-landing').hidden = false;
     renderAccountBtn();
@@ -1266,8 +1312,13 @@
       const name = $('#create-name').value.trim() || 'CozyTally';
       const res = await fetch('/api/rooms', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name }),
+        headers: {
+          'Content-Type': 'application/json',
+          ...(auth?.token ? { Authorization: 'Bearer ' + auth.token } : {}),
+        },
+        // whoever makes a room is its first member, and being first is what
+        // lets them show somebody else the door later
+        body: JSON.stringify({ name, me: meBody() }),
       });
       if (!res.ok) return;
       const data = await res.json();
@@ -1279,7 +1330,10 @@
       e.preventDefault();
       const code = $('#join-code').value.trim().toLowerCase();
       if (!code) return;
-      const res = await fetch('/api/rooms/' + encodeURIComponent(code));
+      const res = await fetch(
+        '/api/rooms/' + encodeURIComponent(code) + '?cid=' + encodeURIComponent(myCid),
+        { headers: auth?.token ? { Authorization: 'Bearer ' + auth.token } : {} }
+      );
       if (res.ok) {
         location.href = '/r/' + encodeURIComponent(code);
       } else {
@@ -1401,9 +1455,7 @@
         return;
 
       case 'error':
-        if (msg.code === 'room-not-found') {
-          location.href = '/';
-        }
+        if (msg.code === 'no-entry') shutOut();
         return;
 
       case 'room': {
@@ -5428,6 +5480,17 @@
 
   // ------------------------------------------------------------ room init
   async function initRoom() {
+    /* Knock before asking their name. The socket is still the door that
+       matters, but somebody who followed a link that leads nowhere should be
+       told that, not handed a form asking who they would like to be first. */
+    try {
+      await api('/api/rooms/' + encodeURIComponent(roomCode) + '?cid=' + encodeURIComponent(myCid));
+    } catch (err) {
+      if (err.code === 'no-entry') return shutOut();
+      // anything else — a flaky network, a server restart — is not a refusal,
+      // and the socket will say so properly in a moment
+    }
+
     $('#view-room').hidden = false;
 
     identity = await ensureIdentity();
@@ -5492,13 +5555,32 @@
     acctBtn.onclick = () => openAccountModal();
     paintAcct();
 
+    /* This used to copy the room's address, back when the address was the key.
+       Now it asks for a key: a fresh invite, good for a month, that can be
+       called back if it ends up somewhere it should not be. */
     $('#copy-link').onclick = async () => {
+      const btn = $('#copy-link');
+      btn.disabled = true;
       try {
-        await navigator.clipboard.writeText(location.origin + '/r/' + encodeURIComponent(room.code));
-        toast(t('linkCopied'));
+        const { token } = await api('/api/rooms/' + encodeURIComponent(room.code) + '/invite', {
+          method: 'POST',
+          body: { me: meBody() },
+        });
+        const url = location.origin + '/j/' + encodeURIComponent(token);
+        try {
+          if (navigator.share) await navigator.share({ title: room.name, url });
+          else {
+            await navigator.clipboard.writeText(url);
+            toast(t('inviteCopied'));
+          }
+        } catch (err) {
+          // a share sheet the person waved away is not a failure
+          if (err?.name !== 'AbortError') prompt('', url);
+        }
       } catch {
-        prompt('', location.origin + '/r/' + encodeURIComponent(room.code));
+        toast(t('errNetwork'));
       }
+      btn.disabled = false;
     };
 
     $('#rename-btn').onclick = () => {
@@ -5564,6 +5646,7 @@
   initTouchGlow();
   trackViewport();
   applyI18n();
-  if (roomCode) initRoom();
+  if (inviteToken) acceptInvite();
+  else if (roomCode) initRoom();
   else initLanding();
 })();

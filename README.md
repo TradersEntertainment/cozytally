@@ -24,6 +24,24 @@ en üstüne gelir.
 
 **Hazır paketler:** Tek tıkla birden fazla kart kuran şablonlar — 🏖️ *Tatil planı* (geri sayım + bütçe kumbarası + hazırlık listesi), 📦 *Ev taşınma*, 💪 *Sağlıklı yaşam*.
 
+**Odaya kimler girer:** Bir odaya **davet bağıyla** girilir. Odanın içindeki 🔗 düğmesi
+her basışta yeni bir bağ üretir (30 gün geçerli, istediğin an geri alınabilir); onu
+karşı tarafa yollarsın, o açar, içeri girer ve odanın üyesi olur. Kişi sayısı sınırlı
+değil — iki kişilik de olur, üç kişilik de, bir arkadaş grubu da.
+
+Oda kodu (`luna-mocha-72`) **artık bir anahtar değil, sadece bir isim**: kodu bilmek
+içeri girmeye yetmez, çünkü kodların tamamı 24 × 23 × 90 = 49.680 ihtimal ve bu, herkesin
+bir odası olduğunda tek tek denenip başkasının sohbetine, fotoğraflarına ve parasına
+ulaşılabileceği anlamına gelirdi. Sunucu "böyle bir oda yok" ile "bu oda senin değil"
+sorularına **aynı cevabı** verir, yoksa cevabın kendisi bir tarama aracı olurdu. Odayı
+kuran, sonradan birini çıkarabilir; biri çıkarıldığında o güne kadar dağıtılmış bütün
+davetler de geçersiz olur.
+
+> Bu değişiklikten önce kurulmuş odalar **30 gün** boyunca eskisi gibi kodla da
+> açılabilir; o süre içinde odaya giren herkes üye olarak yazılır. Bu pencere, sunucunun
+> kayıtlarında hiç görünmemiş bir cihazın (yalnızca kartlara bakmış, bildirim açmamış bir
+> tarayıcının) kapı dışında kalmaması için var.
+
 **Hesap (isteğe bağlı):** Kullanıcı adı + şifre ile kayıt olursan odaların hesabına bağlanır ve
 telefonda da bilgisayarda da aynı yerden devam edersin. Hesapsız da çalışmaya devam eder —
 o zaman odalar sadece o cihazda durur. Hesabı **odanın içinden** de açabilirsin (üstteki 👤).

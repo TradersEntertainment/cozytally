@@ -81,6 +81,34 @@ db.exec(`
     seen_at   INTEGER NOT NULL,
     PRIMARY KEY (room_code, person)
   );
+  /* Who is allowed in a room. Until now the answer was "whoever knows the
+     code", which was true enough when the only two people who knew it were
+     the two people in it. Once every couple has a room, every code that works
+     is a stranger's relationship, and there are only 24 x 23 x 90 of them.
+
+     The person column is not a new kind of identity — it is the same
+     userId-or-cid key the rest of the app uses, so signing in and merging a
+     guest device carries membership along with everything else. */
+  CREATE TABLE IF NOT EXISTS room_members (
+    room_code TEXT NOT NULL REFERENCES rooms(code) ON DELETE CASCADE,
+    person    TEXT NOT NULL,
+    name      TEXT NOT NULL DEFAULT '',
+    avatar    TEXT NOT NULL DEFAULT '🐻',
+    joined_at INTEGER NOT NULL,
+    PRIMARY KEY (room_code, person)
+  );
+  /* An invite is the room's real key; the code is just its name. Unlimited
+     uses on purpose — some rooms are a couple, some are a friend group, and
+     the app has no business deciding which. */
+  CREATE TABLE IF NOT EXISTS room_invites (
+    token      TEXT PRIMARY KEY,
+    room_code  TEXT NOT NULL REFERENCES rooms(code) ON DELETE CASCADE,
+    made_by    TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    expires_at INTEGER NOT NULL,
+    revoked    INTEGER NOT NULL DEFAULT 0
+  );
+  CREATE INDEX IF NOT EXISTS idx_invites_room ON room_invites(room_code);
   CREATE TABLE IF NOT EXISTS schema_meta (k TEXT PRIMARY KEY, v TEXT);
   CREATE TABLE IF NOT EXISTS users (
     id         TEXT PRIMARY KEY,
@@ -115,6 +143,14 @@ if (!db.prepare('PRAGMA table_info(push_subs)').all().some((c) => c.name === 'la
 // the device id, which is all we ever knew about them.
 if (!db.prepare('PRAGMA table_info(messages)').all().some((c) => c.name === 'user_id')) {
   db.exec('ALTER TABLE messages ADD COLUMN user_id TEXT');
+}
+
+/* Rooms made before there was such a thing as membership stay open for a
+   while, because the people in them are spread across devices this server
+   never wrote down, and locking the door on a partner's laptop would be a
+   worse bug than the one being fixed. New rooms are born locked (0). */
+if (!db.prepare('PRAGMA table_info(rooms)').all().some((c) => c.name === 'open_until')) {
+  db.exec('ALTER TABLE rooms ADD COLUMN open_until INTEGER NOT NULL DEFAULT 0');
 }
 
 /* ------------------------------------------------------------------
@@ -268,6 +304,30 @@ fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 const q = {
   getRoom: db.prepare('SELECT * FROM rooms WHERE code = ?'),
   createRoom: db.prepare('INSERT INTO rooms (code, name, created_at, last_active) VALUES (?, ?, ?, ?)'),
+
+  addMember: db.prepare(
+    `INSERT INTO room_members (room_code, person, name, avatar, joined_at) VALUES (?, ?, ?, ?, ?)
+     ON CONFLICT(room_code, person) DO UPDATE SET name = excluded.name, avatar = excluded.avatar`
+  ),
+  isMember: db.prepare('SELECT 1 FROM room_members WHERE room_code = ? AND person = ?'),
+  roomMembers: db.prepare(
+    'SELECT person, name, avatar, joined_at FROM room_members WHERE room_code = ? ORDER BY joined_at'
+  ),
+  dropMember: db.prepare('DELETE FROM room_members WHERE room_code = ? AND person = ?'),
+  memberCount: db.prepare('SELECT COUNT(*) AS n FROM room_members WHERE room_code = ?'),
+  lockRoom: db.prepare('UPDATE rooms SET open_until = 0 WHERE code = ?'),
+  openRoomUntil: db.prepare('UPDATE rooms SET open_until = ? WHERE code = ?'),
+
+  makeInvite: db.prepare(
+    `INSERT INTO room_invites (token, room_code, made_by, created_at, expires_at)
+     VALUES (?, ?, ?, ?, ?)`
+  ),
+  getInvite: db.prepare('SELECT * FROM room_invites WHERE token = ?'),
+  roomInvites: db.prepare(
+    'SELECT token, made_by, created_at, expires_at FROM room_invites WHERE room_code = ? AND revoked = 0 AND expires_at > ? ORDER BY created_at DESC'
+  ),
+  revokeInvite: db.prepare('UPDATE room_invites SET revoked = 1 WHERE token = ? AND room_code = ?'),
+  revokeRoomInvites: db.prepare('UPDATE room_invites SET revoked = 1 WHERE room_code = ?'),
   renameRoom: db.prepare('UPDATE rooms SET name = ?, last_active = ? WHERE code = ?'),
   touchRoom: db.prepare('UPDATE rooms SET last_active = ? WHERE code = ?'),
   roomCards: db.prepare('SELECT * FROM cards WHERE room_code = ? ORDER BY sort, created_at'),
@@ -404,6 +464,17 @@ const store = {
     })),
 
   userRooms: (userId) => q.userRooms.all(userId).map((r) => ({ ...r, name: dec(r.name, '???') })),
+
+  // names go in encrypted here for the same reason they do everywhere else
+  addMember: (code, person, name, avatar, at) =>
+    q.addMember.run(code, person, enc(name || ''), avatar || '🐻', at),
+  roomMembers: (code) =>
+    q.roomMembers.all(code).map((r) => ({
+      person: r.person,
+      name: dec(r.name, '???'),
+      avatar: r.avatar,
+      at: r.joined_at,
+    })),
 };
 
 /* Piggy banks predate per-person totals, so their contributions are empty.
@@ -527,6 +598,61 @@ const backfillShares = db.transaction(() => {
   }
   return touched;
 });
+
+/* Rooms that predate membership already know who is in them — it is written
+   down in four places, none of which were put there for this. Take the union:
+   anyone who has read the chat, anyone whose account saved the room, anyone
+   who turned notifications on, and anyone who ever said anything.
+
+   The window on top of that is not belt-and-braces, it is the honest
+   admission that those four places miss people: a partner who only ever
+   opened cards, on a browser that never subscribed to anything, is invisible
+   here and would find the door locked. While the window is open the room is
+   exactly as reachable as it has always been, so the only cost of giving it a
+   month is that the fix lands a month later. */
+const MEMBER_BACKFILL_KEY = 'room_members_v1';
+const GRACE = 30 * 24 * 60 * 60 * 1000;
+
+function backfillMembers(now) {
+  const rows = db
+    .prepare(
+      `SELECT room_code, person, name, avatar FROM chat_seen
+       UNION
+       SELECT room_code, user_id AS person, '' AS name, '🐻' AS avatar FROM user_rooms
+       UNION
+       SELECT room_code, cid AS person, '' AS name, '🐻' AS avatar FROM push_subs WHERE cid IS NOT NULL
+       UNION
+       SELECT room_code, COALESCE(user_id, cid) AS person, author AS name, avatar FROM messages
+        WHERE COALESCE(user_id, cid) IS NOT NULL`
+    )
+    .all();
+  const add = db.prepare(
+    `INSERT INTO room_members (room_code, person, name, avatar, joined_at) VALUES (?, ?, ?, ?, ?)
+     ON CONFLICT(room_code, person) DO NOTHING`
+  );
+  let n = 0;
+  db.transaction(() => {
+    for (const r of rows) {
+      if (!r.person || !q.getRoom.get(r.room_code)) continue;
+      // names arrive already encrypted from the tables they were read out of
+      add.run(r.room_code, r.person, r.name || '', r.avatar || '🐻', now);
+      n++;
+    }
+    db.prepare('UPDATE rooms SET open_until = ?').run(now + GRACE);
+  })();
+  return n;
+}
+
+try {
+  if (!q.getMeta.get(MEMBER_BACKFILL_KEY)) {
+    const now = Date.now();
+    const n = backfillMembers(now);
+    q.setMeta.run(MEMBER_BACKFILL_KEY, String(now));
+    console.log(`Wrote down ${n} room membership(s); older rooms stay open for 30 days`);
+  }
+} catch (err) {
+  console.error('member backfill skipped:', err.message);
+}
 
 const SHARE_BACKFILL_KEY = 'money_share_v1';
 try {
@@ -1008,6 +1134,62 @@ function allowCreate(ip) {
   return b.count <= 20;
 }
 
+/* Looking a room up used to be free, which made the whole 49.680-code space a
+   yes/no oracle you could sweep in one pass. */
+const lookupBuckets = new Map();
+function allowLookup(ip) {
+  const now = Date.now();
+  let b = lookupBuckets.get(ip);
+  if (!b || now > b.resetAt) {
+    b = { count: 0, resetAt: now + 10 * 60 * 1000 };
+    lookupBuckets.set(ip, b);
+  }
+  b.count++;
+  return b.count <= 40;
+}
+
+/* Who is asking, over HTTP — the same key the sockets use, so membership
+   survives signing in and the guest-to-account merge that follows it. */
+/* The device is reported alongside the account, not instead of it. Somebody
+   who has been in a room for months as a guest and signs in this morning is
+   still in that room — their account has never been a member of anything yet,
+   and refusing them would make signing in a way to lose your own room. The
+   socket already knew this; the door in front of it has to know it too.
+
+   The cid is nested under `me` on a body because a request body already has a
+   `name` in it and it is the room's, not the person's — the creator of
+   "Tatil fonu" is not called Tatil fonu. */
+function askerOf(req) {
+  const cid = clampStr(req.body?.me?.cid || req.query?.cid, 64);
+  const user = userFromToken(bearer(req));
+  if (user) return { person: user.id, alt: cid, name: user.name, avatar: user.avatar };
+  if (!cid) return null;
+  const me = req.body?.me || {};
+  return {
+    person: cid,
+    alt: '',
+    name: clampStr(me.name, 24) || '',
+    avatar: clampStr(me.avatar, 8) || '🐻',
+  };
+}
+
+/** Whichever of the two the room actually knows, or nothing. */
+function memberAs(code, who) {
+  if (!who) return null;
+  if (isMember(code, who.person)) return who.person;
+  if (who.alt && isMember(code, who.alt)) return who.alt;
+  return null;
+}
+
+/** A room made before membership existed is still open for its grace window. */
+const roomOpen = (room) => (room?.open_until || 0) > Date.now();
+const isMember = (code, person) => !!(person && q.isMember.get(code, person));
+
+/* One answer for "no such room" and "not your room" on purpose. Telling them
+   apart would hand back the oracle this whole change is about — the rate limit
+   only slows a sweep down, it does not make the answer safe to give. */
+const SHUT = { error: 'no-entry' };
+
 app.post('/api/rooms', (req, res) => {
   const ip = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.socket.remoteAddress || '?';
   if (!allowCreate(ip)) return res.status(429).json({ error: 'rate-limited' });
@@ -1015,16 +1197,132 @@ app.post('/api/rooms', (req, res) => {
   const code = newRoomCode();
   const now = Date.now();
   store.createRoom(code, name, now, now);
+  // whoever made it is in it, and being first is what makes them the one who
+  // can show somebody else the door later
+  const who = askerOf(req);
+  if (who) store.addMember(code, who.person, who.name, who.avatar, now);
   res.json({ code, name });
 });
 
 app.get('/api/rooms/:code', (req, res) => {
-  const room = store.getRoom(clampStr(req.params.code, 40).toLowerCase());
-  if (!room) return res.status(404).json({ error: 'not-found' });
+  const ip = clientIp(req);
+  if (!allowLookup(ip)) return res.status(429).json({ error: 'rate-limited' });
+  const code = clampStr(req.params.code, 40).toLowerCase();
+  const room = store.getRoom(code);
+  const who = askerOf(req);
+  if (!room) return res.status(403).json(SHUT);
+  const unclaimed = q.memberCount.get(code).n === 0;
+  if (!memberAs(code, who) && !roomOpen(room) && !unclaimed) {
+    return res.status(403).json(SHUT);
+  }
   res.json({ code: room.code, name: room.name });
 });
 
+// ---------------------------------------------------------- invites
+const INVITE_TTL = 30 * 24 * 60 * 60 * 1000;
+
+/** Every invite route answers the same way to someone who is not in the room. */
+function memberGate(req, res) {
+  const code = clampStr(req.params.code, 40).toLowerCase();
+  const room = store.getRoom(code);
+  const who = askerOf(req);
+  const seat = room && memberAs(code, who);
+  if (!seat) {
+    res.status(403).json(SHUT);
+    return null;
+  }
+  // whichever identity the room knows them by is the one that acts here
+  return { code, room, who: { ...who, person: seat } };
+}
+
+app.post('/api/rooms/:code/invite', (req, res) => {
+  const gate = memberGate(req, res);
+  if (!gate) return;
+  const token = crypto.randomBytes(24).toString('base64url');
+  const now = Date.now();
+  q.makeInvite.run(token, gate.code, gate.who.person, now, now + INVITE_TTL);
+  res.json({ token, expiresAt: now + INVITE_TTL });
+});
+
+app.get('/api/rooms/:code/invites', (req, res) => {
+  const gate = memberGate(req, res);
+  if (!gate) return;
+  res.json({ invites: q.roomInvites.all(gate.code, Date.now()) });
+});
+
+app.post('/api/rooms/:code/invite/:token/revoke', (req, res) => {
+  const gate = memberGate(req, res);
+  if (!gate) return;
+  q.revokeInvite.run(clampStr(req.params.token, 64), gate.code);
+  res.json({ ok: true });
+});
+
+/* Opening an invite is how you get in. It says nothing about the room until it
+   has worked, so a guessed token learns nothing either. */
+app.post('/api/invites/:token/accept', (req, res) => {
+  if (!allowLookup(clientIp(req))) return res.status(429).json({ error: 'rate-limited' });
+  const inv = q.getInvite.get(clampStr(req.params.token, 64));
+  const now = Date.now();
+  if (!inv || inv.revoked || inv.expires_at < now) return res.status(403).json(SHUT);
+  const room = store.getRoom(inv.room_code);
+  if (!room) return res.status(403).json(SHUT);
+  const who = askerOf(req);
+  if (!who) return res.status(400).json({ error: 'who-are-you' });
+  store.addMember(inv.room_code, who.person, who.name, who.avatar, now);
+  res.json({ code: room.code, name: room.name });
+});
+
+// ---------------------------------------------------------- members
+app.get('/api/rooms/:code/members', (req, res) => {
+  const gate = memberGate(req, res);
+  if (!gate) return;
+  const members = store.roomMembers(gate.code);
+  res.json({
+    members,
+    // the first one in is the one who can show somebody else the door
+    owner: members[0]?.person || null,
+    me: gate.who.person,
+    openUntil: gate.room.open_until || 0,
+  });
+});
+
+app.post('/api/rooms/:code/leave', (req, res) => {
+  const gate = memberGate(req, res);
+  if (!gate) return;
+  q.dropMember.run(gate.code, gate.who.person);
+  res.json({ ok: true });
+});
+
+app.post('/api/rooms/:code/remove', (req, res) => {
+  const gate = memberGate(req, res);
+  if (!gate) return;
+  const members = store.roomMembers(gate.code);
+  if (members[0]?.person !== gate.who.person) return res.status(403).json(SHUT);
+  const person = clampStr(req.body?.person, 64);
+  if (!person || person === gate.who.person) return res.status(400).json({ error: 'bad-target' });
+  q.dropMember.run(gate.code, person);
+  // whoever was shown the door must not be able to walk back in on an old link
+  q.revokeRoomInvites.run(gate.code);
+  res.json({ ok: true });
+});
+
+/* Ending the grace window early, for someone who has already gathered everyone
+   and would rather not wait out the fortnight. */
+app.post('/api/rooms/:code/lock', (req, res) => {
+  const gate = memberGate(req, res);
+  if (!gate) return;
+  q.lockRoom.run(gate.code);
+  res.json({ ok: true });
+});
+
 app.get('/r/:code', (_req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
+
+/* An invite link. The token is not spent here — the page loads first and then
+   asks, because accepting needs to know who is asking, and only the browser
+   knows that. */
+app.get('/j/:token', (_req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
@@ -1453,16 +1751,47 @@ function handleMessage(ws, msg) {
   if (msg.t === 'join') {
     const code = clampStr(msg.room, 40).toLowerCase();
     const room = store.getRoom(code);
-    if (!room) return sendTo(ws, { t: 'error', code: 'room-not-found' });
+    if (!room) return sendTo(ws, { t: 'error', code: 'no-entry' });
+
+    /* The real door. Everything else is a courtesy: the browser is told early
+       so it can show a decent screen, but this is the check that matters,
+       because a socket is all anyone needs to read a room.
+
+       Membership follows the same key as identity — an account if there is
+       one, the device otherwise — and the account inherits whatever the
+       device was already allowed, so signing in on the sofa does not lock you
+       out of your own room. A room still inside its grace window lets anyone
+       with the code in and writes them down; that window is how rooms that
+       predate membership find their people. */
+    const cid = clampStr(msg.cid, 64);
+    const account = userFromToken(msg.token);
+    const person = account?.id || cid;
+    const name = account?.name || clampStr(msg.name, 24) || 'misafir';
+    const avatar = account?.avatar || clampStr(msg.avatar, 8) || '🐻';
+    const open = (room.open_until || 0) > now;
+    const memberByDevice = cid && q.isMember.get(code, cid);
+    /* A room nobody belongs to yet takes its first arrival. That covers a room
+       made through the API without saying who was asking, and an old one whose
+       people were never written down anywhere the backfill could read — and it
+       gives nothing away, because a room with no members has nobody's
+       anything in it. */
+    const noOwnerYet = q.memberCount.get(code).n === 0;
+    if (!person) return sendTo(ws, { t: 'error', code: 'no-entry' });
+    if (!q.isMember.get(code, person) && !memberByDevice && !open && !noOwnerYet) {
+      return sendTo(ws, { t: 'error', code: 'no-entry' });
+    }
+    // being here is what records you, whether you arrived by invite, by
+    // account, or through a grace window that is about to close
+    store.addMember(code, person, name, avatar, now);
+    if (account && cid && cid !== person) q.dropMember.run(code, cid);
 
     // Leaving a previous room on the same socket is not supported; clients reconnect.
     // Signed-in members get their account identity and the room saved to
     // their account, so it follows them to every device.
-    const account = userFromToken(msg.token);
     ws.meta.room = code;
-    ws.meta.name = account?.name || clampStr(msg.name, 24) || 'misafir';
-    ws.meta.avatar = account?.avatar || clampStr(msg.avatar, 8) || '🐻';
-    ws.meta.cid = clampStr(msg.cid, 64);
+    ws.meta.name = name;
+    ws.meta.avatar = avatar;
+    ws.meta.cid = cid;
     ws.meta.userId = account?.id || null;
     ws.meta.joined = true;
     if (account) q.linkRoom.run(account.id, code, now);
