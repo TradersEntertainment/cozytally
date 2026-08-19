@@ -1769,15 +1769,43 @@ function handleMessage(ws, msg) {
       } else {
         amount = toInt(msg.amount, -100000000, 100000000, 0);
         if (!amount) return;
-        state.total = Math.max(0, before + amount);
-        state.log = [{ a: amount, by: ws.meta.name, key: who, at: now }, ...(state.log || [])]
-          .slice(0, 20);
 
-        // running per-person share, so the card can show whose money is in there
+        /* Money out with nothing said about it comes off the share of whoever
+           asked. Most of the time it is a correction — you typed the wrong
+           number, and the wrong number was yours — and the rest of the time it
+           is money that went nowhere in particular, which is nobody's business
+           but the person writing it down.
+
+           It stops at your own share. Quietly taking the difference off the
+           other person would be a lie, and quietly writing off less than was
+           asked for would be another; over that, the answer is no and the
+           sheet is where to say who it really came from. That refusal is also
+           what keeps the pot equal to the shares — the old floor at zero here
+           was exactly what used to break it. */
+        const held = Math.max(0, state.by[who]?.net || 0);
+        if (amount < 0 && -amount > held) return;
+
+        state.total = before + amount;
         const mine = (state.by[who] = state.by[who] || { net: 0 });
         mine.name = ws.meta.name;
         mine.avatar = ws.meta.avatar;
         mine.net = (mine.net || 0) + amount;
+
+        /* A spend records whose money it was; so does this, so that the log
+           reads the same either way and never has to say "Rabia" about money
+           that was never hers. */
+        state.log = [
+          {
+            a: amount,
+            by: ws.meta.name,
+            key: who,
+            at: now,
+            ...(amount < 0
+              ? { gave: [{ key: who, name: ws.meta.name, avatar: ws.meta.avatar, amount: -amount }] }
+              : {}),
+          },
+          ...(state.log || []),
+        ].slice(0, 20);
 
         // fold any history that was reconstructed under this person's name
         // into their real entry, so they don't show up twice

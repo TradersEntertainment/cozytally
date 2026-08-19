@@ -3827,6 +3827,8 @@
         <input type="number" inputmode="numeric" class="money-input js-amt" placeholder="${esc(t('amountPh'))}">
         <button class="round-btn plus js-madd">+</button>
         <button class="round-btn minus js-msub">−</button>
+        <button class="round-btn slip js-mspend" title="${esc(t('spendTitle'))}"
+          aria-label="${esc(t('spendTitle'))}">🧾</button>
       </div>
       ${log ? `<div class="money-log">${log}</div>` : ''}`;
 
@@ -3845,19 +3847,28 @@
     }
 
     const amtInput = $('.js-amt', body);
-    const sendAmount = () => {
+    /* Two ways for money to leave, because there are two kinds of leaving.
+       Sometimes it was paid to somebody and the card wants to know what for
+       and out of whose share — that is the sheet. And sometimes it just went:
+       a number typed wrong, a bad month on the market. Making you fill a form
+       in to say that is asking you to invent a story, so `−` asks nothing and
+       takes it off your own share, which is where a mistake of yours lived
+       anyway. */
+    const sendAmount = (sign) => {
       const v = Math.round(Math.abs(Number(amtInput.value)));
       if (!v) return amtInput.focus();
-      send({ t: 'money', id: card.id, amount: v });
+      if (sign < 0) {
+        const held = Math.max(0, card.state.by?.[myKey()]?.net || 0);
+        if (v > held) return toast(t('spendOwnOnly', { n: fmtNum(held) + cur }));
+      }
+      send({ t: 'money', id: card.id, amount: sign * v });
       amtInput.value = '';
     };
-    $('.js-madd', body).onclick = sendAmount;
-    /* Taking money out is no longer the same gesture as putting it in. Money
-       arrives from whoever is holding the phone, but it leaves on behalf of
-       both of you, and which of your shares it comes out of is something only
-       you know — so it is asked. */
-    $('.js-msub', body).onclick = () => openSpend(card, Math.round(Math.abs(Number(amtInput.value))) || 0);
-    amtInput.addEventListener('keydown', (e) => e.key === 'Enter' && sendAmount());
+    $('.js-madd', body).onclick = () => sendAmount(1);
+    $('.js-msub', body).onclick = () => sendAmount(-1);
+    $('.js-mspend', body).onclick = () =>
+      openSpend(card, Math.round(Math.abs(Number(amtInput.value))) || 0);
+    amtInput.addEventListener('keydown', (e) => e.key === 'Enter' && sendAmount(1));
 
     if (opts.verb === 'money+') coinRain(body.closest('.card'));
     if (opts.verb === 'money-') sparklesAt(body.closest('.card'));

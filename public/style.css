@@ -619,12 +619,16 @@ body.away *::after { animation-play-state: paused !important; }
   box-shadow: var(--specular-soft), 0 6px 18px var(--glow-amber);
 }
 
-.round-btn.minus {
+.round-btn.minus,
+.round-btn.slip {
   background: rgba(255, 255, 255, 0.08);
   border: 0.5px solid var(--hairline);
   box-shadow: var(--specular-soft);
   color: var(--ink-2);
 }
+
+/* the receipt is a quieter thing than the money itself */
+.round-btn.slip { font-size: 1.15rem; }
 
 /* inputs — 16px minimum, otherwise iOS zooms the page on focus */
 input[type='text'],
