@@ -3870,6 +3870,46 @@ body.rain-open .hint-bubble { opacity: 0; pointer-events: none; }
   border-radius: var(--r-sm);
 }
 
+/* Changing a password is a thing you do once a year at most, so it stays
+   folded away under the name it belongs to rather than taking up the account
+   screen every time you open it. */
+.pw-box {
+  margin-top: 16px;
+  border-top: 0.5px solid var(--hairline);
+  padding-top: 12px;
+}
+
+.pw-box > summary {
+  cursor: pointer;
+  list-style: none;
+  color: var(--ink-2);
+  font-size: var(--t-callout);
+  padding: 6px 0;
+  user-select: none;
+}
+
+.pw-box > summary::-webkit-details-marker { display: none; }
+
+.pw-box > summary::after {
+  content: '›';
+  float: right;
+  opacity: 0.6;
+  transition: transform 0.18s ease;
+  display: inline-block;
+}
+
+.pw-box[open] > summary::after { transform: rotate(90deg); }
+
+.pw-box > summary:hover { color: var(--ink); }
+
+.pw-box .sub-label { margin: 6px 0 14px; }
+
+.pw-box .js-pw { width: 100%; margin-top: 12px; }
+
+@media (prefers-reduced-motion: reduce) {
+  .pw-box > summary::after { transition: none; }
+}
+
 .lightbox-img {
   max-width: 100%;
   max-height: 72dvh;

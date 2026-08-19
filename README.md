@@ -28,6 +28,16 @@ en üstüne gelir.
 telefonda da bilgisayarda da aynı yerden devam edersin. Hesapsız da çalışmaya devam eder —
 o zaman odalar sadece o cihazda durur. Hesabı **odanın içinden** de açabilirsin (üstteki 👤).
 
+**Şifreni unuttuysan:** e-posta hiç sorulmadığı için gönderilecek bir sıfırlama linki
+yok, şifre de scrypt ile saklandığından kimse eskisini geri okuyamaz. Kurtarma yolu
+elindeki oturum: giriş bir kez yapıldıktan sonra ~13 ay sürüyor ve token tarayıcıda
+durur, yani telefonunda hâlâ girişliysen çıkmış sayılmazsın. Hesap ekranındaki
+**"şifreyi değiştir"** o cihazdan eski şifreyi *sormadan* yenisini koydurur — sorması
+zaten kilidin anahtarını kilidin içinde istemek olurdu. İki kez yazdırılır, çünkü tek
+kutuya düşen bir yazım hatası kimsenin bilmediği bir şifre bırakırdı. Diğer cihazların
+girişli kalır: seni kurtaran şeyi kurtardığı için kapatmak, doğrudan aynı yere geri
+dönmenin yoludur.
+
 **Misafirken yaptıkların kayboluyor mu?** Hayır. Panoda kim ne yaptıysa o kişinin kimliğine
 yazılır, ve hesap açmadan önce o kimlik *cihazın*. Hesap açınca **o cihazın geçmişi
 sorulmadan hesabına geçer** — kumbaradaki payın, "beraber" tikleri, yorumların, oyun

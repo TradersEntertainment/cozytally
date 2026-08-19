@@ -1054,11 +1054,60 @@
         <h2>${esc(t('accountTitle'))}</h2>
         <p class="tour-body">${esc(t('helloUser', { name: auth.user.name }))} <span style="font-size:1.4rem">${esc(auth.user.avatar)}</span></p>
         <p class="sub-label" style="margin-top:10px">@${esc(auth.user.username)}</p>
+        <details class="pw-box">
+          <summary>${esc(t('changePass'))}</summary>
+          <p class="sub-label">${esc(t('changePassWhy'))}</p>
+          <div class="field">
+            <label>${esc(t('newPass'))}</label>
+            <input id="pw-a" type="password" maxlength="100" autocomplete="new-password"
+              placeholder="${esc(t('passwordPh'))}">
+          </div>
+          <div class="field">
+            <label>${esc(t('newPassAgain'))}</label>
+            <input id="pw-b" type="password" maxlength="100" autocomplete="new-password"
+              placeholder="${esc(t('passwordPh'))}">
+          </div>
+          <p class="auth-error" hidden></p>
+          <button class="btn btn-primary js-pw" disabled>${esc(t('savePass'))}</button>
+        </details>
         <div class="modal-actions">
           <button class="btn btn-ghost js-out">${esc(t('signOut'))}</button>
           <button class="btn btn-primary js-close">${esc(t('cancel'))}</button>
         </div>`);
       $('.js-close', box).onclick = closeModal;
+
+      /* Twice, because there is no way back. A typo in the only field would
+         hand you a password nobody knows — including you — and the next screen
+         you would need is the one that does not exist. */
+      {
+        const a = $('#pw-a', box);
+        const b = $('#pw-b', box);
+        const btn = $('.js-pw', box);
+        const err = $('.auth-error', box);
+        const recheck = () => {
+          const short = a.value.length > 0 && a.value.length < 6;
+          const apart = b.value.length > 0 && a.value !== b.value;
+          err.textContent = short ? t('errShortPassword') : apart ? t('errPassMismatch') : '';
+          err.hidden = !short && !apart;
+          btn.disabled = a.value.length < 6 || a.value !== b.value;
+        };
+        [a, b].forEach((el) => {
+          el.addEventListener('input', recheck);
+          el.addEventListener('keydown', (e) => e.key === 'Enter' && !btn.disabled && btn.click());
+        });
+        btn.onclick = async () => {
+          btn.disabled = true;
+          try {
+            await api('/api/auth/password', { method: 'POST', body: { password: a.value } });
+            closeModal();
+            toast(t('passChanged'));
+          } catch (e) {
+            err.textContent = t(e.code === 'short-password' ? 'errShortPassword' : 'errNetwork');
+            err.hidden = false;
+            btn.disabled = false;
+          }
+        };
+      }
       $('.js-out', box).onclick = async () => {
         try { await api('/api/auth/logout', { method: 'POST' }); } catch { /* token already gone */ }
         setAuth(null);

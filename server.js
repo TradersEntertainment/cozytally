@@ -317,6 +317,7 @@ const q = {
   userByName: db.prepare('SELECT * FROM users WHERE username = ?'),
   userById: db.prepare('SELECT * FROM users WHERE id = ?'),
   updateUser: db.prepare('UPDATE users SET name = ?, avatar = ? WHERE id = ?'),
+  updatePass: db.prepare('UPDATE users SET pass = ? WHERE id = ?'),
   createSession: db.prepare(
     'INSERT INTO sessions (token, user_id, created_at, last_seen) VALUES (?, ?, ?, ?)'
   ),
@@ -1102,6 +1103,26 @@ app.post('/api/auth/profile', (req, res) => {
   const avatar = clampStr(req.body?.avatar, 8) || user.avatar;
   q.updateUser.run(name, avatar, user.id);
   res.json({ user: { ...publicUser(user), name, avatar } });
+});
+
+/* There is no email here, so there is no reset link to send — and a scrypt
+   hash cannot be read back, only replaced. What there is instead is a session
+   that lasts about thirteen months: if you are still signed in somewhere, that
+   device has already proved who you are, and asking it for a password you have
+   by definition forgotten would be a lock with no key. So a live session is
+   the credential.
+
+   Other sessions are deliberately left alone. In an app for two people the
+   stale-session risk is imaginary, while the device you are still signed in on
+   is the only thing that saved you — signing yourself out of the others is a
+   good way to end up right back here. */
+app.post('/api/auth/password', (req, res) => {
+  const user = userFromToken(bearer(req));
+  if (!user) return res.status(401).json({ error: 'unauthorized' });
+  const password = String(req.body?.password ?? '');
+  if (password.length < 6) return res.status(400).json({ error: 'short-password' });
+  q.updatePass.run(hashPassword(password), user.id);
+  res.json({ ok: true });
 });
 
 app.post('/api/auth/forget-room', (req, res) => {
