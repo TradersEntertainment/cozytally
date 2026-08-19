@@ -1075,20 +1075,76 @@
           <p class="auth-error" hidden></p>
           <button class="btn btn-primary js-pw" disabled>${esc(t('savePass'))}</button>
         </details>
+        <details class="pw-box danger-box">
+          <summary>${esc(t('deleteAccount'))}</summary>
+          <p class="sub-label">${esc(t('deleteAccountWhy'))}</p>
+          <div class="field">
+            <label>${esc(t('deleteConfirmLabel', { name: auth.user.username }))}</label>
+            <input id="del-name" type="text" maxlength="24" autocomplete="off"
+              spellcheck="false" placeholder="${esc(auth.user.username)}">
+          </div>
+          <p class="auth-error" hidden></p>
+          <button class="btn btn-danger js-del-acct" disabled>${esc(t('deleteAccount'))}</button>
+        </details>
         <div class="modal-actions">
           <button class="btn btn-ghost js-out">${esc(t('signOut'))}</button>
           <button class="btn btn-primary js-close">${esc(t('cancel'))}</button>
         </div>`);
       $('.js-close', box).onclick = closeModal;
 
+      /* The one thing here that cannot be undone, so it asks twice: type your
+         own name, and then say yes to a plain description of what goes. */
+      {
+        const panel = box.querySelector('.danger-box');
+        const nameEl = $('#del-name', panel);
+        const btn = $('.js-del-acct', panel);
+        nameEl.addEventListener('input', () => {
+          btn.disabled = nameEl.value.trim().toLowerCase() !== auth.user.username;
+        });
+        btn.onclick = async () => {
+          const sure = await confirmModal({
+            title: t('deleteAccount'),
+            body: t('deleteAccountConfirm'),
+            yesLabel: t('deleteAccountYes'),
+          });
+          if (!sure) return openAccountModal('profile');
+          try {
+            // stop this phone's notifications before the account that owns
+            // them is gone
+            const reg = swReg || (await navigator.serviceWorker?.getRegistration?.());
+            const sub = await reg?.pushManager?.getSubscription?.();
+            if (sub) {
+              await fetch('/api/push/unsubscribe', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ endpoint: sub.endpoint }),
+              }).catch(() => {});
+              await sub.unsubscribe().catch(() => {});
+            }
+          } catch { /* no notifications to stop */ }
+          try {
+            await api('/api/auth/account', {
+              method: 'DELETE',
+              body: { username: auth.user.username, me: meBody() },
+            });
+          } catch {
+            return toast(t('errNetwork'));
+          }
+          setAuth(null);
+          accountRooms = null;
+          localStorage.removeItem('ct:recent');
+          location.replace('/');
+        };
+      }
+
       /* Twice, because there is no way back. A typo in the only field would
          hand you a password nobody knows — including you — and the next screen
          you would need is the one that does not exist. */
       {
-        const a = $('#pw-a', box);
-        const b = $('#pw-b', box);
-        const btn = $('.js-pw', box);
-        const err = $('.auth-error', box);
+        const panel = box.querySelector('.pw-box:not(.danger-box)');
+        const a = $('#pw-a', panel);
+        const b = $('#pw-b', panel);
+        const btn = $('.js-pw', panel);
+        const err = $('.auth-error', panel);
         const recheck = () => {
           const short = a.value.length > 0 && a.value.length < 6;
           const apart = b.value.length > 0 && a.value !== b.value;
@@ -1484,6 +1540,15 @@
 
       case 'claimed': {
         toast(t('claimDone', { n: msg.n }));
+        return;
+      }
+
+      /* Somebody's name has come off the messages they wrote. The list lives
+         in the browser between loads, so the server hands back a fresh one
+         rather than leaving a name on screen that belongs to nobody. */
+      case 'chat:reload': {
+        chatMsgs = msg.chat || [];
+        renderChat();
         return;
       }
 
@@ -5407,7 +5472,12 @@
         });
         const res = await fetch('/api/push/subscribe', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: {
+            'Content-Type': 'application/json',
+            // so the subscription is filed under the person, not just the
+            // browser — signing in moves your membership to your account
+            ...(auth?.token ? { Authorization: 'Bearer ' + auth.token } : {}),
+          },
           body: JSON.stringify({ room: room.code, cid: myCid, lang, sub: sub.toJSON() }),
         });
         if (!res.ok) throw new Error('subscribe-failed');

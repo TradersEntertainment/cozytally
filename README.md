@@ -56,6 +56,16 @@ kutuya düşen bir yazım hatası kimsenin bilmediği bir şifre bırakırdı. D
 girişli kalır: seni kurtaran şeyi kurtardığı için kapatmak, doğrudan aynı yere geri
 dönmenin yoludur.
 
+**Hesabını silmek:** Hesap ekranındaki *Hesabı sil* ile. Giden şey hesap: girişin,
+oturumların, bütün odalardaki üyeliğin, okundu imlerin, o cihazın bildirimleri.
+**Kalan şey pano**, çünkü o hiçbir zaman tek kişinin değildi. Kumbaradaki payın
+sayısını koruyup adını kaybediyor — silinseydi kasa ile paylar birbirini tutmazdı,
+başkasına devredilseydi ortağın hiç koymadığı parayı koymuş görünürdü; ikisi de
+karşı taraf hakkında yalan olurdu. Yazdıkların da kelimelerini koruyup imzasını
+kaybediyor. Senden başka üyesi kalmayan odalar ise fotoğraflarına kadar tamamen
+siliniyor. Geri alınamadığı için iki kez soruyor: kullanıcı adını yazarsın, sonra
+ne olacağını okuyup onaylarsın.
+
 **Misafirken yaptıkların kayboluyor mu?** Hayır. Panoda kim ne yaptıysa o kişinin kimliğine
 yazılır, ve hesap açmadan önce o kimlik *cihazın*. Hesap açınca **o cihazın geçmişi
 sorulmadan hesabına geçer** — kumbaradaki payın, "beraber" tikleri, yorumların, oyun

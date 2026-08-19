@@ -3910,6 +3910,25 @@ body.rain-open .hint-bubble { opacity: 0; pointer-events: none; }
   .pw-box > summary::after { transition: none; }
 }
 
+/* The only button in the app that destroys something, dressed so that nobody
+   presses it on the way past. */
+.pw-box.danger-box > summary { color: var(--pink); }
+
+.btn-danger {
+  background: rgba(255, 158, 181, 0.16);
+  border: 0.5px solid rgba(255, 158, 181, 0.45);
+  color: var(--pink);
+}
+
+.btn-danger:disabled {
+  opacity: 0.45;
+  border-color: var(--hairline);
+  color: var(--ink-2);
+  background: transparent;
+}
+
+.btn-danger:not(:disabled):hover { background: rgba(255, 158, 181, 0.26); }
+
 .lightbox-img {
   max-width: 100%;
   max-height: 72dvh;

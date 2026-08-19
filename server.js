@@ -149,6 +149,14 @@ if (!db.prepare('PRAGMA table_info(messages)').all().some((c) => c.name === 'use
    while, because the people in them are spread across devices this server
    never wrote down, and locking the door on a partner's laptop would be a
    worse bug than the one being fixed. New rooms are born locked (0). */
+/* Which person a subscription belongs to, as opposed to which browser. Once
+   rooms had members, "is this cid a member" stopped being the right question:
+   signing in moves your membership to your account and leaves the device id
+   behind, so a signed-in phone would look like a stranger's. */
+if (!db.prepare('PRAGMA table_info(push_subs)').all().some((c) => c.name === 'person')) {
+  db.exec('ALTER TABLE push_subs ADD COLUMN person TEXT');
+}
+
 if (!db.prepare('PRAGMA table_info(rooms)').all().some((c) => c.name === 'open_until')) {
   db.exec('ALTER TABLE rooms ADD COLUMN open_until INTEGER NOT NULL DEFAULT 0');
 }
@@ -365,9 +373,10 @@ const q = {
   delMsg: db.prepare('DELETE FROM messages WHERE id = ?'),
   subsByRoom: db.prepare('SELECT * FROM push_subs WHERE room_code = ?'),
   upsertSub: db.prepare(
-    `INSERT INTO push_subs (endpoint, room_code, cid, keys, lang, created_at) VALUES (?, ?, ?, ?, ?, ?)
+    `INSERT INTO push_subs (endpoint, room_code, cid, person, keys, lang, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(endpoint) DO UPDATE SET room_code = excluded.room_code, cid = excluded.cid,
-       keys = excluded.keys, lang = excluded.lang`
+       person = excluded.person, keys = excluded.keys, lang = excluded.lang`
   ),
   delSub: db.prepare('DELETE FROM push_subs WHERE endpoint = ?'),
 
@@ -388,6 +397,32 @@ const q = {
     'INSERT INTO user_rooms (user_id, room_code, joined_at) VALUES (?, ?, ?) ON CONFLICT(user_id, room_code) DO UPDATE SET joined_at = excluded.joined_at'
   ),
   unlinkRoom: db.prepare('DELETE FROM user_rooms WHERE user_id = ? AND room_code = ?'),
+
+  /* Everything a deleted account leaves behind. Written out one by one because
+     the ON DELETE CASCADE clauses in this schema do nothing — SQLite enforces
+     foreign keys only when asked to, and nobody ever asked (there is no
+     `PRAGMA foreign_keys = ON` anywhere). Trusting them here would look like a
+     deletion and quietly be a no-op. */
+  delUser: db.prepare('DELETE FROM users WHERE id = ?'),
+  delUserSessions: db.prepare('DELETE FROM sessions WHERE user_id = ?'),
+  delUserRooms: db.prepare('DELETE FROM user_rooms WHERE user_id = ?'),
+  delPersonSeen: db.prepare('DELETE FROM chat_seen WHERE person = ?'),
+  delPersonMembership: db.prepare('DELETE FROM room_members WHERE person = ?'),
+  delSubByCid: db.prepare('DELETE FROM push_subs WHERE cid = ?'),
+  memberRoomsOf: db.prepare('SELECT room_code FROM room_members WHERE person = ?'),
+  strandPersonMsgs: db.prepare(
+    'UPDATE messages SET author = ?, avatar = ?, user_id = NULL WHERE user_id = ?'
+  ),
+
+  // a room nobody belongs to any more, taken apart by hand for the same reason
+  roomCardRows: db.prepare('SELECT id, config FROM cards WHERE room_code = ?'),
+  delRoomCards: db.prepare('DELETE FROM cards WHERE room_code = ?'),
+  delRoomMsgs: db.prepare('DELETE FROM messages WHERE room_code = ?'),
+  delRoomSeen: db.prepare('DELETE FROM chat_seen WHERE room_code = ?'),
+  delRoomSubs: db.prepare('DELETE FROM push_subs WHERE room_code = ?'),
+  delRoomInvites: db.prepare('DELETE FROM room_invites WHERE room_code = ?'),
+  delRoomLinks: db.prepare('DELETE FROM user_rooms WHERE room_code = ?'),
+  delRoom: db.prepare('DELETE FROM rooms WHERE code = ?'),
   userRooms: db.prepare(
     `SELECT r.code, r.name, ur.joined_at FROM user_rooms ur
      JOIN rooms r ON r.code = ur.room_code
@@ -848,6 +883,60 @@ const mergeInto = db.transaction((code, fromKeys, toKey, name, avatar) => {
     if (hit) {
       store.updateCardState(JSON.stringify(state), row.id);
       touched.push(row.id);
+    }
+  }
+  return touched;
+});
+
+/* What is left of somebody who deleted their account.
+
+   The key stays exactly as it was — an opaque uuid that now resolves to
+   nobody — and only the label changes. That is not laziness, it is the whole
+   design: a piggy bank's promise is that the pot equals the sum of the shares,
+   and this is the one operation that could quietly break it. Deleting the
+   share would leave the pot standing over a smaller total; handing it to the
+   other person would credit them with money they never put in. Leaving the
+   number where it is and taking the name off it is the only version that is
+   true about both people. */
+const GONE_NAME = { tr: 'üyelikten ayrılan', en: 'a former member' };
+const GONE_AVATAR = '👤';
+
+const forgetPerson = db.transaction((codes, key) => {
+  const touched = [];
+  if (!key) return touched;
+  for (const code of codes) {
+    for (const row of store.roomCards(code)) {
+      let state;
+      try {
+        state = JSON.parse(row.state);
+      } catch {
+        continue;
+      }
+      let hit = false;
+      const wipe = (o) => {
+        if (!o) return;
+        o.name = GONE_NAME.tr;
+        o.avatar = GONE_AVATAR;
+        hit = true;
+      };
+      // the four places a person's label lives, counted once already by
+      // roomPeople and kept in step with it
+      if (state.by?.[key]) wipe(state.by[key]);
+      if (state.people?.[key]) wipe(state.people[key]);
+      for (const c of state.comments || []) {
+        if (c?.key !== key) continue;
+        c.by = GONE_NAME.tr;
+        c.avatar = GONE_AVATAR;
+        hit = true;
+      }
+      for (const pl of state.players || []) {
+        if (pl?.key !== key) continue;
+        wipe(pl);
+      }
+      if (hit) {
+        store.updateCardState(JSON.stringify(state), row.id);
+        touched.push({ code, id: row.id });
+      }
     }
   }
   return touched;
@@ -1423,6 +1512,107 @@ app.post('/api/auth/password', (req, res) => {
   res.json({ ok: true });
 });
 
+/* Taking a room apart, once the last person in it has gone. Nothing here is
+   shared with anybody any more — that is what "no members" means — so it goes
+   properly, pictures and all. */
+const razeRoom = db.transaction((code) => {
+  const photos = new Set();
+  for (const row of q.roomCardRows.all(code)) {
+    let cfg;
+    try {
+      cfg = JSON.parse(dec(row.config, '{}'));
+    } catch {
+      continue;
+    }
+    for (const p of [cfg.photo, ...(Array.isArray(cfg.goals) ? cfg.goals.map((g) => g?.photo) : [])]) {
+      if (p) photos.add(p);
+    }
+    clearChainClock(row.id);
+  }
+  for (const row of q.recentMsgs.all(code, 500)) if (row.photo) photos.add(row.photo);
+  q.delRoomCards.run(code);
+  q.delRoomMsgs.run(code);
+  q.delRoomSeen.run(code);
+  q.delRoomSubs.run(code);
+  q.delRoomInvites.run(code);
+  q.delRoomLinks.run(code);
+  q.delRoom.run(code);
+  return [...photos];
+});
+
+/* Deleting an account. What goes is the account: the login, the sessions, the
+   membership of every room, the read markers, this device's notifications.
+
+   What stays is the board, because it was never one person's. Their share of a
+   piggy bank keeps its number and loses its name — see forgetPerson for why
+   the number cannot move. Their messages keep their words and lose their
+   author. The other person opens the app tomorrow and finds their life
+   together still there, with one name replaced by nobody. */
+app.delete('/api/auth/account', (req, res) => {
+  const user = userFromToken(bearer(req));
+  if (!user) return res.status(401).json({ error: 'unauthorized' });
+  // typing your own name back is the last gate on the one thing that cannot
+  // be walked back
+  if (clampStr(req.body?.username, 24).toLowerCase() !== user.username) {
+    return res.status(400).json({ error: 'name-mismatch' });
+  }
+
+  const codes = [
+    ...new Set([
+      ...q.memberRoomsOf.all(user.id).map((r) => r.room_code),
+      ...q.userRooms.all(user.id).map((r) => r.code),
+    ]),
+  ];
+  const cid = clampStr(req.body?.me?.cid, 64);
+
+  const touched = forgetPerson(codes, user.id);
+  const razed = [];
+  db.transaction(() => {
+    q.strandPersonMsgs.run(enc(GONE_NAME.tr), GONE_AVATAR, user.id);
+    q.delPersonSeen.run(user.id);
+    q.delPersonMembership.run(user.id);
+    q.delUserRooms.run(user.id);
+    q.delUserSessions.run(user.id);
+    q.delUser.run(user.id);
+    if (cid) q.delSubByCid.run(cid);
+    for (const code of codes) {
+      if (q.memberCount.get(code).n === 0) razed.push(code);
+    }
+  })();
+  // outside the transaction: files are not part of it, and a room that is
+  // already gone from the database must not be held up by a slow disk
+  for (const code of razed) {
+    for (const photo of razeRoom(code)) {
+      fs.unlink(path.join(UPLOAD_DIR, path.basename(photo)), () => {});
+    }
+  }
+
+  /* Whoever is still looking at one of these boards gets the new labels now,
+     rather than the next time they happen to reload. */
+  const gone = new Set(razed);
+  for (const { code, id } of touched) if (!gone.has(code)) broadcastCard(code, id, null, 'forget');
+  /* The chat is held in the browser as a list, not re-read from the server on
+     every change, so the name has to be taken off it out here too — otherwise
+     the cards say "a former member" while the messages above them still carry
+     a name that no longer belongs to anyone. */
+  for (const code of codes) {
+    if (gone.has(code)) continue;
+    broadcast(code, {
+      t: 'chat:reload',
+      chat: store
+        .recentMsgs(code, 60)
+        .reverse()
+        .map((m) => ({
+          id: m.id, cid: m.cid, userId: m.user_id, author: m.author, avatar: m.avatar,
+          text: m.text, photo: m.photo, createdAt: m.created_at,
+        })),
+    });
+  }
+  for (const code of gone) broadcast(code, { t: 'error', code: 'no-entry' });
+
+  res.json({ ok: true, rooms: codes.length, closed: razed.length });
+});
+
 app.post('/api/auth/forget-room', (req, res) => {
   const user = userFromToken(bearer(req));
   if (!user) return res.status(401).json({ error: 'unauthorized' });
@@ -1439,8 +1629,14 @@ app.post('/api/push/subscribe', (req, res) => {
   if (!store.roomExists(code)) return res.status(404).json({ error: 'not-found' });
   if (!sub?.endpoint || !sub?.keys?.p256dh || !sub?.keys?.auth || sub.endpoint.length > 1024)
     return res.status(400).json({ error: 'bad-subscription' });
+  // asking to be told what happens in a room is asking to read it
+  const device = clampStr(cid, 64);
+  const person = userFromToken(bearer(req))?.id || device;
+  if (!isMember(code, person) && !isMember(code, device) && !roomOpen(store.getRoom(code))) {
+    return res.status(403).json(SHUT);
+  }
   const lang = req.body?.lang === 'en' ? 'en' : 'tr';
-  q.upsertSub.run(sub.endpoint, code, clampStr(cid, 64), JSON.stringify(sub.keys), lang, Date.now());
+  q.upsertSub.run(sub.endpoint, code, device, person, JSON.stringify(sub.keys), lang, Date.now());
   res.json({ ok: true });
 });
 
@@ -1483,6 +1679,19 @@ function pushToRoom(code, strKey, args, exceptCid, { key, windowMs = 0 } = {}) {
 
   for (const row of q.subsByRoom.all(code)) {
     if (row.cid && (row.cid === exceptCid || watching.has(row.cid))) continue;
+    /* A subscription outlives the person who made it. Somebody shown the door,
+       or a device whose account has been deleted, still has a row here — and
+       until rooms had members there was nothing to check it against.
+
+       Either identity will do. A row written before this column existed only
+       knows the device, and a phone that has since signed in is a member under
+       its account instead — refusing on one of the two would go quiet on
+       somebody who is very much still in the room. */
+    if (row.cid || row.person) {
+      const inRoom = (row.person && q.isMember.get(code, row.person))
+        || (row.cid && q.isMember.get(code, row.cid));
+      if (!inRoom) continue;
+    }
     const write = (PUSH_STR[row.lang] || PUSH_STR.tr)[strKey] || PUSH_STR.tr[strKey];
     if (!write) continue;
     const payload = JSON.stringify({
