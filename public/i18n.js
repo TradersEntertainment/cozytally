@@ -11,6 +11,8 @@ window.I18N = {
     recentTitle: 'Son odaların',
     roomNotFound: 'Böyle bir oda bulunamadı 🥺',
     landingFooter: 'çetele, gün sayacı, ortak kronometre, geri sayım ve tatlı notlar — hepsi tek panoda',
+    privacyLink: 'Gizlilik',
+    termsLink: 'Kullanım koşulları',
 
     introHow: 'Nasıl çalışır?',
     step1: 'Oda kur',
@@ -541,6 +543,8 @@ window.I18N = {
     recentTitle: 'Your recent rooms',
     roomNotFound: 'No such room found 🥺',
     landingFooter: 'tallies, day counters, shared timers, countdowns and sweet notes — all on one cozy board',
+    privacyLink: 'Privacy',
+    termsLink: 'Terms of use',
 
     introHow: 'How does it work?',
     step1: 'Create a room',

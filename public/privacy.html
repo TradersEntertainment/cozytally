@@ -1,0 +1,191 @@
+<!doctype html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Gizlilik · CozyTally</title>
+  <link rel="icon" href="/favicon.svg">
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body class="legal-page">
+  <main class="legal">
+    <p class="legal-switch"><a href="/">← CozyTally</a> · <a href="#en">English</a></p>
+
+    <h1>Gizlilik</h1>
+    <p class="legal-lede">
+      Bu, iki (ya da birkaç) kişinin bir panoyu paylaştığı küçük bir uygulama.
+      Aşağıdakilerin hepsi koddan yazıldı; burada sayılmayan hiçbir şey toplanmıyor.
+    </p>
+
+    <h2>Ne saklanıyor</h2>
+    <ul>
+      <li><b>Panonuz:</b> odanın adı, kartların başlıkları ve içerikleri — çeteleler,
+        kumbara hareketleri, listeler, notlar, oyun tahtaları, evcil hayvan.</li>
+      <li><b>Sohbet:</b> yazdığınız mesajlar ve yüklediğiniz fotoğraflar.</li>
+      <li><b>Odanın üyeleri:</b> odaya kimlerin girebildiği, adları ve avatarları.</li>
+      <li><b>Bildirim izni verdiyseniz:</b> tarayıcınızın verdiği bildirim adresi,
+        cihazınıza ait rastgele bir kimlik ve dil tercihiniz.</li>
+      <li><b>Hesap açtıysanız:</b> kullanıcı adı, şifrenizin <i>scrypt</i> özeti
+        (şifrenin kendisi hiçbir yerde durmuyor), görünen adınız ve avatarınız.</li>
+    </ul>
+
+    <h2>Ne saklanmıyor</h2>
+    <ul>
+      <li><b>E-posta adresi istenmiyor.</b> Bu yüzden şifre sıfırlama bağı diye bir
+        şey de yok; unuttuysanız girişli bir cihazdan yenisini koyarsınız.</li>
+      <li>Telefon numarası, doğum tarihi, konum, rehber — hiçbiri.</li>
+      <li>Analitik, izleme pikseli, reklam ağı, çerez bildirimi gerektiren hiçbir şey.</li>
+    </ul>
+
+    <h2>Kim görüyor</h2>
+    <p>
+      Bir odayı yalnızca o odanın üyeleri görüyor. Üye olmanın tek yolu içerideki
+      birinin verdiği <b>davet bağı</b>; odanın kodunu bilmek yetmiyor. Davetler
+      30 gün geçerli ve istediğiniz an geri alınabiliyor. Odayı kuran kişi bir
+      üyeyi çıkarabiliyor; çıkarıldığında o güne kadar dağıtılmış bütün davetler
+      de geçersiz oluyor ve o kişiye bildirim gitmiyor.
+    </p>
+
+    <h2>Ne kadar duruyor</h2>
+    <ul>
+      <li>Sohbet mesajları oda başına <b>son 500 tanesi</b>; eskiyenler, varsa
+        fotoğraflarıyla birlikte siliniyor.</li>
+      <li>Bir kartı sildiğinizde o karta ait fotoğraflar da diskten siliniyor.</li>
+      <li>Kartlar ve kumbara geçmişi siz silene kadar duruyor.</li>
+    </ul>
+
+    <h2>Silmek</h2>
+    <p>
+      Hesap ekranındaki <b>Hesabı sil</b> ile hesabınız, girişiniz, bütün
+      odalardaki üyeliğiniz, okundu imleriniz ve o cihazın bildirimleri siliniyor.
+      Ortak panolar duruyor ama adınız kalkıyor: kumbaradaki payınız sayısını
+      koruyup adını kaybediyor, yazdıklarınız kelimelerini koruyup imzasını.
+      Bunun sebebi şu — payı silmek kasa ile payların toplamını birbirinden
+      ayırırdı, ortağınıza devretmek ise onu hiç koymadığı parayı koymuş
+      gösterirdi; ikisi de karşı taraf hakkında yalan olurdu. Sizden başka
+      üyesi kalmayan odalar ise fotoğraflarına kadar tamamen siliniyor.
+    </p>
+
+    <h2>Nerede duruyor</h2>
+    <p>
+      Tek bir sunucuda, tek bir diskte. Sunucu <b>Railway</b> üzerinde çalışıyor.
+      Veriler günlük olarak aynı diskte yedekleniyor (son üç kopya).
+    </p>
+
+    <h2>Diskte şifreleme</h2>
+    <p>
+      Sunucuda <code>CT_SECRET</code> tanımlıysa yazdığınız her şey diske
+      <b>AES-256-GCM</b> ile şifrelenmiş olarak yazılıyor: oda adları, kart
+      içerikleri, mesajlar ve fotoğraflar. Anahtar diskte değil, ortam
+      değişkeninde duruyor — yani veritabanı dosyasını ya da bir yedeği eline
+      geçiren biri tek başına hiçbir şey okuyamıyor.
+    </p>
+    <p class="legal-caveat">
+      Neyi <b>korumadığını</b> da söylemek gerekir: sunucuyu çalıştıran kişi
+      hem diski hem anahtarı görüyor, dolayısıyla içeriği çözebiliyor. Bunun
+      önüne geçmenin tek yolu içeriğin tarayıcıda şifrelenmesi olurdu, ki
+      uygulama bunu yapmıyor. Yani buraya, sunucuyu işleten kişiye
+      gösteremeyeceğiniz bir şeyi yazmayın.
+    </p>
+
+    <h2>Dışarıya giden tek şey</h2>
+    <p>
+      Sayfa yazı tiplerini <b>Google Fonts</b>'tan yüklüyor, bu sırada Google
+      IP adresinizi görüyor. Uygulamanın dışarıyla başka hiçbir alışverişi yok.
+    </p>
+
+    <h2>Sorularınız için</h2>
+    <p>Uygulamayı işleten kişiye yazın — bu depoyu size veren kişi o.</p>
+
+    <hr id="en">
+
+    <h1>Privacy</h1>
+    <p class="legal-lede">
+      This is a small app where two (or a few) people share one board.
+      Everything below was written from the code; nothing not listed here is collected.
+    </p>
+
+    <h2>What is stored</h2>
+    <ul>
+      <li><b>Your board:</b> the room's name, and the titles and contents of the
+        cards — tallies, piggy-bank entries, lists, notes, game boards, the pet.</li>
+      <li><b>Chat:</b> the messages you write and the photos you upload.</li>
+      <li><b>The room's members:</b> who is allowed in, their names and avatars.</li>
+      <li><b>If you turned notifications on:</b> the push address your browser
+        issues, a random id for your device, and your language.</li>
+      <li><b>If you made an account:</b> your username, a <i>scrypt</i> hash of your
+        password (never the password), your display name and avatar.</li>
+    </ul>
+
+    <h2>What is not</h2>
+    <ul>
+      <li><b>No email address is ever asked for.</b> That is also why there is no
+        reset link — if you forget your password you set a new one from a device
+        that is still signed in.</li>
+      <li>No phone number, date of birth, location or contacts.</li>
+      <li>No analytics, tracking pixels, ad networks, or anything that would need
+        a cookie banner.</li>
+    </ul>
+
+    <h2>Who can see it</h2>
+    <p>
+      Only a room's members can see that room. The only way to become one is an
+      <b>invite link</b> from somebody already inside; knowing the room's code is
+      not enough. Invites last 30 days and can be revoked at any time. Whoever
+      made the room can remove a member; doing so revokes every invite handed out
+      so far and stops their notifications.
+    </p>
+
+    <h2>How long it stays</h2>
+    <ul>
+      <li>Chat keeps the <b>last 500 messages</b> per room; older ones are deleted
+        along with any photos they carried.</li>
+      <li>Deleting a card deletes its photos from the disk too.</li>
+      <li>Cards and piggy-bank history stay until you delete them.</li>
+    </ul>
+
+    <h2>Deleting</h2>
+    <p>
+      <b>Delete account</b> on the account screen removes your account, your login,
+      your membership of every room, your read markers and this device's
+      notifications. Shared boards stay, with your name taken off: your share of a
+      piggy bank keeps its number and loses its name, and what you wrote keeps its
+      words and loses its signature. The reason is arithmetic — deleting the share
+      would leave the pot and the shares disagreeing, and handing it to the other
+      person would credit them with money they never put in; both would be a lie
+      about somebody else. Rooms left with no members are deleted outright, photos
+      and all.
+    </p>
+
+    <h2>Where it lives</h2>
+    <p>
+      On one server, on one disk. The server runs on <b>Railway</b>. The data is
+      backed up daily to the same disk (the last three copies).
+    </p>
+
+    <h2>Encryption at rest</h2>
+    <p>
+      If <code>CT_SECRET</code> is set on the server, everything you write is
+      stored <b>AES-256-GCM</b> encrypted: room names, card contents, messages and
+      photos. The key lives in the environment and never on the disk, so a copy of
+      the database — or a leaked backup — is useless on its own.
+    </p>
+    <p class="legal-caveat">
+      What it does <b>not</b> protect against is worth saying plainly: whoever runs
+      the server can see both the disk and the key, and can therefore read the
+      contents. Preventing that would mean encrypting in the browser, which this
+      app does not do. So do not write anything here that you would not show to
+      the person running the server.
+    </p>
+
+    <h2>The one thing that leaves</h2>
+    <p>
+      The page loads its fonts from <b>Google Fonts</b>, and Google sees your IP
+      address while it does. The app has no other contact with the outside world.
+    </p>
+
+    <h2>Questions</h2>
+    <p>Ask whoever runs this app — the person who gave you the link.</p>
+  </main>
+</body>
+</html>

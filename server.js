@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import http from 'node:http';
 import crypto from 'node:crypto';
+import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import express from 'express';
 import compression from 'compression';
@@ -225,6 +226,49 @@ function decFile(buf) {
     return null;
   }
 }
+
+/* Two ways the key can be wrong, and both of them used to be silent.
+
+   Missing, in production: the server comes up and writes everybody's rooms,
+   messages and photos to the disk in plain text. Nothing looks broken, which
+   is the problem — you find out when somebody else reads the volume.
+
+   Wrong: dec() hands back its fallback when it cannot decrypt, so a server
+   started with a different key serves a working app in which every room name,
+   card title and message reads "???". Worse, it keeps accepting writes, and
+   those get encrypted under the new key — so the longer it runs, the more
+   thoroughly the two halves of the database disagree.
+
+   Both stop the boot instead. A server that cannot read its own data has
+   nothing useful to do, and every minute it stays up makes the repair
+   harder. */
+function checkSecret() {
+  if (!CT_SECRET && process.env.NODE_ENV === 'production') {
+    console.error(
+      'CT_SECRET is not set. In production this would store everything people ' +
+        'write — rooms, messages, photos — as readable text on the volume. ' +
+        'Set CT_SECRET to a long random string and start again.'
+    );
+    process.exit(1);
+  }
+
+  // one encrypted row is enough to tell whether this key is the one that
+  // wrote them
+  const sample =
+    db.prepare("SELECT name AS v FROM rooms WHERE name LIKE 'ct1:%' LIMIT 1").get() ||
+    db.prepare("SELECT title AS v FROM cards WHERE title LIKE 'ct1:%' LIMIT 1").get();
+  if (!sample) return;
+  const canary = '\u0000cozytally-canary';
+  if (dec(sample.v, canary) !== canary) return; // decrypted fine
+  console.error(
+    'CT_SECRET does not match the key this database was written with. Every ' +
+      'room name, card and message would read "???", and anything written now ' +
+      'would be encrypted under the new key on top of the old. Restore the ' +
+      'original CT_SECRET, or start from an empty DATA_DIR.'
+  );
+  process.exit(1);
+}
+checkSecret();
 
 const nf = (lang, v) => new Intl.NumberFormat(lang === 'en' ? 'en-US' : 'tr-TR').format(v);
 
@@ -1195,6 +1239,10 @@ const sendIndex = (_req, res) => {
 };
 app.get('/', sendIndex);
 app.get('/r/:code', sendIndex);
+/* An invite link. The token is not spent here — the page loads first and then
+   asks, because accepting needs to know who is asking, and only the browser
+   knows that. */
+app.get('/j/:token', sendIndex);
 
 app.use(
   express.static(path.join(__dirname, 'public'), {
@@ -1402,17 +1450,6 @@ app.post('/api/rooms/:code/lock', (req, res) => {
   if (!gate) return;
   q.lockRoom.run(gate.code);
   res.json({ ok: true });
-});
-
-app.get('/r/:code', (_req, res) => {
-  res.sendFile(path.join(__dirname, 'public', 'index.html'));
-});
-
-/* An invite link. The token is not spent here — the page loads first and then
-   asks, because accepting needs to know who is asking, and only the browser
-   knows that. */
-app.get('/j/:token', (_req, res) => {
-  res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
 // ------------------------------------------------------------ auth api
@@ -2710,6 +2747,61 @@ function handleMessage(ws, msg) {
     }
   }
 }
+
+/* ------------------------------------------------------------------
+   Backups.
+
+   One SQLite file on one disk, holding other people's photographs and what
+   they said to each other. VACUUM INTO rather than a file copy, because the
+   live database has a write-ahead log beside it and copying the .db alone
+   gets you a file that is missing the most recent everything.
+
+   Be honest about what this is for: a bad migration, a mistaken delete, a
+   corrupted page. It sits on the same volume as the thing it is backing up,
+   so it is no protection at all against losing the volume — that needs a copy
+   that leaves the server, and there is nowhere here to send one.
+   ------------------------------------------------------------------ */
+const BACKUP_DIR = path.join(DATA_DIR, 'backups');
+const BACKUP_KEEP = 3;
+const BACKUP_EVERY = Number(process.env.CT_BACKUP_MS) || 24 * 60 * 60 * 1000;
+const BACKUP_FIRST = Number(process.env.CT_BACKUP_FIRST_MS) || 5 * 60 * 1000;
+
+function takeBackup() {
+  try {
+    fs.mkdirSync(BACKUP_DIR, { recursive: true });
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+    const target = path.join(BACKUP_DIR, `cozytally-${stamp}.db`);
+    if (fs.existsSync(target)) return; // same second, nothing has changed
+    db.prepare('VACUUM INTO ?').run(target);
+
+    // the pictures live beside the database, not in it
+    const shots = path.join(BACKUP_DIR, `uploads-${stamp}.tar`);
+    try {
+      execFileSync('tar', ['-cf', shots, '-C', DATA_DIR, 'uploads'], { stdio: 'ignore' });
+    } catch (err) {
+      console.error('backup: uploads archive skipped:', err.message);
+    }
+
+    /* Oldest out, and by pairs — a database without its pictures restores to a
+       board full of broken frames. */
+    const kept = fs
+      .readdirSync(BACKUP_DIR)
+      .filter((f) => f.startsWith('cozytally-') && f.endsWith('.db'))
+      .sort();
+    for (const old of kept.slice(0, Math.max(0, kept.length - BACKUP_KEEP))) {
+      const when = old.slice('cozytally-'.length, -'.db'.length);
+      fs.rmSync(path.join(BACKUP_DIR, old), { force: true });
+      fs.rmSync(path.join(BACKUP_DIR, `uploads-${when}.tar`), { force: true });
+    }
+    console.log(`Backed up to ${path.basename(target)} (keeping ${BACKUP_KEEP})`);
+  } catch (err) {
+    // a backup that fails must never take the server down with it
+    console.error('backup failed:', err.message);
+  }
+}
+
+setTimeout(takeBackup, BACKUP_FIRST).unref?.();
+setInterval(takeBackup, BACKUP_EVERY).unref?.();
 
 server.listen(PORT, () => {
   console.log(`CozyTally listening on :${PORT} (data: ${DATA_DIR})`);

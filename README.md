@@ -104,18 +104,38 @@ Ayrıca her odada:
   bıraktığında susar, döndüğünde kaldığı yerden devam eder
 - 📱 **PWA** — telefonda "Ana Ekrana Ekle" ile gerçek uygulama gibi kurulur
 
-Hesap yok, şifre yok — sadece takma ad + oda kodu. TR/EN dil desteği var.
+Hesap isteğe bağlı; odalara davetle giriliyor. TR/EN dil desteği var, ve
+[gizlilik](public/privacy.html) ile [kullanım koşulları](public/terms.html)
+sayfaları uygulamanın içinde duruyor (`/privacy.html`, `/terms.html`) —
+App Store başvurusu gizlilik politikası URL'i olmadan kabul edilmiyor.
 
 ## Railway'e kurulum
 
 1. Bu repoyu Railway'de yeni bir servis olarak ekle (GitHub'dan deploy).
 2. Servise bir **Volume** ekle ve mount path olarak **`/data`** yaz.
-3. Bu kadar! Uygulama SQLite veritabanını `/data/cozytally.db` içinde,
+3. Servise **`CT_SECRET`** ekle (aşağıya bak). Üretimde bu artık zorunlu:
+   anahtar yoksa sunucu **açılmaz**, çünkü açılsaydı başkalarının
+   fotoğraflarını ve yazdıklarını diske düz metin olarak yazardı.
+4. Bu kadar! Uygulama SQLite veritabanını `/data/cozytally.db` içinde,
    sohbet fotoğraflarını `/data/uploads/` içinde, bildirim anahtarlarını
-   `/data/vapid.json` içinde tutar — deploy'lar arasında hiçbiri kaybolmaz.
+   `/data/vapid.json` içinde, günlük yedekleri `/data/backups/` içinde tutar —
+   deploy'lar arasında hiçbiri kaybolmaz.
 
 > Not: `PORT` değişkenini Railway kendisi verir. Volume başka bir yere mount
 > edersen `DATA_DIR` ortam değişkeniyle yolu belirtebilirsin.
+
+### Yedek
+
+Sunucu her gün `/data/backups/` içine bir kopya alıyor: veritabanı için
+`VACUUM INTO` (canlı dosyanın yanındaki write-ahead log yüzünden düz kopyalama
+eksik bir dosya verir), fotoğraflar için bir `.tar`. **Son üç kopya** tutuluyor,
+eskiler veritabanı-arşiv çifti olarak birlikte siliniyor. `CT_BACKUP_MS` ile
+aralık değiştirilebilir.
+
+> **Bunun ne olmadığı önemli:** kopya *aynı diskte* duruyor. Kötü bir göçe,
+> yanlışlıkla silmeye ve bozulmaya karşı korur; **volume'ün kendisini
+> kaybetmeye karşı korumaz.** Onun için kopyanın sunucudan çıkması gerekir —
+> bir yere (S3, R2, vb.) gönderen bir adım henüz yok.
 
 ### Diskte şifreleme (`CT_SECRET`)
 
@@ -131,6 +151,13 @@ bir yedeği, diski doğrudan okuyan birini.
 Anahtar orada durduğu için uygulama şifreyi çözebiliyor; çözebiliyorsa aynı
 yetkiye sahip biri de çözebilir. Bunun tek gerçek çözümü içeriği tarayıcıda
 şifrelemektir (uçtan uca).
+
+**Açılışta iki kontrol var**, çünkü anahtarın iki yanlış hâli de sessizdi:
+üretimde anahtar **yoksa** sunucu durur; anahtar **veritabanını yazan anahtar
+değilse** yine durur. İkincisi olmadan sunucu çalışıyormuş gibi açılır, bütün
+oda adları ve mesajlar `???` görünür, ve o hâlde yapılan her yazma yeni
+anahtarla şifrelenerek eski veriyle karışır — yani ne kadar açık kalırsa
+onarımı o kadar zorlaşır.
 
 Anahtarı sonradan eklemek güvenlidir: daha önce düz metin yazılmış kayıtlar
 okunmaya devam eder, yeni yazılanlar şifrelenir. **Anahtarı kaybedersen ya da

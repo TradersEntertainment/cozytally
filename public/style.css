@@ -3929,6 +3929,83 @@ body.rain-open .hint-bubble { opacity: 0; pointer-events: none; }
 
 .btn-danger:not(:disabled):hover { background: rgba(255, 158, 181, 0.26); }
 
+/* The two pages nobody reads for fun. They borrow the app's night sky so they
+   do not feel like being handed off to a lawyer's website, but they stay plain:
+   one column, generous line height, nothing that moves. */
+.legal-page {
+  overflow-y: auto;
+  padding: max(28px, env(safe-area-inset-top)) 20px calc(48px + env(safe-area-inset-bottom));
+}
+
+.legal {
+  max-width: 46rem;
+  margin: 0 auto;
+  color: var(--ink);
+  font-size: var(--t-body);
+  line-height: 1.7;
+}
+
+.legal-switch {
+  font-size: var(--t-callout);
+  color: var(--ink-2);
+  margin: 0 0 28px;
+}
+
+.legal-switch a { color: var(--amber); text-decoration: none; }
+.legal-switch a:hover { text-decoration: underline; }
+
+.legal h1 {
+  font-size: 1.7rem;
+  color: var(--amber);
+  margin: 0 0 10px;
+}
+
+.legal h2 {
+  font-size: 1.08rem;
+  margin: 34px 0 8px;
+  color: var(--ink);
+}
+
+.legal p, .legal ul { margin: 0 0 14px; }
+.legal ul { padding-left: 1.2em; }
+.legal li { margin-bottom: 7px; }
+.legal a { color: var(--amber); }
+
+.legal-lede { color: var(--ink-2); }
+
+.legal code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.9em;
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 5px;
+  padding: 1px 5px;
+}
+
+/* The paragraph that says what the encryption does not do. It matters more
+   than the one above it, so it is not allowed to look like a footnote. */
+.legal-caveat {
+  background: rgba(255, 184, 107, 0.09);
+  border-left: 2px solid var(--amber);
+  border-radius: 0 var(--r-sm) var(--r-sm) 0;
+  padding: 12px 14px;
+}
+
+.legal hr {
+  border: 0;
+  border-top: 0.5px solid var(--hairline);
+  margin: 52px 0 34px;
+}
+
+.landing-legal {
+  text-align: center;
+  font-size: var(--t-caption);
+  margin: 10px 0 0;
+  color: var(--ink-2);
+  opacity: 0.75;
+}
+
+.landing-legal a { color: inherit; }
+
 .lightbox-img {
   max-width: 100%;
   max-height: 72dvh;
