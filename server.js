@@ -1743,6 +1743,14 @@ function handleMessage(ws, msg) {
         const at = toInt(msg.at, 0, now, now);
         const note = clampStr(msg.note, 60);
         const goal = Number.isInteger(msg.goal) && goalsNow[msg.goal] ? msg.goal : -1;
+        /* Pointing a spend at a goal says that goal is paid off, so what left
+           the pot has to be enough to pay it. Without this, a single lira
+           settles a 150.000 ₺ car: the stamp goes on the photo, the ladder
+           moves on to the next rung, and the frozen contributions under the
+           stamp add up to nothing like the price. Paying more than planned is
+           fine — things cost what they cost. Paying less means the plan is
+           what wants correcting, not the history. */
+        if (goal >= 0 && amount < goalsNow[goal].amount) return;
         if (goal >= 0) {
           /* A goal that has been paid stays paid. Its name and price are copied
              in as they were, so editing the plan later cannot rewrite what

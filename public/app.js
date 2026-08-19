@@ -3948,13 +3948,26 @@
       const given = shares.reduce((n, el) => n + readShare(el), 0);
       const over = shares.some((el) => readShare(el) > Number(el.max));
       const left = want - given;
-      leftEl.textContent = over
-        ? t('spendTooMuch')
-        : left === 0 && want > 0
-          ? t('spendBalanced')
-          : t('spendLeft', { n: fmtNum(Math.abs(left)) + cur, sign: left > 0 ? '' : '−' });
-      leftEl.classList.toggle('bad', over || left !== 0);
-      goBtn.disabled = over || !want || left !== 0 || want > total;
+      /* Naming a goal is a claim that it is now paid off, so the money leaving
+         has to cover it. More is fine; less is not a payment, it is a plan
+         that needs correcting. And either way the pot has to hold it — which
+         it may well not, since picking a goal fills its full price in. */
+      const gi = goalEl ? Number(goalEl.value) : -1;
+      const price = gi >= 0 && goals[gi] ? goals[gi].amount : 0;
+      const short = price > 0 && want < price;
+      const bad = want > total || over || short || left !== 0;
+      leftEl.textContent =
+        want > total
+          ? t('spendOverPot', { n: fmtNum(total) + cur })
+          : over
+            ? t('spendTooMuch')
+            : short
+              ? t('spendUnderGoal', { n: fmtNum(price) + cur })
+              : left === 0 && want > 0
+                ? t('spendBalanced')
+                : t('spendLeft', { n: fmtNum(Math.abs(left)) + cur, sign: left > 0 ? '' : '−' });
+      leftEl.classList.toggle('bad', bad);
+      goBtn.disabled = bad || !want;
     };
 
     /* Picking a goal is a statement about the amount too — you are paying that
