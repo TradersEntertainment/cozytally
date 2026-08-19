@@ -1219,6 +1219,39 @@ function rowToCard(row, forKey) {
 
 // ---------------------------------------------------------------- http
 const app = express();
+
+/* The native app is served from its own bundle, so its requests arrive from
+   another origin and the browser asks first. Named exactly, never '*': this
+   API answers questions about who is in a room and how much is in a piggy
+   bank, and a wildcard would let any page on the internet ask them from a
+   visitor's browser.
+
+   No credentials, deliberately. Authentication here is a Bearer token the app
+   holds, not a cookie the browser attaches, so there is nothing for a hostile
+   page to ride on even if it did reach us. */
+const APP_ORIGINS = new Set([
+  'capacitor://localhost',
+  'ionic://localhost',
+  'http://localhost', // Capacitor's Android scheme
+  ...String(process.env.CT_APP_ORIGINS || '')
+    .split(',')
+    .map((o) => o.trim())
+    .filter(Boolean),
+]);
+
+app.use((req, res, next) => {
+  const origin = req.headers.origin;
+  if (origin && APP_ORIGINS.has(origin)) {
+    res.set('Access-Control-Allow-Origin', origin);
+    res.set('Vary', 'Origin');
+    res.set('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+    res.set('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
+    res.set('Access-Control-Max-Age', '86400');
+    if (req.method === 'OPTIONS') return res.status(204).end();
+  }
+  next();
+});
+
 app.use(express.json({ limit: '16kb' }));
 /* The whole client is 292 KB of text and none of it was compressed. Over a
    phone connection that is the single biggest thing standing between tapping

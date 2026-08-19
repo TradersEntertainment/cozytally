@@ -44,7 +44,7 @@
     try {
       const sub = await swReg.pushManager.getSubscription();
       if (!sub) return;
-      await fetch('/api/push/subscribe', {
+      await fetch(url('/api/push/subscribe'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ room: room.code, cid: myCid, lang, sub: sub.toJSON() }),
@@ -308,8 +308,22 @@
   // ------------------------------------------------------------ account
   let auth = JSON.parse(localStorage.getItem('ct:auth') || 'null'); // { token, user }
 
+  /* Everything that leaves this page goes through here or through mediaUrl.
+     On the web CT_API is empty and these are the relative paths they always
+     were; in the native app they become absolute, because there the page and
+     the server are not the same place any more. */
+  const API = (window.CT_API || '').replace(/\/$/, '');
+  const url = (path) => API + path;
+
+  /* A photo's path is stored relative — /u/xxx.jpg — and it has to stay that
+     way: writing the host into the database would break every picture ever
+     taken the day the domain changes. So it is joined on at the last moment,
+     here. Anything that is not one of ours (a blob: preview of a file the
+     browser has not uploaded yet, a data: URI) is handed back untouched. */
+  const mediaUrl = (p) => (typeof p === 'string' && p.startsWith('/u/') ? API + p : p);
+
   async function api(path, { method = 'GET', body } = {}) {
-    const res = await fetch(path, {
+    const res = await fetch(url(path), {
       method,
       headers: {
         ...(body ? { 'Content-Type': 'application/json' } : {}),
@@ -1114,7 +1128,7 @@
             const reg = swReg || (await navigator.serviceWorker?.getRegistration?.());
             const sub = await reg?.pushManager?.getSubscription?.();
             if (sub) {
-              await fetch('/api/push/unsubscribe', {
+              await fetch(url('/api/push/unsubscribe'), {
                 method: 'POST', headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ endpoint: sub.endpoint }),
               }).catch(() => {});
@@ -1430,7 +1444,7 @@
     $('#create-form').addEventListener('submit', async (e) => {
       e.preventDefault();
       const name = $('#create-name').value.trim() || 'CozyTally';
-      const res = await fetch('/api/rooms', {
+      const res = await fetch(url('/api/rooms'), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -1451,7 +1465,7 @@
       const code = $('#join-code').value.trim().toLowerCase();
       if (!code) return;
       const res = await fetch(
-        '/api/rooms/' + encodeURIComponent(code) + '?cid=' + encodeURIComponent(myCid),
+        url('/api/rooms/' + encodeURIComponent(code) + '?cid=' + encodeURIComponent(myCid)),
         { headers: auth?.token ? { Authorization: 'Bearer ' + auth.token } : {} }
       );
       if (res.ok) {
@@ -1516,7 +1530,12 @@
   let reconnectDelay = 1000;
 
   function connect() {
-    ws = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws');
+    /* Same reasoning as the fetches: on the web this is the page's own host,
+       and in the native app it is the one CT_API names. */
+    const wsBase = API
+      ? API.replace(/^http/, 'ws')
+      : (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host;
+    ws = new WebSocket(wsBase + '/ws');
 
     ws.onopen = () => {
       reconnectDelay = 1000;
@@ -4023,7 +4042,7 @@
                return `<div class="goal-step ${r.done ? 'done' : ''} ${r.paid ? 'paid' : ''}
                  ${isActive ? 'active' : ''}" data-i="${i}">
                  <div class="gs-photo">
-                   ${r.photo ? `<img src="${esc(r.photo)}" alt="" loading="lazy">` : '<span class="gs-blank">💰</span>'}
+                   ${r.photo ? `<img src="${esc(mediaUrl(r.photo))}" alt="" loading="lazy">` : '<span class="gs-blank">💰</span>'}
                    ${r.paid
                      ? `<span class="gs-stamp">${esc(t('goalPaid'))}</span>`
                      : `<span class="gs-star">${r.done ? '⭐' : '☆'}</span>`}
@@ -4064,7 +4083,7 @@
     const heroPhoto = goals.length > 1 ? '' : goals[0]?.photo || card.config.photo;
 
     body.innerHTML = `
-      ${heroPhoto ? `<img class="money-photo" src="${esc(heroPhoto)}" alt="">` : ''}
+      ${heroPhoto ? `<img class="money-photo" src="${esc(mediaUrl(heroPhoto))}" alt="">` : ''}
       <div class="money-total">${fmtNum(total)}<small>${esc(cur)}</small></div>
       ${milestones}
       ${strip}
@@ -5013,7 +5032,7 @@
 
       const thumbOf = (g) =>
         g.preview || g.photo
-          ? `<img src="${esc(g.preview || g.photo)}" alt="">`
+          ? `<img src="${esc(mediaUrl(g.preview || g.photo))}" alt="">`
           : '<span>📷</span>';
 
       /* Repaint one thumbnail instead of the whole list. A shrink or an
@@ -5259,7 +5278,7 @@
       toast(t('photoTooBig'));
       throw new Error('too-big');
     }
-    const res = await fetch('/api/upload/' + encodeURIComponent(room.code), {
+    const res = await fetch(url('/api/upload/' + encodeURIComponent(room.code)), {
       method: 'POST',
       headers: { 'Content-Type': blob.type || 'image/jpeg' },
       body: blob,
@@ -5270,8 +5289,8 @@
 
   const uploadPhoto = async (file) => uploadBlob(await processImage(file));
 
-  function openLightbox(url) {
-    openModal(`<img class="lightbox-img" src="${esc(url)}" alt="">`);
+  function openLightbox(src) {
+    openModal(`<img class="lightbox-img" src="${esc(mediaUrl(src))}" alt="">`);
   }
 
   // ------------------------------------------------------------ chat
@@ -5295,7 +5314,7 @@
     });
     el.innerHTML = `
       <div class="msg-meta">${esc(m.avatar || '')} ${esc(m.author)} · ${time}</div>
-      <div class="msg-bubble">${esc(m.text)}${m.photo ? `<img class="msg-photo" src="${esc(m.photo)}" alt="" loading="lazy">` : ''}</div>
+      <div class="msg-bubble">${esc(m.text)}${m.photo ? `<img class="msg-photo" src="${esc(mediaUrl(m.photo))}" alt="" loading="lazy">` : ''}</div>
       <div class="msg-seen"></div>`;
     const img = $('.msg-photo', el);
     if (img) img.onclick = () => openLightbox(m.photo);
@@ -5532,7 +5551,7 @@
       if (localStorage.getItem(pushKey()) === '1') {
         const sub = await swReg.pushManager.getSubscription();
         if (sub) {
-          fetch('/api/push/unsubscribe', {
+          fetch(url('/api/push/unsubscribe'), {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ endpoint: sub.endpoint }),
@@ -5544,12 +5563,12 @@
       } else {
         const perm = await Notification.requestPermission();
         if (perm !== 'granted') return toast(t('notifDenied'));
-        const { key } = await (await fetch('/api/push/key')).json();
+        const { key } = await (await fetch(url('/api/push/key'))).json();
         const sub = await swReg.pushManager.subscribe({
           userVisibleOnly: true,
           applicationServerKey: urlB64(key),
         });
-        const res = await fetch('/api/push/subscribe', {
+        const res = await fetch(url('/api/push/subscribe'), {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
