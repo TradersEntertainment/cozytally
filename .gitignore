@@ -6,3 +6,10 @@ dist
 *.db
 *.db-shm
 *.db-wal
+
+# The native bundle, assembled by scripts/build-app.mjs. It is a copy of
+# public/ with one line changed, so committing it would be committing the same
+# code twice and inviting the two to drift.
+www/
+ios/App/App/public/
+ios/App/App/capacitor.config.json

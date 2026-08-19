@@ -116,6 +116,27 @@ Hesap isteğe bağlı; odalara davetle giriliyor. TR/EN dil desteği var, ve
 sayfaları uygulamanın içinde duruyor (`/privacy.html`, `/terms.html`) —
 App Store başvurusu gizlilik politikası URL'i olmadan kabul edilmiyor.
 
+## iPhone uygulaması
+
+Native kabuk Capacitor ile kuruldu ve `ios/` klasörü depoda hazır duruyor —
+Capacitor 8 CocoaPods yerine Swift Package Manager kullandığı için proje
+Linux'ta oluşturulabildi, yani Mac'te beklenecek bir `pod install` yok.
+Mac'te yapılacakların tamamı **[IOS.md](IOS.md)** içinde.
+
+Uygulama sunucuya *açılan bir pencere değil*: `npm run build:app` ile
+`public/` klasörü `www/` olarak paketlenip uygulamanın içine gömülüyor, tek
+farkı sunucunun adresini taşıyan `config.js` satırı. Bu yüzden uygulama ağ
+olmadan da açılıyor ve sunucudan yalnızca veri istiyor — App Store'un 4.2
+maddesinde aradığı fark tam olarak bu.
+
+```bash
+CT_API_BASE=https://senin-alan-adin npm run ios:sync
+npx cap open ios
+```
+
+> Adres uygulamaya gömülü gelir; sonradan değiştirmek yeni sürüm yayınlamak
+> demektir, o yüzden ilk derlemeden önce doğrusu yazılmalı.
+
 ## Railway'e kurulum
 
 1. Bu repoyu Railway'de yeni bir servis olarak ekle (GitHub'dan deploy).

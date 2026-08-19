@@ -1,0 +1,13 @@
+{
+  "appId": "com.cozytally.app",
+  "appName": "CozyTally",
+  "webDir": "www",
+  "ios": {
+    "contentInset": "always",
+    "backgroundColor": "#171233"
+  },
+  "plugins": {
+    "Keyboard": { "resize": "native" },
+    "StatusBar": { "style": "DARK", "backgroundColor": "#171233" }
+  }
+}

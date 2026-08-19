@@ -312,6 +312,14 @@
      On the web CT_API is empty and these are the relative paths they always
      were; in the native app they become absolute, because there the page and
      the server are not the same place any more. */
+  /* Inside the native shell there are real versions of things the web can only
+     approximate. Nothing here is required: every call checks first and the web
+     keeps doing exactly what it did, which is also what keeps one codebase
+     instead of two. */
+  const Cap = window.Capacitor;
+  const native = () => !!Cap?.isNativePlatform?.();
+  const plugin = (name) => (native() ? Cap.Plugins?.[name] : null);
+
   const API = (window.CT_API || '').replace(/\/$/, '');
   const url = (path) => API + path;
 
@@ -447,6 +455,33 @@
       doze((voice.notes.length * voice.step + voice.len) * 1000 + 800);
     }
 
+    /* navigator.vibrate takes either a length or an on-off-on pattern, and the
+       patterns are load-bearing: the double buzz is how you tell the other
+       person's move from your own without looking. Collapsing them all into
+       one tap would be a downgrade dressed as an upgrade, so a pattern is
+       replayed as taps with the same gaps between them.
+
+       Returns false when there is nothing native to ask, so the caller can
+       fall back to what the web has. */
+    function tapticBuzz(buzz) {
+      const haptics = plugin('Haptics');
+      if (!haptics) return false;
+      const style = (ms) => (ms <= 14 ? 'LIGHT' : ms <= 30 ? 'MEDIUM' : 'HEAVY');
+      const hit = (ms) => haptics.impact({ style: style(ms) }).catch(() => {});
+      if (!Array.isArray(buzz)) {
+        hit(buzz);
+        return true;
+      }
+      let at = 0;
+      for (let i = 0; i < buzz.length; i += 2) {
+        const ms = buzz[i];
+        if (at === 0) hit(ms);
+        else setTimeout(() => hit(ms), at);
+        at += ms + (buzz[i + 1] || 0);
+      }
+      return true;
+    }
+
     function fire(kind) {
       const voice = VOICES[kind];
       if (!voice || !enabled()) return;
@@ -455,8 +490,13 @@
       try {
         play(voice);
       } catch { /* audio can fail on locked-down browsers; never block on it */ }
-      if (navigator.vibrate) navigator.vibrate(voice.buzz);
-      else iosBuzz();
+      /* On a phone this is the Taptic Engine rather than navigator.vibrate,
+         which iOS has always ignored — the checkbox trick below was only ever
+         a way of borrowing a haptic the system fires for its own reasons. */
+      if (!tapticBuzz(voice.buzz)) {
+        if (navigator.vibrate) navigator.vibrate(voice.buzz);
+        else iosBuzz();
+      }
     }
 
     fire.enabled = enabled;
@@ -5740,7 +5780,9 @@
         });
         const url = location.origin + '/j/' + encodeURIComponent(token);
         try {
-          if (navigator.share) await navigator.share({ title: room.name, url });
+          const share = plugin('Share');
+          if (share) await share.share({ title: room.name, url, dialogTitle: t('copyLink') });
+          else if (navigator.share) await navigator.share({ title: room.name, url });
           else {
             await navigator.clipboard.writeText(url);
             toast(t('inviteCopied'));
