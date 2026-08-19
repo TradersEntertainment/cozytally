@@ -103,6 +103,13 @@ Ayrıca her odada:
   Kapalı başlar, üstteki 🎵 düğmesiyle açılır, seçimin hatırlanır; sekmeyi
   bıraktığında susar, döndüğünde kaldığı yerden devam eder
 - 📱 **PWA** — telefonda "Ana Ekrana Ekle" ile gerçek uygulama gibi kurulur
+- ✈️ **Ağsız da açılır** — service worker uygulamanın kendisini (kabuk, kod, yazı
+  tipleri, yüklenmiş fotoğraflar) saklıyor, tarayıcı da **en son gördüğün panoyu**
+  bir fotoğraf gibi tutuyor. Tünelde, uçakta ya da sunucu düştüğünde uygulama
+  boş bir odaya değil, dünkü panona açılıyor; üstte "bağlantı koptu" şeridi
+  duruyor ve bir şeye dokunursan bunun şimdi işlemeyeceğini söylüyor. Ağ gelince
+  kendi kendine bağlanıp canlıya dönüyor. Her deploy kendi önbelleğini alıyor —
+  yarısı yeni yarısı eski bir kopya, kimsenin tekrar üretemeyeceği bir hata olurdu
 
 Hesap isteğe bağlı; odalara davetle giriliyor. TR/EN dil desteği var, ve
 [gizlilik](public/privacy.html) ile [kullanım koşulları](public/terms.html)

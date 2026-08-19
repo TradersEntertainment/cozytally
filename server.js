@@ -1237,6 +1237,18 @@ const sendIndex = (_req, res) => {
   // the shell itself must never be held on to — it is what names the stamp
   res.set('Cache-Control', 'no-cache').type('html').send(INDEX);
 };
+
+/* The worker gets the same stamp, and for a sharper reason than the page: it
+   is what names its cache. Without it every deploy would keep filling the same
+   one, and a browser could end up holding this build's app.js beside last
+   build's games.js — a mismatch nobody can reproduce and the user cannot
+   clear. Registered before the static handler so this copy wins. */
+const SW = fs
+  .readFileSync(path.join(__dirname, 'public', 'sw.js'), 'utf8')
+  .replace("const BUILD = 'dev';", `const BUILD = '${BUILD}';`);
+app.get('/sw.js', (_req, res) => {
+  res.set('Cache-Control', 'no-cache').type('application/javascript').send(SW);
+});
 app.get('/', sendIndex);
 app.get('/r/:code', sendIndex);
 /* An invite link. The token is not spent here — the page loads first and then

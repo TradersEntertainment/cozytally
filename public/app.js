@@ -1272,6 +1272,70 @@
     setTimeout(() => $('#au-user', box)?.focus(), 60);
   }
 
+  /* The last board this browser was shown, kept so that opening the app with
+     no network draws something instead of an empty room. The service worker
+     brings back the app; this brings back what was in it.
+
+     It is a photograph, not a copy: nothing here is edited or sent anywhere,
+     and the moment the socket answers it is thrown away for the real thing.
+     Chat goes in last and comes out first, because it is the biggest part and
+     the one you can most afford to lose. */
+  const SNAP_KEY = 'ct:snap';
+  let lastMembers = [];
+  let snapTimer = 0;
+
+  /* Debounced, and taken from the live board rather than from the payload that
+     first drew it — the first version of this photographed the room at the
+     moment of joining and never again, so it faithfully preserved an empty
+     board and nothing that happened afterwards. */
+  function keepSnapshot() {
+    if (!roomCode || !room) return;
+    clearTimeout(snapTimer);
+    snapTimer = setTimeout(writeSnapshot, 400);
+  }
+
+  function writeSnapshot() {
+    const base = {
+      code: roomCode,
+      at: Date.now(),
+      room,
+      cards: [...cards.values()],
+      members: lastMembers,
+      seen: seenList,
+    };
+    for (const shot of [{ ...base, chat: (chatMsgs || []).slice(-30) }, base]) {
+      try {
+        localStorage.setItem(SNAP_KEY, JSON.stringify(shot));
+        return;
+      } catch {
+        /* out of room — try again with less */
+      }
+    }
+    try {
+      localStorage.removeItem(SNAP_KEY);
+    } catch { /* nothing to be done */ }
+  }
+
+  /** Draw the last board we saw, if it was this one and the socket is late. */
+  function showSnapshot() {
+    if (room) return; // the real thing beat us to it
+    let shot;
+    try {
+      shot = JSON.parse(localStorage.getItem(SNAP_KEY) || 'null');
+    } catch {
+      return;
+    }
+    if (!shot || shot.code !== roomCode) return;
+    room = shot.room;
+    cards = new Map((shot.cards || []).map((c) => [c.id, c]));
+    chatMsgs = shot.chat || [];
+    seenList = shot.seen || [];
+    renderRoomHeader();
+    renderMembers(shot.members);
+    renderAllCards();
+    renderChat();
+  }
+
   function rememberRoom(code, name) {
     let recents = JSON.parse(localStorage.getItem('ct:recent') || '[]');
     recents = recents.filter((r) => r.code !== code);
@@ -1488,8 +1552,16 @@
     ws.onerror = () => ws.close();
   }
 
+  /* A tap with no socket used to go nowhere and say nothing. That was survivable
+     while the app only opened online; now that it opens to yesterday's board on
+     a train, the buttons look live and have to admit when they are not. */
+  let mutedUntil = 0;
   const send = (obj) => {
-    if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(obj));
+    if (ws && ws.readyState === WebSocket.OPEN) return ws.send(JSON.stringify(obj));
+    if (Date.now() > mutedUntil) {
+      mutedUntil = Date.now() + 4000; // one apology per flurry of taps
+      toast(t('offlineTap'));
+    }
   };
 
   /* The server already pings this socket every 30s at the protocol level, so
@@ -1505,6 +1577,11 @@
   });
 
   function handleServer(msg) {
+    handleOne(msg);
+    keepSnapshot();
+  }
+
+  function handleOne(msg) {
     switch (msg.t) {
       case 'pong':
         clockOffset = msg.now - Date.now();
@@ -1523,7 +1600,8 @@
         lastSeenSent = 0;
         rememberRoom(room.code, room.name);
         renderRoomHeader();
-        renderMembers(msg.members);
+        lastMembers = msg.members || [];
+        renderMembers(lastMembers);
         renderAllCards();
         renderChat();
         if (connBanner) {
@@ -1572,7 +1650,8 @@
         return;
 
       case 'members':
-        renderMembers(msg.members);
+        lastMembers = msg.members || [];
+        renderMembers(lastMembers);
         return;
 
       case 'joined':
@@ -5565,6 +5644,10 @@
 
     identity = await ensureIdentity();
     connect();
+    /* If the socket answers, this never gets a chance to draw anything. If it
+       does not — a tunnel, a dead server, a plane — the board is on screen a
+       moment later instead of a room that looks empty. */
+    setTimeout(showSnapshot, 900);
     initChat();
     initPushUI();
     initReorder();
