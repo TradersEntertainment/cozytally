@@ -409,6 +409,8 @@ const store = {
    keeps the last 20 entries, so anything older stays unattributed rather
    than being guessed at — it shows up as its own "earlier" slice. */
 const LEGACY_PREFIX = 'name:';
+/** the bucket for money that was in the pot before anyone was being counted */
+const LEGACY_KEY = 'legacy:earlier';
 const setCardState = db.prepare('UPDATE cards SET state = ? WHERE id = ?');
 const backfillMoney = db.transaction(() => {
   const rows = db.prepare("SELECT id, state FROM cards WHERE type = 'money'").all();
@@ -438,7 +440,7 @@ const backfillMoney = db.transaction(() => {
     if (!Object.keys(by).length) continue;
 
     const older = Math.max(0, (state.total || 0) - attributed);
-    if (older > 0) by['legacy:earlier'] = { name: 'önceki', avatar: '🕰️', net: older };
+    if (older > 0) by[LEGACY_KEY] = { name: 'önceki', avatar: '🕰️', net: older };
 
     state.by = by;
     setCardState.run(enc(JSON.stringify(state)), row.id);
@@ -457,6 +459,82 @@ try {
   }
 } catch (err) {
   console.error('money backfill skipped:', err.message);
+}
+
+/* Spending used to take money off whoever pressed the button, and the pot was
+   floored at zero while the shares were not — so a piggy bank could easily end
+   up holding a different amount than its shares add up to. Now that a spend is
+   split deliberately, that difference is the whole point of the card, and a
+   number that was wrong before the change would stay wrong forever. This puts
+   every existing pot back in step with its shares, once. */
+const backfillShares = db.transaction(() => {
+  const rows = db.prepare("SELECT id, state FROM cards WHERE type = 'money'").all();
+  let touched = 0;
+  for (const row of rows) {
+    let state;
+    try {
+      state = JSON.parse(dec(row.state, '{}'));
+    } catch {
+      continue;
+    }
+    const by = state.by;
+    if (!by || !Object.keys(by).length) continue;
+    const total = Math.max(0, Number(state.total) || 0);
+
+    // a negative share means nothing now — it was only ever the old rule's
+    // arithmetic showing through
+    for (const v of Object.values(by)) v.net = Math.max(0, Math.round(Number(v.net) || 0));
+    let sum = Object.values(by).reduce((n, v) => n + v.net, 0);
+    if (sum === total) continue;
+
+    if (sum < total) {
+      // more in the pot than anyone is credited with: the rest came from before
+      const older = (by[LEGACY_KEY] = by[LEGACY_KEY] || { name: 'önceki', avatar: '🕰️', net: 0 });
+      older.net += total - sum;
+    } else {
+      // credited with more than is actually there — spend the oldest money first
+      const older = by[LEGACY_KEY];
+      if (older) {
+        const take = Math.min(older.net, sum - total);
+        older.net -= take;
+        sum -= take;
+        if (!older.net) delete by[LEGACY_KEY];
+      }
+      if (sum > total) {
+        /* Still over, so everyone loses the same proportion. Largest remainder,
+           because the shares have to add up to the pot exactly and rounding
+           each one on its own does not. */
+        const people = Object.values(by);
+        const exact = people.map((v) => (v.net * total) / sum);
+        const floors = exact.map(Math.floor);
+        let short = total - floors.reduce((a, b) => a + b, 0);
+        const order = exact
+          .map((v, i) => ({ i, frac: v - floors[i] }))
+          .sort((a, b) => b.frac - a.frac);
+        for (const o of order) {
+          if (short <= 0) break;
+          floors[o.i]++;
+          short--;
+        }
+        people.forEach((v, i) => (v.net = floors[i]));
+      }
+    }
+    for (const [k, v] of Object.entries(by)) if (!v.net) delete by[k];
+    setCardState.run(enc(JSON.stringify(state)), row.id);
+    touched++;
+  }
+  return touched;
+});
+
+const SHARE_BACKFILL_KEY = 'money_share_v1';
+try {
+  if (!q.getMeta.get(SHARE_BACKFILL_KEY)) {
+    const n = backfillShares();
+    q.setMeta.run(SHARE_BACKFILL_KEY, String(Date.now()));
+    if (n) console.log(`Squared up the shares on ${n} piggy bank(s) with what is in them`);
+  }
+} catch (err) {
+  console.error('share backfill skipped:', err.message);
 }
 
 /* Read receipts arrived after people had already been talking for weeks, so
@@ -647,6 +725,36 @@ function sanitizeConfig(type, raw) {
   return out;
 }
 
+/** The goal ladder as a list, whichever of the two shapes the card was made in. */
+function goalLadder(cfg) {
+  if (Array.isArray(cfg.goals) && cfg.goals.length) return cfg.goals;
+  if (cfg.goal) return [{ amount: cfg.goal, title: '', photo: cfg.photo }];
+  return [];
+}
+
+/**
+ * Read a stated split of a spend: who it comes out of, and how much of each.
+ *
+ * Nobody can be charged more than they actually have in the pot, which is what
+ * keeps the shares from going negative — and with them the promise that the
+ * pot is exactly the sum of the shares. Names and avatars are copied in beside
+ * the numbers, because this record outlives the room: read back in a year, the
+ * person may be gone and their entry in `by` with them.
+ */
+function spendSplit(raw, by) {
+  if (!raw || typeof raw !== 'object') return [];
+  const out = [];
+  for (const [key, v] of Object.entries(raw)) {
+    const share = by[key];
+    if (!share) return []; // an unknown pocket to take from is a refusal, not a zero
+    const amount = toInt(v, 0, Math.max(0, share.net || 0), -1);
+    if (amount < 0) return []; // asked for more than they have
+    if (!amount) continue;
+    out.push({ key, name: share.name || '', avatar: share.avatar || '🐻', amount });
+  }
+  return out;
+}
+
 /* Ten questions for a round of "closest guess", drawn without repeats. The
    answers only ever live here — questions.js is outside public/ so a browser
    can't read ahead, and redactGame keeps them off the wire until both people
@@ -680,7 +788,7 @@ function defaultState(type, now, config) {
   if (type === 'streak') return { startAt: now, best: 0 };
   if (type === 'timer') return { running: false, startedAt: 0, accumulated: 0 };
   if (type === 'note') return { text: '', author: '', updatedAt: 0, comments: [] };
-  if (type === 'money') return { total: 0, log: [], by: {} };
+  if (type === 'money') return { total: 0, log: [], by: {}, paid: [], hit: [] };
   if (type === 'list') return { items: [] };
   if (type === 'checkin')
     return { people: {}, days: {}, best: 0, tokens: COVER_TOKENS_PER_MONTH, tokenMonth: '', covers: [] };
@@ -1453,59 +1561,126 @@ function handleMessage(ws, msg) {
     case 'money': {
       const row = store.getCard(clampStr(msg.id, 40), code);
       if (!row || row.type !== 'money') return;
-      const amount = toInt(msg.amount, -100000000, 100000000, 0);
-      if (!amount) return;
       const state = JSON.parse(row.state);
       const before = state.total || 0;
-      state.total = Math.max(0, before + amount);
-      state.log = [{ a: amount, by: ws.meta.name, at: now }, ...(state.log || [])].slice(0, 20);
-
-      // running per-person net, so the card can show who put in what
       state.by = state.by || {};
       const who = ws.meta.userId || ws.meta.cid || ws.meta.id;
-      const mine = (state.by[who] = state.by[who] || { net: 0 });
-      mine.name = ws.meta.name;
-      mine.avatar = ws.meta.avatar;
-      mine.net = (mine.net || 0) + amount;
+      const cfgNow = JSON.parse(row.config);
+      const goalsNow = goalLadder(cfgNow);
+      /* In the spend branch `amount` is the size of the spend, always positive,
+         so its sign no longer says which way the money went. */
+      const spending = msg.op === 'spend';
+      let amount;
 
-      // fold any history that was reconstructed under this person's name
-      // into their real entry, so they don't show up twice
-      const legacy = LEGACY_PREFIX + ws.meta.name;
-      if (legacy !== who && state.by[legacy]) {
-        mine.net += state.by[legacy].net || 0;
-        delete state.by[legacy];
+      if (spending) {
+        /* Money leaving the pot is a different act from money arriving, and it
+           is the one that used to be wrong: whoever pressed the button had it
+           taken off their own share, however the money was really made up. Now
+           the split is stated, and the pot and the shares can never disagree. */
+        const gave = spendSplit(msg.gave, state.by);
+        if (!gave.length) return;
+        amount = gave.reduce((n, g) => n + g.amount, 0);
+        const asked = toInt(msg.amount, 1, 100000000, 0);
+        if (!amount || (asked && asked !== amount)) return;
+        if (amount > before) return; // you cannot spend what is not in there
+
+        for (const g of gave) state.by[g.key].net -= g.amount;
+        state.total = before - amount;
+
+        // people write a spend down after the fact, sometimes long after, and
+        // sometimes on a card they only made once the money had gone
+        const at = toInt(msg.at, 0, now, now);
+        const note = clampStr(msg.note, 60);
+        const goal = Number.isInteger(msg.goal) && goalsNow[msg.goal] ? msg.goal : -1;
+        if (goal >= 0) {
+          /* A goal that has been paid stays paid. Its name and price are copied
+             in as they were, so editing the plan later cannot rewrite what
+             happened — and so is who put the money in, because the shares it
+             came out of are about to go down and that is the only record left
+             of them. */
+          state.paid = (state.paid || []).filter((p) => p.i !== goal);
+          state.paid.push({
+            i: goal,
+            title: goalsNow[goal].title || '',
+            amount: goalsNow[goal].amount,
+            at,
+            note,
+            gave,
+          });
+          state.paid.sort((x, y) => x.i - y.i);
+        }
+        state.log = [
+          { a: -amount, by: ws.meta.name, key: who, at, note, goal, gave },
+          ...(state.log || []),
+        ]
+          .sort((x, y) => (y.at || 0) - (x.at || 0))
+          .slice(0, 20);
+      } else {
+        amount = toInt(msg.amount, -100000000, 100000000, 0);
+        if (!amount) return;
+        state.total = Math.max(0, before + amount);
+        state.log = [{ a: amount, by: ws.meta.name, key: who, at: now }, ...(state.log || [])]
+          .slice(0, 20);
+
+        // running per-person share, so the card can show whose money is in there
+        const mine = (state.by[who] = state.by[who] || { net: 0 });
+        mine.name = ws.meta.name;
+        mine.avatar = ws.meta.avatar;
+        mine.net = (mine.net || 0) + amount;
+
+        // fold any history that was reconstructed under this person's name
+        // into their real entry, so they don't show up twice
+        const legacy = LEGACY_PREFIX + ws.meta.name;
+        if (legacy !== who && state.by[legacy]) {
+          mine.net += state.by[legacy].net || 0;
+          delete state.by[legacy];
+        }
       }
-      store.updateCardState(JSON.stringify(state), row.id);
-      broadcastCard(code, row.id, by, amount > 0 ? 'money+' : 'money-');
+      /* Which lines this crossed, worked out before anything is written: the
+         copy that goes to the browsers has to be the same one that goes to
+         disk, or a milestone can be cheered twice — once now and once when
+         somebody reloads. */
+      state.hit = Array.isArray(state.hit) ? state.hit : [];
+      const settled = new Set((state.paid || []).map((x) => x.i));
+      const cheered = [];
+      /* A goal is paid off once the pot covers it *and* everything still owed
+         before it, so the line to cross is a running sum — and a rung that has
+         already been settled is not part of it any more. Its money left the day
+         it was spent; counting it again would push every line after it out of
+         reach. */
+      let need = 0;
+      goalsNow.forEach((g, i) => {
+        if (settled.has(i)) return;
+        need += g.amount;
+        if (before >= need || state.total < need || state.hit.includes(i)) return;
+        cheered.push(i);
+      });
+      if (cheered.length) state.hit = [...state.hit, ...cheered];
 
-      const cfg = JSON.parse(row.config);
-      const cur = cfg.cur || '₺';
+      store.updateCardState(JSON.stringify(state), row.id);
+      broadcastCard(code, row.id, by, !spending && amount > 0 ? 'money+' : 'money-');
+
+      const cur = cfgNow.cur || '₺';
       pushToRoom(
         code,
-        amount > 0 ? 'moneyIn' : 'moneyOut',
+        !spending && amount > 0 ? 'moneyIn' : 'moneyOut',
         [ws.meta.name, row.title, Math.abs(amount), state.total, cur],
         ws.meta.cid
       );
-      // every milestone crossed by this entry gets its own celebration
-      const goals = Array.isArray(cfg.goals) && cfg.goals.length
-        ? cfg.goals
-        : cfg.goal
-          ? [{ amount: cfg.goal, title: '', photo: cfg.photo }]
-          : [];
-      // A goal is paid off once the pot covers it *and* everything before it,
-      // so the line to cross is the running sum, not the goal's own price.
-      let need = 0;
-      goals.forEach((g, i) => {
-        need += g.amount;
-        if (before >= need || state.total < need) return;
+      /* Each line crossed gets its own celebration — and only ever one. A pot
+         that dips under a line and climbs back over it has not achieved
+         anything a second time, and confetti for something you did last month
+         is worse than no confetti at all. */
+      cheered.forEach((i) => {
+        const g = goalsNow[i];
         broadcast(code, {
           t: 'money:goal',
           id: row.id,
           card: row.title,
           goal: g,
           index: i,
-          of: goals.length,
-          last: i === goals.length - 1,
+          of: goalsNow.length,
+          last: i === goalsNow.length - 1,
         });
         pushToRoom(
           code,

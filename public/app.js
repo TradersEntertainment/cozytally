@@ -716,6 +716,11 @@
   }
 
   const fmtNum = (n) => Number(n || 0).toLocaleString(lang === 'tr' ? 'tr-TR' : 'en-US');
+  /** what an <input type="date"> wants, in local time rather than UTC */
+  const toDateInput = (d) => {
+    const x = d instanceof Date ? d : new Date(d);
+    return `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, '0')}-${String(x.getDate()).padStart(2, '0')}`;
+  };
 
   // ------------------------------------------------------------ modal helpers
   const overlay = $('#modal-overlay');
@@ -3684,13 +3689,33 @@
   }
 
   /**
+   * Which rungs have actually been paid off, matched back to the plan as it
+   * stands now. A payment records the rung's name and price as they were, so
+   * rewriting the plan afterwards cannot rewrite history — and if the rung
+   * itself is changed, it stops counting as paid, which is right: that is a
+   * different goal now, whatever its position.
+   */
+  function paidOf(card, goals) {
+    const out = {};
+    for (const p of card.state?.paid || []) {
+      const g = goals[p.i];
+      if (g && g.amount === p.amount && (g.title || '') === (p.title || '')) out[p.i] = p;
+    }
+    return out;
+  }
+
+  /**
    * Pour the pot into the goals one after another: the first goal takes what it
    * costs, only the leftover spills into the next. A goal further down the list
    * stays at 0 until the ones before it are fully paid.
+   *
+   * A rung that has been paid is settled and takes nothing — its money left the
+   * pot the day it was spent, so counting it again would spend it twice.
    */
-  function fillGoals(goals, total) {
+  function fillGoals(goals, total, paid = {}) {
     let left = total;
-    return goals.map((g) => {
+    return goals.map((g, i) => {
+      if (paid[i]) return { ...g, got: g.amount, done: true, paid: paid[i] };
       const got = Math.max(0, Math.min(left, g.amount));
       left -= got;
       return { ...g, got, done: g.amount > 0 && got >= g.amount };
@@ -3701,7 +3726,8 @@
     const total = card.state.total || 0;
     const cur = card.config.cur || '₺';
     const goals = goalsOf(card);
-    const rungs = fillGoals(goals, total);
+    const paid = paidOf(card, goals);
+    const rungs = fillGoals(goals, total, paid);
     const needAll = goals.reduce((s, g) => s + g.amount, 0);
     const doneCount = rungs.filter((r) => r.done).length;
     const allDone = rungs.length > 0 && doneCount === rungs.length;
@@ -3737,24 +3763,49 @@
              .map((r, i) => {
                const isActive = r === active && !r.done;
                const fill = r.amount ? Math.max(0, Math.min(100, (r.got / r.amount) * 100)) : 0;
-               return `<div class="goal-step ${r.done ? 'done' : ''} ${isActive ? 'active' : ''}" data-i="${i}">
+               /* The money that paid this off has already come out of everyone's
+                  share, so this line is the only place it still exists. */
+               const gave = (r.paid?.gave || [])
+                 .map((g) => `<b>${esc(g.avatar)} ${esc(g.name)}</b> ${fmtNum(g.amount)}`)
+                 .join('');
+               return `<div class="goal-step ${r.done ? 'done' : ''} ${r.paid ? 'paid' : ''}
+                 ${isActive ? 'active' : ''}" data-i="${i}">
                  <div class="gs-photo">
                    ${r.photo ? `<img src="${esc(r.photo)}" alt="" loading="lazy">` : '<span class="gs-blank">💰</span>'}
-                   <span class="gs-star">${r.done ? '⭐' : '☆'}</span>
+                   ${r.paid
+                     ? `<span class="gs-stamp">${esc(t('goalPaid'))}</span>`
+                     : `<span class="gs-star">${r.done ? '⭐' : '☆'}</span>`}
                  </div>
                  <span class="gs-name">${esc(r.title || `${i + 1}. ${t('goalWord')}`)}</span>
                  <span class="gs-amt">${r.done
                    ? fmtNum(r.amount)
                    : `${fmtNum(r.got)}<b>/</b>${fmtNum(r.amount)}`}${esc(cur)}</span>
-                 <span class="gs-bar"><i style="width:${fill}%"></i></span>
+                 ${r.paid
+                   ? `<span class="gs-when">${esc(t('goalPaidOn', { date: shortDate(r.paid.at) }))}</span>
+                      ${gave ? `<span class="gs-gave">${gave}</span>` : ''}
+                      ${r.paid.note ? `<span class="gs-note">${esc(r.paid.note)}</span>` : ''}`
+                   : `<span class="gs-bar"><i style="width:${fill}%"></i></span>`}
                </div>`;
              })
              .join('')}
          </div>`
       : '';
 
-    const log = (card.state.log || []).slice(0, 4)
-      .map((e) => `<div><span class="${e.a > 0 ? 'm-in' : 'm-out'}">${e.a > 0 ? '+' : '−'}${fmtNum(Math.abs(e.a))}${esc(cur)}</span> — ${esc(e.by)}</div>`)
+    /* Six rather than four now, because a spend takes a whole line to itself:
+       what it was for is most of why you would look at this list at all. */
+    /* Six rather than four, because a spend takes a whole line to itself: what
+       it was for is most of why you would read this list at all. And a spend
+       is named after whose money it was, not whoever happened to be holding
+       the phone — those are the same person for a deposit and often not for a
+       spend, which is the entire point of asking. */
+    const log = (card.state.log || []).slice(0, 6)
+      .map((e) => {
+        const whose = e.gave?.length ? e.gave.map((g) => g.name).join(', ') : e.by;
+        return `<div><span class="${e.a > 0 ? 'm-in' : 'm-out'}"
+          >${e.a > 0 ? '+' : '−'}${fmtNum(Math.abs(e.a))}${esc(cur)}</span> — ${esc(whose)}${
+          e.note ? `<i class="m-note">${esc(e.note)}</i>` : ''}${
+          e.a < 0 && e.at ? `<i class="m-when">${esc(shortDate(e.at))}</i>` : ''}</div>`;
+      })
       .join('');
 
     const race = renderRace(card.state.by, cur);
@@ -3788,18 +3839,141 @@
     }
 
     const amtInput = $('.js-amt', body);
-    const sendAmount = (sign) => {
+    const sendAmount = () => {
       const v = Math.round(Math.abs(Number(amtInput.value)));
       if (!v) return amtInput.focus();
-      send({ t: 'money', id: card.id, amount: sign * v });
+      send({ t: 'money', id: card.id, amount: v });
       amtInput.value = '';
     };
-    $('.js-madd', body).onclick = () => sendAmount(1);
-    $('.js-msub', body).onclick = () => sendAmount(-1);
-    amtInput.addEventListener('keydown', (e) => e.key === 'Enter' && sendAmount(1));
+    $('.js-madd', body).onclick = sendAmount;
+    /* Taking money out is no longer the same gesture as putting it in. Money
+       arrives from whoever is holding the phone, but it leaves on behalf of
+       both of you, and which of your shares it comes out of is something only
+       you know — so it is asked. */
+    $('.js-msub', body).onclick = () => openSpend(card, Math.round(Math.abs(Number(amtInput.value))) || 0);
+    amtInput.addEventListener('keydown', (e) => e.key === 'Enter' && sendAmount());
 
     if (opts.verb === 'money+') coinRain(body.closest('.card'));
     if (opts.verb === 'money-') sparklesAt(body.closest('.card'));
+  }
+
+  /**
+   * Spending from the pot: how much, what for, against which goal, and — the
+   * part that used to be guessed and got it wrong — whose share it comes out
+   * of. The boxes start empty on purpose: the split is a decision the two of
+   * you make, not one the app can infer from who has put in more.
+   */
+  function openSpend(card, seed) {
+    const cur = card.config.cur || '₺';
+    const total = card.state.total || 0;
+    const goals = goalsOf(card);
+    const paid = paidOf(card, goals);
+    const people = Object.entries(card.state.by || {})
+      .map(([key, v]) => ({ key, name: v.name || '?', avatar: v.avatar || '🐻', net: v.net || 0 }))
+      .filter((r) => r.net > 0)
+      .sort((a, b) => b.net - a.net);
+    if (!people.length || !total) return toast(t('spendEmpty'));
+
+    const open = goals.map((g, i) => ({ g, i })).filter(({ i }) => !paid[i]);
+    const box = openModal(`
+      <h2>${esc(t('spendTitle'))} 🧾</h2>
+      <div class="field">
+        <label>${esc(t('spendAmount'))}</label>
+        <input id="sp-amt" type="number" inputmode="numeric" min="1" max="${total}"
+          value="${seed || ''}" placeholder="${esc(t('amountPh'))}">
+      </div>
+      <div class="field">
+        <label>${esc(t('spendNote'))}</label>
+        <input id="sp-note" type="text" maxlength="60" placeholder="${esc(t('spendNotePh'))}">
+      </div>
+      ${open.length
+        ? `<div class="field">
+             <label>${esc(t('spendGoal'))}</label>
+             <select id="sp-goal">
+               <option value="-1">${esc(t('spendNoGoal'))}</option>
+               ${open.map(({ g, i }) => `<option value="${i}">${esc(
+                 g.title || `${i + 1}. ${t('goalWord')}`
+               )} · ${fmtNum(g.amount)}${esc(cur)}</option>`).join('')}
+             </select>
+           </div>`
+        : ''}
+      <div class="field">
+        <label>${esc(t('spendDate'))}</label>
+        <input id="sp-date" type="date" value="${toDateInput(serverNow())}"
+          max="${toDateInput(serverNow())}">
+      </div>
+      <div class="field">
+        <label>${esc(t('spendFrom'))}</label>
+        <div class="spend-rows">
+          ${people.map((r) => `<label class="spend-row">
+            <span class="spend-who">${esc(r.avatar)} ${esc(r.name)}</span>
+            <span class="spend-has">${fmtNum(r.net)}${esc(cur)}</span>
+            <input class="js-share" data-key="${esc(r.key)}" type="number"
+              inputmode="numeric" min="0" max="${r.net}" placeholder="0">
+          </label>`).join('')}
+        </div>
+        <div class="sub-label js-spleft"></div>
+      </div>
+      <div class="modal-actions">
+        <button class="btn btn-ghost js-cancel">${esc(t('cancel'))}</button>
+        <button class="btn btn-primary js-spend" disabled>${esc(t('spendBtn'))}</button>
+      </div>`);
+
+    const amtEl = $('#sp-amt', box);
+    const goalEl = $('#sp-goal', box);
+    const leftEl = $('.js-spleft', box);
+    const goBtn = $('.js-spend', box);
+    const shares = $$('.js-share', box);
+    const readShare = (el) => Math.max(0, Math.round(Number(el.value) || 0));
+
+    const recheck = () => {
+      const want = Math.round(Number(amtEl.value) || 0);
+      const given = shares.reduce((n, el) => n + readShare(el), 0);
+      const over = shares.some((el) => readShare(el) > Number(el.max));
+      const left = want - given;
+      leftEl.textContent = over
+        ? t('spendTooMuch')
+        : left === 0 && want > 0
+          ? t('spendBalanced')
+          : t('spendLeft', { n: fmtNum(Math.abs(left)) + cur, sign: left > 0 ? '' : '−' });
+      leftEl.classList.toggle('bad', over || left !== 0);
+      goBtn.disabled = over || !want || left !== 0 || want > total;
+    };
+
+    /* Picking a goal is a statement about the amount too — you are paying that
+       thing off, so the number it costs is the number that leaves. */
+    if (goalEl) {
+      goalEl.onchange = () => {
+        const i = Number(goalEl.value);
+        if (i >= 0 && goals[i]) amtEl.value = String(goals[i].amount);
+        recheck();
+      };
+    }
+    amtEl.addEventListener('input', recheck);
+    shares.forEach((el) => el.addEventListener('input', recheck));
+    recheck();
+
+    $('.js-cancel', box).onclick = closeModal;
+    goBtn.onclick = () => {
+      const gave = {};
+      for (const el of shares) {
+        const v = readShare(el);
+        if (v) gave[el.dataset.key] = v;
+      }
+      const day = $('#sp-date', box).value;
+      send({
+        t: 'money',
+        id: card.id,
+        op: 'spend',
+        amount: Math.round(Number(amtEl.value) || 0),
+        gave,
+        note: $('#sp-note', box).value.trim(),
+        goal: goalEl ? Number(goalEl.value) : -1,
+        at: day ? new Date(day + 'T12:00:00').getTime() : serverNow(),
+      });
+      closeModal();
+    };
+    setTimeout(() => amtEl.focus(), 60);
   }
 
   // Who put in what. Always on the card — the whole point of a shared pot is
@@ -4049,6 +4223,19 @@
     if (!f) {
       f = new Intl.DateTimeFormat(loc, { day: 'numeric', month: 'long', year: 'numeric' });
       dateFmts.set(loc, f);
+    }
+    return f.format(at);
+  };
+
+  /* The same date with the year left off and the month shortened — for places
+     where it sits beside something more important than itself. */
+  const shortDate = (at) => {
+    const loc = lang === 'tr' ? 'tr-TR' : 'en-US';
+    const key = loc + ':short';
+    let f = dateFmts.get(key);
+    if (!f) {
+      f = new Intl.DateTimeFormat(loc, { day: 'numeric', month: 'short' });
+      dateFmts.set(key, f);
     }
     return f.format(at);
   };
@@ -4367,8 +4554,6 @@
     let emoji = existing?.emoji || (game ? GAME_META[game].emoji : meta.emoji);
 
     const today = new Date();
-    const toDateInput = (d) =>
-      `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 
     let extraFields = '';
     if (type === 'game') {

@@ -632,6 +632,7 @@ input[type='number'],
 input[type='password'],
 input[type='date'],
 input[type='datetime-local'],
+select,
 textarea {
   width: 100%;
   font-family: inherit;
@@ -648,7 +649,23 @@ textarea {
   transition: border-color 0.18s var(--ease), box-shadow 0.18s var(--ease), background 0.18s var(--ease);
 }
 
+/* a native dropdown ignores most of the above, so it is asked to stop being
+   one — the arrow is drawn back on as a background image */
+select {
+  appearance: none;
+  -webkit-appearance: none;
+  padding-right: 38px;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 8'><path d='M1 1.5 6 6.5 11 1.5' fill='none' stroke='%23b9b3d4' stroke-width='1.6' stroke-linecap='round'/></svg>");
+  background-repeat: no-repeat;
+  background-position: right 14px center;
+  background-size: 12px 8px;
+  cursor: pointer;
+}
+
+select option { color: #14112c; background: #efecf8; }
+
 input:focus,
+select:focus,
 textarea:focus {
   border-color: color-mix(in srgb, var(--amber) 70%, transparent);
   background: rgba(255, 255, 255, 0.09);
@@ -1582,6 +1599,7 @@ body.reordering {
 
 .goal-step {
   flex: 0 0 108px;
+  align-self: flex-start;
   scroll-snap-align: center;
   display: flex;
   flex-direction: column;
@@ -1850,7 +1868,7 @@ body.reordering {
   display: flex;
   flex-direction: column;
   gap: 3px;
-  max-height: 76px;
+  max-height: 108px;
   overflow-y: auto;
   scrollbar-width: thin;
   font-size: var(--t-footnote);
@@ -2936,6 +2954,87 @@ body.reordering {
   flex-wrap: wrap;
   justify-content: center;
 }
+
+/* ---- a goal that has been paid off
+   The pot filling up is a bar; the thing actually being bought is a stamp. They
+   should not look like two amounts of the same feeling, so this one lands over
+   the photo, slightly crooked, the way a stamp does. */
+.goal-step.paid { opacity: 1; border-color: rgba(139, 233, 201, 0.4); }
+
+/* dim what is behind the stamp, not the stamp itself */
+.goal-step.paid .gs-photo img,
+.goal-step.paid .gs-blank { filter: saturate(0.65) brightness(0.72); }
+
+.gs-stamp {
+  position: absolute;
+  left: 50%;
+  top: 52%;
+  transform: translate(-50%, -50%) rotate(-9deg);
+  padding: 2px 7px;
+  border-radius: var(--r-xs);
+  border: 2px solid var(--mint);
+  color: var(--mint);
+  background: rgba(12, 10, 28, 0.5);
+  font-size: var(--t-caption);
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  animation: gs-stamped 0.42s var(--spring) both;
+}
+
+@keyframes gs-stamped {
+  from { transform: translate(-50%, -50%) rotate(-9deg) scale(2.4); opacity: 0; }
+  to { transform: translate(-50%, -50%) rotate(-9deg) scale(1); opacity: 1; }
+}
+
+.gs-when, .gs-gave, .gs-note {
+  display: block;
+  font-size: var(--t-caption);
+  color: var(--ink-dim);
+  line-height: 1.35;
+}
+
+/* The money that paid for this, as it stood the day it was paid. One person
+   per line: at this width a middot list breaks names in half. */
+.gs-gave { color: var(--ink-2); }
+.gs-gave b {
+  display: block;
+  font-weight: 600;
+  color: var(--ink-dim);
+  margin-top: 2px;
+}
+.gs-note { font-style: italic; }
+
+/* ---- spending from the pot
+   One row per person: who, what they have in there, and how much of this is
+   coming out of it. `.modal-box label` makes every label a block, and these
+   are labels, so they have to say otherwise louder than that rule does. */
+.spend-rows { display: flex; flex-direction: column; gap: 8px; }
+
+.modal-box .spend-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 0;
+  font-weight: 500;
+  color: var(--ink-2);
+}
+
+.spend-who { flex: 1 1 auto; min-width: 0; }
+.spend-has { color: var(--ink-dim); font-size: var(--t-caption); white-space: nowrap; }
+
+.spend-row input {
+  flex: 0 0 96px;
+  text-align: right;
+}
+
+.js-spleft { margin-top: 6px; }
+.js-spleft.bad { color: var(--peach); }
+
+.money-log .m-note { font-style: normal; color: var(--ink-2); }
+.money-log .m-note::before { content: ' · '; color: var(--ink-dim); }
+.money-log .m-when { color: var(--ink-dim); font-style: normal; }
+.money-log .m-when::before { content: ' · '; }
 
 /* ---- mangala
    Sized to the same 320px box Connect Four already proved on a phone: two
