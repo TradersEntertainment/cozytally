@@ -295,6 +295,7 @@ const q = {
   ),
   seenForRoom: db.prepare('SELECT person, name, avatar, seen_at FROM chat_seen WHERE room_code = ?'),
   getSeen: db.prepare('SELECT * FROM chat_seen WHERE room_code = ? AND person = ?'),
+  isUser: db.prepare('SELECT 1 FROM users WHERE id = ?'),
   deleteSeen: db.prepare('DELETE FROM chat_seen WHERE room_code = ? AND person = ?'),
   getMeta: db.prepare('SELECT v FROM schema_meta WHERE k = ?'),
   setMeta: db.prepare('INSERT OR REPLACE INTO schema_meta (k, v) VALUES (?, ?)'),
@@ -581,6 +582,149 @@ try {
 } catch (err) {
   console.error('read-receipt backfill skipped:', err.message);
 }
+
+/**
+ * Every person this room's cards have attributed something to, and what they
+ * were called at the time. A shared board keeps who-did-what in half a dozen
+ * shapes — a piggy bank's shares, a check-in's roster, the name on a comment,
+ * the chair in a game — and they are all keyed the same way, so they can all
+ * be found the same way.
+ */
+function roomPeople(code) {
+  const out = new Map();
+  const put = (key, name, avatar) => {
+    if (!key) return;
+    const had = out.get(key);
+    out.set(key, { name: name || had?.name || '', avatar: avatar || had?.avatar || '' });
+  };
+  for (const row of store.roomCards(code)) {
+    let state;
+    try {
+      state = JSON.parse(row.state);
+    } catch {
+      continue;
+    }
+    for (const [k, v] of Object.entries(state.by || {})) put(k, v?.name, v?.avatar);
+    for (const [k, v] of Object.entries(state.people || {})) put(k, v?.name, v?.avatar);
+    for (const c of state.comments || []) put(c?.key, c?.by, c?.avatar);
+    for (const pl of state.players || []) put(pl?.key, pl?.name, pl?.avatar);
+  }
+  return out;
+}
+
+const sameName = (a, b) =>
+  !!a && !!b && String(a).toLocaleLowerCase('tr') === String(b).toLocaleLowerCase('tr');
+
+/**
+ * Who in this room is nobody — a device used before there was an account to
+ * put it under, or a name a piggy bank reconstructed out of its own history.
+ * These are the entries that read as a second person on the card and are
+ * really you from before.
+ *
+ * Only ones going by your name are offered. In a room of two, the other
+ * unattached identity is usually your partner's old phone, and "was this
+ * you?" is a terrible question to ask about somebody else's contributions —
+ * one wrong tap and you have taken their half of the pot.
+ */
+function unclaimedIn(code, meKey, meName) {
+  const out = [];
+  for (const [key, who] of roomPeople(code)) {
+    if (!key || key === meKey || key === LEGACY_KEY) continue;
+    if (key.startsWith(LEGACY_PREFIX)) {
+      const name = who.name || key.slice(LEGACY_PREFIX.length);
+      if (sameName(name, meName)) out.push({ key, name, avatar: who.avatar || '🕰️' });
+      continue;
+    }
+    if (q.isUser.get(key)) continue; // already somebody's account
+    if (!sameName(who.name, meName)) continue;
+    out.push({ key, name: who.name, avatar: who.avatar || '🐻' });
+  }
+  return out.slice(0, 12);
+}
+
+/**
+ * Fold one or more old identities into a person, everywhere in one room.
+ *
+ * The shares of a piggy bank add up, because they are amounts of the same
+ * money. Everything else is a label, and the label becomes yours. Returns the
+ * cards it actually changed, so only those have to be sent out again.
+ */
+const mergeInto = db.transaction((code, fromKeys, toKey, name, avatar) => {
+  const from = new Set(fromKeys.filter((k) => k && k !== toKey));
+  const touched = [];
+  if (!from.size) return touched;
+
+  for (const row of store.roomCards(code)) {
+    let state;
+    try {
+      state = JSON.parse(row.state);
+    } catch {
+      continue;
+    }
+    let hit = false;
+
+    if (state.by) {
+      const mine = (state.by[toKey] = state.by[toKey] || { net: 0, name, avatar });
+      for (const k of from) {
+        if (!state.by[k]) continue;
+        mine.net = (mine.net || 0) + (state.by[k].net || 0);
+        delete state.by[k];
+        hit = true;
+      }
+      if (hit) {
+        mine.name = name;
+        mine.avatar = avatar;
+      } else if (!state.by[toKey].net && !Object.prototype.hasOwnProperty.call(state.by, toKey)) {
+        delete state.by[toKey];
+      }
+    }
+
+    if (state.people) {
+      for (const k of from) {
+        if (!state.people[k]) continue;
+        state.people[toKey] = { name, avatar };
+        delete state.people[k];
+        hit = true;
+      }
+      /* A day is ticked once per person, so two identities that both ticked it
+         collapse into the one tick they always were. */
+      for (const day of Object.values(state.days || {})) {
+        for (const k of from) {
+          if (!day[k]) continue;
+          day[toKey] = day[toKey] || day[k];
+          delete day[k];
+          hit = true;
+        }
+      }
+    }
+
+    for (const c of state.comments || []) {
+      if (!from.has(c.key)) continue;
+      c.key = toKey;
+      c.by = name;
+      c.avatar = avatar;
+      hit = true;
+    }
+
+    /* Both chairs at a game could have been the same person under two names.
+       Re-keying would seat them twice, which no game can make sense of, so
+       the second one is left as it was. */
+    for (const pl of state.players || []) {
+      if (!from.has(pl.key)) continue;
+      if ((state.players || []).some((o) => o !== pl && o.key === toKey)) continue;
+      pl.key = toKey;
+      pl.name = name;
+      pl.avatar = avatar;
+      hit = true;
+    }
+
+    if (hit) {
+      store.updateCardState(JSON.stringify(state), row.id);
+      touched.push(row.id);
+    }
+  }
+  return touched;
+});
 
 /* A receipt is filed under your account id once you sign in, but under this
    device's id while you are a guest. Someone who used a room as a guest and
@@ -1301,12 +1445,18 @@ function handleMessage(ws, msg) {
     ws.meta.userId = account?.id || null;
     ws.meta.joined = true;
     if (account) q.linkRoom.run(account.id, code, now);
-    // before the room payload is read, so they never see their own ghost
+    /* Before the room payload is read, so they never see their own ghost. The
+       device they are signing in on is theirs, so whatever it did here as a
+       guest is theirs too — that much needs no asking. Anything left over
+       belongs to some other device, and that does. */
+    let unclaimed = [];
     if (account && ws.meta.cid) {
       try {
         mergeSeen(code, ws.meta.cid, ws.meta.name, ws.meta.avatar, account.id);
+        mergeInto(code, [ws.meta.cid], account.id, ws.meta.name, ws.meta.avatar);
+        unclaimed = unclaimedIn(code, account.id, ws.meta.name);
       } catch (err) {
-        console.error('seen merge skipped:', err.message);
+        console.error('identity merge skipped:', err.message);
       }
     }
 
@@ -1321,6 +1471,7 @@ function handleMessage(ws, msg) {
       cards: store.roomCards(code).map((r) => rowToCard(r, personKey(ws))),
       members: membersOf(code),
       you: ws.meta.id,
+      unclaimed,
       seen: store.seenForRoom(code),
       chat: store
         .recentMsgs(code, 60)
@@ -1689,6 +1840,27 @@ function handleMessage(ws, msg) {
           ws.meta.cid
         );
       });
+      return;
+    }
+
+    /* "That was me too." An old device, or a name a piggy bank pieced together
+       out of its own history — anything in this room that belongs to nobody
+       can be taken over by somebody signed in. What is offered is worked out
+       on the server, and checked again here, so a claim can only ever collect
+       things that were genuinely unattached. */
+    case 'claim': {
+      if (!ws.meta.userId) return;
+      const asked = (Array.isArray(msg.keys) ? msg.keys : [])
+        .slice(0, 12)
+        .map((k) => clampStr(k, 64))
+        .filter(Boolean);
+      if (!asked.length) return;
+      const free = new Set(unclaimedIn(code, ws.meta.userId, ws.meta.name).map((x) => x.key));
+      const take = asked.filter((k) => free.has(k));
+      if (!take.length) return;
+      const touched = mergeInto(code, take, ws.meta.userId, ws.meta.name, ws.meta.avatar);
+      for (const id of touched) broadcastCard(code, id, by, 'claim');
+      sendTo(ws, { t: 'claimed', n: take.length, cards: touched.length });
       return;
     }
 

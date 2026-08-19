@@ -1376,6 +1376,12 @@
           toast(t('reconnected'));
           wasDisconnected = false;
         }
+        offerClaim(msg.unclaimed);
+        return;
+      }
+
+      case 'claimed': {
+        toast(t('claimDone', { n: msg.n }));
         return;
       }
 
@@ -5288,6 +5294,64 @@
     updateBellUI();
   }
 
+  /**
+   * "Was this you?"
+   *
+   * Everything on a shared board is filed under whoever did it, and before you
+   * had an account that was this device. Sign in and you become someone else
+   * as far as the board is concerned — your old contributions, ticks and
+   * comments keep standing there under a name with nobody behind it. The
+   * device you sign in on is folded in by the server without asking, because
+   * there is nothing to ask. Anything left is some other device, and only you
+   * know whether it was yours.
+   */
+  const CLAIM_KEY = 'ct:claimed';
+  const claimAsked = () => {
+    try {
+      return JSON.parse(localStorage.getItem(CLAIM_KEY) || '[]');
+    } catch {
+      return [];
+    }
+  };
+
+  function offerClaim(list) {
+    if (!auth?.user || !Array.isArray(list) || !list.length) return;
+    const asked = claimAsked();
+    const fresh = list.filter((x) => !asked.includes(`${room.code}|${x.key}`));
+    if (!fresh.length) return;
+
+    const remember = () => {
+      const next = [...asked, ...fresh.map((x) => `${room.code}|${x.key}`)];
+      localStorage.setItem(CLAIM_KEY, JSON.stringify(next.slice(-60)));
+    };
+
+    const box = openModal(`
+      <h2>${esc(t('claimTitle'))} 👋</h2>
+      <p class="sub-label" style="text-align:left; margin:-6px 0 14px">${esc(t('claimBody'))}</p>
+      <div class="claim-rows">
+        ${fresh.map((x) => `<label class="claim-row">
+          <input type="checkbox" class="js-claim" data-key="${esc(x.key)}" checked>
+          <span class="claim-av">${esc(x.avatar)}</span>
+          <span class="claim-name">${esc(x.name)}</span>
+        </label>`).join('')}
+      </div>
+      <div class="modal-actions">
+        <button class="btn btn-ghost js-not">${esc(t('claimNot'))}</button>
+        <button class="btn btn-primary js-mine">${esc(t('claimMine'))}</button>
+      </div>`);
+
+    $('.js-not', box).onclick = () => {
+      remember();
+      closeModal();
+    };
+    $('.js-mine', box).onclick = () => {
+      const keys = $$('.js-claim', box).filter((el) => el.checked).map((el) => el.dataset.key);
+      remember();
+      closeModal();
+      if (keys.length) send({ t: 'claim', keys });
+    };
+  }
+
   // ------------------------------------------------------------ room init
   async function initRoom() {
     $('#view-room').hidden = false;
@@ -5340,6 +5404,19 @@
     };
     paintMusicBtn();
     music.arm();
+
+    /* Signing in used to mean going back to the landing page, which is a odd
+       thing to have to do from inside the room whose history you are trying to
+       bring with you. */
+    const acctBtn = $('#room-account');
+    const paintAcct = () => {
+      acctBtn.textContent = auth?.user ? auth.user.avatar || '👤' : '👤';
+      acctBtn.classList.toggle('off', !auth?.user);
+      acctBtn.title = auth?.user ? auth.user.name : t('signIn');
+      acctBtn.setAttribute('aria-label', acctBtn.title);
+    };
+    acctBtn.onclick = () => openAccountModal();
+    paintAcct();
 
     $('#copy-link').onclick = async () => {
       try {

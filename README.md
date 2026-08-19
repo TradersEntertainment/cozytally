@@ -26,7 +26,16 @@ en üstüne gelir.
 
 **Hesap (isteğe bağlı):** Kullanıcı adı + şifre ile kayıt olursan odaların hesabına bağlanır ve
 telefonda da bilgisayarda da aynı yerden devam edersin. Hesapsız da çalışmaya devam eder —
-o zaman odalar sadece o cihazda durur.
+o zaman odalar sadece o cihazda durur. Hesabı **odanın içinden** de açabilirsin (üstteki 👤).
+
+**Misafirken yaptıkların kayboluyor mu?** Hayır. Panoda kim ne yaptıysa o kişinin kimliğine
+yazılır, ve hesap açmadan önce o kimlik *cihazın*. Hesap açınca **o cihazın geçmişi
+sorulmadan hesabına geçer** — kumbaradaki payın, "beraber" tikleri, yorumların, oyun
+koltuğun, sohbette gördüklerin. Başka bir cihazdan kalan kayıtlar varsa oda açılırken
+sorulur: *"Bu sen miydin?"* Yalnızca **senin adını taşıyan** kayıtlar teklif edilir — iki
+kişilik bir odada sahipsiz duran öteki kimlik genelde karşı tarafın eski telefonudur, ve
+"bu sen misin?" onun katkıları hakkında sorulacak bir soru değildir. Sunucu da aynı
+kontrolü tekrar yapar, yani doğrudan istekle de başkasının payı alınamaz.
 
 Ayrıca her odada:
 

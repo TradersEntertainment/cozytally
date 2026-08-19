@@ -3005,6 +3005,27 @@ body.reordering {
 }
 .gs-note { font-style: italic; }
 
+/* ---- claiming an old identity */
+.claim-rows { display: flex; flex-direction: column; gap: 4px; }
+
+.modal-box .claim-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 0;
+  padding: 10px 12px;
+  border-radius: var(--r-sm);
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--hairline);
+  font-weight: 500;
+  color: var(--ink-2);
+  cursor: pointer;
+}
+
+.claim-row input { flex: 0 0 auto; width: 19px; height: 19px; accent-color: var(--amber); }
+.claim-av { font-size: 1.2rem; }
+.claim-name { flex: 1 1 auto; min-width: 0; }
+
 /* ---- spending from the pot
    One row per person: who, what they have in there, and how much of this is
    coming out of it. `.modal-box label` makes every label a block, and these
@@ -3227,7 +3248,8 @@ body.reordering {
    it once this button is gone for good and only that "?" remains. */
 /* muted reads as "switched off", not "broken" */
 #feel-btn.off,
-#music-btn.off { opacity: 0.5; }
+#music-btn.off,
+#room-account.off { opacity: 0.5; }
 
 /* With the keyboard up the dock would sit right on top of the box you are
    typing in, so it steps out of the way until you are done. */
