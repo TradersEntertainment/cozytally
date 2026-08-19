@@ -1197,6 +1197,7 @@
           'bad-username': 'errBadUsername',
           'short-password': 'errShortPassword',
           'bad-credentials': 'errBadCredentials',
+          'rate-limited': 'errRateLimited',
         };
         fail(map[err.code] || 'errNetwork');
         goBtn.disabled = false;
