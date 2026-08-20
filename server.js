@@ -2980,11 +2980,131 @@ function takeBackup() {
   }
 }
 
+/* ------------------------------------------------------------------
+   Encrypting what was already here.
+
+   Turning CT_SECRET on only encrypts what gets written afterwards, and most
+   of a board is never written again: a message is inserted once and never
+   touched, and a photo is encrypted at upload or not at all. So switching the
+   key on protects the future and leaves the past lying in the open — which is
+   the opposite of what anybody means by "we turned encryption on".
+
+   Cards do migrate themselves, because their state is rewritten on every tap.
+   Nothing else does.
+   ------------------------------------------------------------------ */
+const ENCRYPT_BACKFILL_KEY = 'encrypt_existing_v1';
+
+/** Every column that goes through enc() on the way in. */
+const SECRET_COLUMNS = [
+  ['rooms', 'code', ['name']],
+  ['cards', 'id', ['title', 'config', 'state']],
+  ['messages', 'id', ['author', 'text']],
+  ['chat_seen', 'rowid', ['name']],
+  ['room_members', 'rowid', ['name']],
+];
+
+function encryptExistingRows() {
+  let n = 0;
+  for (const [table, key, cols] of SECRET_COLUMNS) {
+    const rows = db.prepare(`SELECT ${key} AS k, ${cols.join(', ')} FROM ${table}`).all();
+    const set = db.prepare(
+      `UPDATE ${table} SET ${cols.map((c) => `${c} = ?`).join(', ')} WHERE ${key} = ?`
+    );
+    db.transaction(() => {
+      for (const row of rows) {
+        // already ciphertext is already done — which is also what lets this
+        // pick up where it left off if it is interrupted
+        const todo = cols.filter(
+          (c) => typeof row[c] === 'string' && row[c] !== '' && !row[c].startsWith(ENC_PREFIX)
+        );
+        if (!todo.length) continue;
+        set.run(...cols.map((c) => (todo.includes(c) ? enc(row[c]) : row[c])), row.k);
+        n++;
+      }
+    })();
+  }
+  return n;
+}
+
+/* Photographs, one at a time, written beside themselves and then renamed.
+   Overwriting in place would mean a process that dies mid-write leaves a
+   picture that is neither one thing nor the other and cannot be recovered;
+   rename within a directory is atomic. */
+async function encryptExistingFiles() {
+  let done = 0;
+  let skipped = 0;
+  let names;
+  try {
+    names = fs.readdirSync(UPLOAD_DIR);
+  } catch {
+    return { done, skipped };
+  }
+  for (const name of names) {
+    const full = path.join(UPLOAD_DIR, name);
+    try {
+      if (!fs.statSync(full).isFile() || name.endsWith('.ct-tmp')) continue;
+      const raw = fs.readFileSync(full);
+      if (raw.length >= FILE_MAGIC.length && raw.subarray(0, FILE_MAGIC.length).equals(FILE_MAGIC)) {
+        continue; // already done
+      }
+      const sealed = encFile(raw);
+      // read it back before trusting it with the only copy
+      const check = decFile(sealed);
+      if (!check || check.length !== raw.length) {
+        console.error(`encrypt: ${name} skipped, would not read back`);
+        skipped++;
+        continue;
+      }
+      const tmp = full + '.ct-tmp';
+      fs.writeFileSync(tmp, sealed);
+      fs.renameSync(tmp, full);
+      done++;
+      if (done % 25 === 0) console.log(`encrypt: ${done} photo(s) so far`);
+      await new Promise((r) => setImmediate(r)); // leave room for actual requests
+    } catch (err) {
+      console.error(`encrypt: ${name} skipped:`, err.message);
+      skipped++;
+    }
+  }
+  return { done, skipped };
+}
+
+async function encryptExisting() {
+  if (!CRYPT_KEY || q.getMeta.get(ENCRYPT_BACKFILL_KEY)) return;
+  try {
+    /* A way back, taken before anything is touched. It is a plaintext copy by
+       definition, which is the point and also why the log asks for it to be
+       deleted once this has clearly worked. */
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+    fs.mkdirSync(BACKUP_DIR, { recursive: true });
+    const safety = path.join(BACKUP_DIR, `before-encrypt-${stamp}.db`);
+    if (!fs.existsSync(safety)) db.prepare('VACUUM INTO ?').run(safety);
+
+    const rows = encryptExistingRows();
+    const { done, skipped } = await encryptExistingFiles();
+    q.setMeta.run(ENCRYPT_BACKFILL_KEY, String(Date.now()));
+    console.log(
+      `Encrypted what was already here: ${rows} row(s), ${done} photo(s)` +
+        (skipped ? `, ${skipped} skipped` : '')
+    );
+    console.log(
+      `A copy from before is at backups/${path.basename(safety)} — it is NOT ` +
+        'encrypted, so delete it once you are happy this worked.'
+    );
+  } catch (err) {
+    // leave the marker unset so the next boot tries again
+    console.error('encrypt backfill stopped:', err.message);
+  }
+}
+
 setTimeout(takeBackup, BACKUP_FIRST).unref?.();
 setInterval(takeBackup, BACKUP_EVERY).unref?.();
 
 server.listen(PORT, () => {
   console.log(`CozyTally listening on :${PORT} (data: ${DATA_DIR})`);
+  // after the door is open: the rows are quick, but a big uploads folder is
+  // not, and nothing here should stand between a deploy and its health check
+  encryptExisting();
 });
 
 /* Every deploy used to kill this process outright, so the log was never

@@ -190,6 +190,20 @@ Anahtar orada durduğu için uygulama şifreyi çözebiliyor; çözebiliyorsa ay
 yetkiye sahip biri de çözebilir. Bunun tek gerçek çözümü içeriği tarayıcıda
 şifrelemektir (uçtan uca).
 
+**Anahtarı açmak eskisini de şifreler.** Anahtar konduğunda sunucu, açılışın
+hemen ardından arka planda bir kez geriye dönüp var olan her şeyi şifreliyor:
+oda adları, kart içerikleri, eski mesajlar ve **diskteki bütün fotoğraflar**.
+Bu olmadan şifreleme yalnızca geleceği korurdu — kartlar her dokunuşta yeniden
+yazıldığı için kendiliğinden geçer ama mesajlar hiç güncellenmez ve fotoğraflar
+yalnızca yüklenirken şifrelenir, yani geçmişiniz açıkta kalırdı.
+
+Geçiş yarıda kesilirse kaldığı yerden devam eder (şifrelenmiş olanı atlar),
+fotoğraflar geçici dosya + `rename` ile değiştirilir (yarım kalmış bir yazma
+fotoğrafı kurtarılamaz hale getirirdi) ve her dosya yazılmadan önce geri
+okunup doğrulanır. Başlamadan önce `backups/before-encrypt-*.db` diye bir
+kopya alınır — **o kopya şifresizdir**, işlerin yolunda gittiğinden emin
+olunca silinmeli; log da bunu hatırlatır.
+
 **Açılışta iki kontrol var**, çünkü anahtarın iki yanlış hâli de sessizdi:
 üretimde anahtar **yoksa** sunucu durur; anahtar **veritabanını yazan anahtar
 değilse** yine durur. İkincisi olmadan sunucu çalışıyormuş gibi açılır, bütün
