@@ -139,12 +139,13 @@ olmadan da açılıyor ve sunucudan yalnızca veri istiyor — App Store'un 4.2
 maddesinde aradığı fark tam olarak bu.
 
 ```bash
-CT_API_BASE=https://senin-alan-adin npm run ios:sync
+npm run ios:sync
 npx cap open ios
 ```
 
-> Adres uygulamaya gömülü gelir; sonradan değiştirmek yeni sürüm yayınlamak
-> demektir, o yüzden ilk derlemeden önce doğrusu yazılmalı.
+> Sunucu adresi (`https://cetele.up.railway.app`) pakete gömülü gider;
+> `CT_API_BASE` ile geçersiz kılabilirsin. Değiştirmek yeni sürüm yayınlamak
+> demek olduğu için varsayılanı `scripts/build-app.mjs` tutuyor.
 
 ## Railway'e kurulum
 

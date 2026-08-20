@@ -6,17 +6,18 @@ denenmedi**, çünkü bu depo Linux'ta yazıldı — Xcode, simulator ve imzalam
 yok. Yani buradaki adımlar "hazırlandı", "denendi" değil. İlk derlemede ufak
 tefek şeyler çıkabilir; çıkarsa hata metniyle birlikte söyle.
 
-## Önce: tek doldurulacak alan
+## Sunucu adresi
 
-Native uygulamaya **sunucunun adresi gömülü** gelir. Bu adres uygulamanın
-içinde durur, yani sonradan değiştirmek yeni bir sürüm yayınlamak demektir —
-ilk derlemeden önce doğrusunu yaz.
+Native uygulamaya **sunucunun adresi gömülü** gelir ve ayarlı:
+`https://cetele.up.railway.app` (`scripts/build-app.mjs`). Doldurulacak bir
+şey yok.
 
-```
-export CT_API_BASE=https://senin-alan-adin
-```
+Adres uygulamanın içinde durduğu için değiştirmek **yeni bir sürüm yayınlamak**
+demektir. Kendi alan adına geçersen o dosyadaki varsayılanı güncelle ve yeni
+sürüm çıkar; Railway adresi çalışmaya devam ettiği için eski sürümler
+kırılmaz. Yerelde denemek için: `CT_API_BASE=http://localhost:3000 npm run ios:sync`.
 
-Aynı adresi sunucu tarafında da tanıtman gerekmez: native uygulamanın kökeni
+Sunucu tarafında bir şey tanıtman gerekmez: native uygulamanın kökeni
 `capacitor://localhost` ve o zaten izinli (`server.js`, `APP_ORIGINS`).
 
 ## Adımlar
@@ -24,7 +25,7 @@ Aynı adresi sunucu tarafında da tanıtman gerekmez: native uygulamanın köken
 ```bash
 git clone <bu depo> && cd cozytally
 npm install                       # Capacitor ve eklentiler dahil
-CT_API_BASE=https://senin-alan-adin npm run ios:sync
+npm run ios:sync
 npx cap open ios                  # Xcode açılır
 ```
 

@@ -16,17 +16,12 @@ const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const src = path.join(root, 'public');
 const out = path.join(root, 'www');
 
-const API = (process.env.CT_API_BASE || '').replace(/\/$/, '');
-if (!API) {
-  console.error(
-    'CT_API_BASE is not set — the app would be built not knowing which server\n' +
-      'to talk to, and it would look like it had simply failed to load.\n\n' +
-      '  CT_API_BASE=https://your-domain npm run build:app\n\n' +
-      'This address is baked into the build, so changing it later means shipping\n' +
-      'a new version. Set it to the address it will really have.'
-  );
-  process.exit(1);
-}
+/* The server this app talks to. Baked into the build, so changing it later
+   means shipping a new version — which is why it is a real address here rather
+   than something to remember at the Mac. Override it to build against a local
+   server, or after moving to another domain. */
+const DEFAULT_API = 'https://cetele.up.railway.app';
+const API = (process.env.CT_API_BASE || DEFAULT_API).replace(/\/$/, '');
 
 /* The service worker is the web version's way of carrying the app; here the
    app is already on the phone, so it has nothing to do. Leaving it in would
@@ -52,4 +47,4 @@ fs.writeFileSync(
 const index = path.join(out, 'index.html');
 fs.writeFileSync(index, fs.readFileSync(index, 'utf8').replaceAll('?v=dev', ''));
 
-console.log(`www/ hazır — ${n} girdi, sunucu: ${API}`);
+console.log(`www/ hazır — ${n} girdi, sunucu: ${API}${API === DEFAULT_API ? ' (varsayılan)' : ''}`);
