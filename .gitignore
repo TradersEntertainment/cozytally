@@ -13,3 +13,7 @@ dist
 www/
 ios/App/App/public/
 ios/App/App/capacitor.config.json
+
+# App Store screenshots — 16MB of PNGs that one command regenerates. Keeping
+# them in history would cost every clone forever for something nobody edits.
+store-shots/

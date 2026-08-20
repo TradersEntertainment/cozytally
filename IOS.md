@@ -58,18 +58,56 @@ Beklenen: uygulama **kendi paketinden** açılır (yani ağ olmadan da açılır
   (tarayıcıda iPhone'da hiç hissedilmiyordu).
 - **Paylaşım:** odadaki 🔗 düğmesi sistemin paylaşma sayfasını açmalı.
 
-## Henüz yapılmamış olanlar
+## İkonlar ve açılış ekranı
 
-- **Bildirimler (APNs).** Native uygulamada web-push çalışmaz; sunucuya ikinci
-  bir taşıma gerekiyor ve o Apple Developer hesabı ister. Hesap alınınca
-  yapılacak. O zamana kadar native uygulama bildirimsiz çalışır, web sürümü
-  bildirimlerine devam eder.
-- **İkonlar ve açılış ekranı.** Şu an Capacitor'ın varsayılanları. Sıradaki iş.
-- **App Store ekran görüntüleri ve inceleme notları.** Sıradaki iş.
+Hazır. `favicon.svg` — uygulamanın kendi çizimi: gece göküyüzü, hilal, ve
+dördü yan yana beşincisi üstünden geçen çetele — 1024×1024 olarak çiziliyor ve
+Xcode'un varlık kataloğuna yazılıyor. Açılış ekranı da aynı çizimin uygulamanın
+kendi gökyüzü üstünde ortalanmış hali.
+
+```bash
+node scripts/make-icons.mjs
+```
+
+512'lik PNG büyütülmüyor, SVG doğrudan o ölçüde çiziliyor. **Alfa kanalı
+temizleniyor**, çünkü Apple ikonda alfa taşıyan bir PNG'yi kabul etmiyor —
+tamamen opak olsa bile kanalın varlığı red sebebi.
+
+## Demo odası ve ekran görüntüleri
+
+```bash
+# canlı sunucuda bir demo odası kur (App Review için)
+CT_API_BASE=https://cetele.up.railway.app node scripts/seed-demo.mjs
+
+# ekran görüntüleri — yukarıdaki komutun verdiği davet bağıyla
+node scripts/store-shots.mjs <davet-bağı>
+```
+
+`store-shots/` klasörüne **1290×2796** ve **1242×2688** ölçülerinde beşer
+görüntü çıkar: pano, kumbara, evcil hayvan, sohbet, karşılama. Klasör depoya
+girmiyor (16 MB) — tek komutla yeniden üretiliyor.
 
 ## Başvururken atlanmaması gereken
 
 İncelemeci uygulamayı **tek başına** açar. İki kişilik bir uygulamada bu, "boş
 bir ekran gördüm, çalışmıyor" demesiyle sonuçlanır ve bu sık bir red sebebidir.
-Başvuruya **içi dolu bir demo odası** ve o odaya girmiş bir hesabın bilgileri
-konmalı; inceleme notlarında davet bağıyla girildiği de yazılmalı.
+Odalara yalnızca davetle girildiği için, bağ olmadan gerçekten boş bir ekran
+görür.
+
+`seed-demo.mjs` bunu çözmek için var: içinde iki kişinin hayatı olan bir oda
+kurar — fotoğraflı hedefleri olan bir kumbara, yarısı oynanmış bir oyun,
+beslenmiş bir kedi, işaretlenmiş bir liste, birkaç mesaj — ve bir **davet bağı**
+basar. O bağı inceleme notlarına koy, ve şunu yaz:
+
+> Rooms are invite-only. Open the link below to join a room that already has
+> two people and their shared board in it. No account is needed; you will be
+> asked only for a nickname.
+
+## Henüz yapılmamış olanlar
+
+- **Bildirimler (APNs).** Native uygulamada web-push çalışmaz; sunucuya ikinci
+  bir taşıma gerekiyor ve o Apple Developer hesabı ister. O zamana kadar native
+  uygulama bildirimsiz çalışır, web sürümü bildirimlerine devam eder.
+- **Privacy nutrition labels** — App Store Connect'teki beyan formu. Ne
+  saklandığı `public/privacy.html`'de yazıyor; form ondan doldurulur.
+- **Yaş derecesi** ve mağaza metinleri.
