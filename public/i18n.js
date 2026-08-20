@@ -522,6 +522,12 @@ window.I18N = {
     reconnected: 'Tekrar bağlandık! ✨',
     emptyBoard: 'Pano bomboş... İlk kartı ekle! 🌟',
     renameRoom: 'Odaya yeni isim ver',
+    roomSheet: 'Oda',
+    roomName: 'Oda adı',
+    roomCover: 'Kapak',
+    roomCoverWhy: 'Karşılama sayfasında bu odayı temsil eden görsel. Seçmezsen odadaki fotoğraflardan biri kendiliğinden gelir.',
+    coverAuto: 'Kendiliğinden',
+    coverUpload: 'Yeni fotoğraf yükle 📷',
 
     cheers: [
       'Harikasın! 💖', 'Devam! 🌟', 'Süpersin! 🔥', 'Vay be! ✨', 'Gurur duydum! 🥰',
@@ -1055,6 +1061,12 @@ window.I18N = {
     reconnected: 'Reconnected! ✨',
     emptyBoard: 'The board is empty... Add the first card! 🌟',
     renameRoom: 'Rename the room',
+    roomSheet: 'Room',
+    roomName: 'Room name',
+    roomCover: 'Cover',
+    roomCoverWhy: 'The picture this room shows on the landing page. Leave it be and one of the room\u2019s own photos is used.',
+    coverAuto: 'Whichever',
+    coverUpload: 'Upload a new photo 📷',
 
     cheers: [
       "You're amazing! 💖", 'Keep it up! 🌟', 'Doing great! 🔥', 'Wow! ✨', 'So proud! 🥰',

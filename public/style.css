@@ -787,10 +787,153 @@ textarea {
   color: var(--ink-dim);
 }
 
+/* Doors, not labels. Wide because a room is a wide thing — a board seen from
+   the outside — and scrolling sideways because being signed in can mean fifty
+   of them, and fifty stacked banners would push everything else off the page.
+
+   The strip bleeds to the screen edges so it reads as continuing rather than
+   ending, and snaps so a flick lands on a room instead of between two. */
 .recent-list {
   display: flex;
+  gap: 12px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scroll-snap-type: x mandatory;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+  padding: 2px 20px 6px;
+  margin: 0 -20px;
+}
+
+.recent-list::-webkit-scrollbar { display: none; }
+
+.room-card {
+  flex: 0 0 auto;
+  width: 208px;
+  scroll-snap-align: start;
+  display: block;
+  text-decoration: none;
+  color: inherit;
+  border-radius: var(--r-md);
+  padding: 8px 8px 10px;
+  background: var(--mat-frost);
+  border: 0.5px solid var(--hairline);
+  box-shadow: var(--specular), var(--shadow-2);
+  transition: transform 0.18s ease;
+}
+
+.room-card:active { transform: scale(0.975); }
+
+.room-shot {
+  display: block;
+  position: relative;
+  aspect-ratio: 16 / 9;
+  border-radius: var(--r-sm);
+  overflow: hidden;
+  margin-bottom: 9px;
+  /* the doorway a room with no pictures gets: its own corner of the same sky */
+  background:
+    radial-gradient(120% 90% at 20% 0%, hsl(calc(var(--door) * 1deg) 62% 62% / 0.5), transparent 60%),
+    linear-gradient(160deg, hsl(calc(var(--door) * 1deg) 48% 30%), hsl(calc((var(--door) + 40) * 1deg) 46% 18%));
+}
+
+.room-shot img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.room-initial {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  font-family: var(--font-hand, inherit);
+  font-size: 2rem;
+  font-weight: 700;
+  color: rgba(255, 255, 255, 0.62);
+  text-transform: uppercase;
+}
+
+.room-name {
+  display: block;
+  font-weight: 700;
+  font-size: var(--t-callout);
+  padding: 0 3px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.room-code {
+  display: block;
+  font-size: var(--t-caption);
+  color: var(--ink-dim);
+  padding: 0 3px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .room-card { transition: none; }
+}
+
+/* Choosing the cover: the room's own pictures, small, in a row you can wrap. */
+.cover-picks {
+  display: flex;
   flex-wrap: wrap;
-  gap: 10px;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.cover-pick {
+  width: 72px;
+  aspect-ratio: 16 / 10;
+  border-radius: var(--r-sm);
+  overflow: hidden;
+  padding: 0;
+  border: 1.5px solid transparent;
+  background: rgba(255, 255, 255, 0.06);
+  display: grid;
+  place-items: center;
+  transition: border-color 0.15s ease;
+}
+
+.cover-pick img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.cover-pick.on {
+  border-color: var(--amber);
+  box-shadow: 0 0 12px rgba(255, 184, 107, 0.28);
+}
+
+.cover-auto { font-size: 1.1rem; }
+
+.cover-label {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+}
+
+.cover-upload {
+  display: inline-block;
+  cursor: pointer;
+  font-size: var(--t-callout);
+  padding: 8px 14px;
+}
+
+.cover-upload.busy { opacity: 0.55; pointer-events: none; }
+
+@media (prefers-reduced-motion: reduce) {
+  .cover-pick { transition: none; }
 }
 
 .landing-footer {

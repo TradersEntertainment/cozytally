@@ -1081,9 +1081,16 @@
     }
     for (const r of rooms) {
       const a = document.createElement('a');
-      a.className = 'chip chip-btn';
+      a.className = 'room-card';
       a.href = '/r/' + encodeURIComponent(r.code);
-      a.innerHTML = `${esc(r.name)}&nbsp;<small>${esc(r.code)}</small>`;
+      a.innerHTML = `
+        <span class="room-shot" style="--door: ${doorHue(r.code)}">
+          ${r.cover
+            ? `<img src="${esc(mediaUrl(r.cover))}" alt="" loading="lazy">`
+            : `<span class="room-initial">${esc([...(r.name || '·')][0])}</span>`}
+        </span>
+        <span class="room-name">${esc(r.name)}</span>
+        <span class="room-code">${esc(r.code)}</span>`;
       list.appendChild(a);
     }
   }
@@ -1390,11 +1397,23 @@
     renderChat();
   }
 
-  function rememberRoom(code, name) {
+  function rememberRoom(code, name, cover) {
     let recents = JSON.parse(localStorage.getItem('ct:recent') || '[]');
+    const had = recents.find((r) => r.code === code);
     recents = recents.filter((r) => r.code !== code);
-    recents.unshift({ code, name, ts: Date.now() });
+    // keep the cover we already knew when this call does not carry one, so a
+    // rename does not blank the picture until the next visit
+    recents.unshift({ code, name, cover: cover ?? had?.cover ?? null, ts: Date.now() });
     localStorage.setItem('ct:recent', JSON.stringify(recents.slice(0, 6)));
+  }
+
+  /* A room with no pictures in it yet still needs a door. Built from the code,
+     so it is the same every time — the code never changes, and a doorway that
+     looked different on each visit would not read as the same place. */
+  function doorHue(code) {
+    let h = 0;
+    for (const ch of code) h = (h * 31 + ch.charCodeAt(0)) % 360;
+    return h;
   }
 
   const PERKS = [
@@ -1657,7 +1676,7 @@
         chatMsgs = msg.chat || [];
         seenList = msg.seen || [];
         lastSeenSent = 0;
-        rememberRoom(room.code, room.name);
+        rememberRoom(room.code, room.name, room.cover ?? null);
         renderRoomHeader();
         lastMembers = msg.members || [];
         renderMembers(lastMembers);
@@ -1704,7 +1723,7 @@
 
       case 'room:update':
         room = msg.room;
-        rememberRoom(room.code, room.name);
+        rememberRoom(room.code, room.name, msg.room.cover ?? undefined);
         renderRoomHeader();
         return;
 
@@ -5797,20 +5816,94 @@
       btn.disabled = false;
     };
 
+    /* Every picture already in this room, for choosing a cover from. Worked out
+       here rather than asked for, because the browser is holding all of it
+       anyway — the cards and the chat are already on this screen. */
+    const roomPhotos = () => {
+      const out = [];
+      for (const c of cards.values()) {
+        const cfg = c.config || {};
+        for (const g of Array.isArray(cfg.goals) ? cfg.goals : []) if (g?.photo) out.push(g.photo);
+        if (cfg.photo) out.push(cfg.photo);
+      }
+      for (const m of [...chatMsgs].reverse()) if (m.photo) out.push(m.photo);
+      return [...new Set(out)].slice(0, 12);
+    };
+
     $('#rename-btn').onclick = () => {
+      const shots = roomPhotos();
+      const chosen = room?.coverPick || ''; // what somebody picked, not what shows
       const box = openModal(`
-        <h2>${esc(t('renameRoom'))} ✏️</h2>
+        <h2>${esc(t('roomSheet'))} ✏️</h2>
         <div class="field">
+          <label>${esc(t('roomName'))}</label>
           <input id="rn-input" type="text" maxlength="40" value="${esc(room?.name || '')}">
+        </div>
+        <div class="field">
+          <label>${esc(t('roomCover'))}</label>
+          <p class="sub-label">${esc(t('roomCoverWhy'))}</p>
+          <div class="cover-picks">
+            <button type="button" class="cover-pick js-auto ${chosen ? '' : 'on'}" data-photo="">
+              <span class="cover-auto">✨</span>
+              <span class="cover-label">${esc(t('coverAuto'))}</span>
+            </button>
+            ${shots.map((ph) => `
+              <button type="button" class="cover-pick ${ph === chosen ? 'on' : ''}" data-photo="${esc(ph)}">
+                <img src="${esc(mediaUrl(ph))}" alt="" loading="lazy">
+              </button>`).join('')}
+          </div>
+          <label class="btn btn-ghost cover-upload">
+            ${esc(t('coverUpload'))}
+            <input id="rn-file" type="file" accept="image/*" hidden>
+          </label>
         </div>
         <div class="modal-actions">
           <button class="btn btn-ghost js-cancel">${esc(t('cancel'))}</button>
           <button class="btn btn-primary js-save">${esc(t('save'))}</button>
         </div>`);
       $('.js-cancel', box).onclick = closeModal;
+
+      let cover = chosen;
+      const mark = () => {
+        $$('.cover-pick', box).forEach((el) => el.classList.toggle('on', el.dataset.photo === cover));
+      };
+      $$('.cover-pick', box).forEach((el) => {
+        el.onclick = () => {
+          cover = el.dataset.photo;
+          mark();
+        };
+      });
+
+      /* A cover can be a picture that is not in the room yet. It goes up the
+         same way a chat photo does, which also means the server will recognise
+         it as one of this room's own when it checks. */
+      const file = $('#rn-file', box);
+      file.onchange = async () => {
+        const f = file.files?.[0];
+        if (!f) return;
+        const label = file.closest('.cover-upload');
+        label.classList.add('busy');
+        try {
+          cover = await uploadPhoto(f);
+          const btn = document.createElement('button');
+          btn.type = 'button';
+          btn.className = 'cover-pick';
+          btn.dataset.photo = cover;
+          btn.innerHTML = `<img src="${esc(mediaUrl(cover))}" alt="">`;
+          btn.onclick = () => { cover = btn.dataset.photo; mark(); };
+          $('.cover-picks', box).appendChild(btn);
+          mark();
+        } catch {
+          toast(t('photoFailed'));
+        }
+        label.classList.remove('busy');
+        file.value = '';
+      };
+
       const doSave = () => {
         const name = $('#rn-input', box).value.trim();
-        if (name) send({ t: 'room:rename', name });
+        if (name && name !== room?.name) send({ t: 'room:rename', name });
+        if (cover !== chosen) send({ t: 'room:cover', photo: cover });
         closeModal();
       };
       $('.js-save', box).onclick = doSave;

@@ -162,6 +162,22 @@ if (!db.prepare('PRAGMA table_info(rooms)').all().some((c) => c.name === 'open_u
   db.exec('ALTER TABLE rooms ADD COLUMN open_until INTEGER NOT NULL DEFAULT 0');
 }
 
+/* The picture on a room's door. Two columns rather than one because they mean
+   different things: `cover` is what somebody chose, `cover_auto` is what the
+   room happens to have in it, and choosing one must not destroy the other —
+   going back to "whichever" has to be possible.
+
+   Kept as columns instead of worked out on demand for a plain reason: goal
+   photos live inside a card's config as JSON, and with CT_SECRET set that JSON
+   is encrypted, so no query can reach into it. Someone signed in can have
+   fifty rooms; finding their covers by decrypting fifty rooms' worth of cards
+   is not a price the landing page can pay. So it is written when a photo
+   arrives, and read as one column. */
+if (!db.prepare('PRAGMA table_info(rooms)').all().some((c) => c.name === 'cover')) {
+  db.exec('ALTER TABLE rooms ADD COLUMN cover TEXT');
+  db.exec('ALTER TABLE rooms ADD COLUMN cover_auto TEXT');
+}
+
 /* ------------------------------------------------------------------
    Encryption at rest.
 
@@ -468,9 +484,16 @@ const q = {
   delRoomLinks: db.prepare('DELETE FROM user_rooms WHERE room_code = ?'),
   delRoom: db.prepare('DELETE FROM rooms WHERE code = ?'),
   userRooms: db.prepare(
-    `SELECT r.code, r.name, ur.joined_at FROM user_rooms ur
+    `SELECT r.code, r.name, r.cover, r.cover_auto, ur.joined_at FROM user_rooms ur
      JOIN rooms r ON r.code = ur.room_code
      WHERE ur.user_id = ? ORDER BY ur.joined_at DESC LIMIT 50`
+  ),
+  setCover: db.prepare('UPDATE rooms SET cover = ? WHERE code = ?'),
+  setCoverAuto: db.prepare('UPDATE rooms SET cover_auto = ? WHERE code = ?'),
+  // the newest chat photo, straight off the index that already exists
+  lastChatPhoto: db.prepare(
+    `SELECT photo FROM messages WHERE room_code = ? AND photo IS NOT NULL
+     ORDER BY created_at DESC LIMIT 1`
   ),
 };
 
@@ -542,7 +565,13 @@ const store = {
       at: r.seen_at,
     })),
 
-  userRooms: (userId) => q.userRooms.all(userId).map((r) => ({ ...r, name: dec(r.name, '???') })),
+  userRooms: (userId) =>
+    q.userRooms.all(userId).map((r) => ({
+      code: r.code,
+      name: dec(r.name, '???'),
+      joined_at: r.joined_at,
+      cover: coverOf(r),
+    })),
 
   // names go in encrypted here for the same reason they do everywhere else
   addMember: (code, person, name, avatar, at) =>
@@ -733,6 +762,24 @@ try {
   console.error('member backfill skipped:', err.message);
 }
 
+/* Rooms that already have photos in them but no column to remember it by. */
+const COVER_BACKFILL_KEY = 'room_cover_v1';
+try {
+  if (!q.getMeta.get(COVER_BACKFILL_KEY)) {
+    let n = 0;
+    for (const r of db.prepare('SELECT code FROM rooms').all()) {
+      const found = roomPhotos(r.code)[0] || null;
+      if (!found) continue;
+      q.setCoverAuto.run(found, r.code);
+      n++;
+    }
+    q.setMeta.run(COVER_BACKFILL_KEY, String(Date.now()));
+    if (n) console.log(`Found a cover for ${n} room(s)`);
+  }
+} catch (err) {
+  console.error('cover backfill skipped:', err.message);
+}
+
 const SHARE_BACKFILL_KEY = 'money_share_v1';
 try {
   if (!q.getMeta.get(SHARE_BACKFILL_KEY)) {
@@ -796,6 +843,51 @@ try {
  * the chair in a game — and they are all keyed the same way, so they can all
  * be found the same way.
  */
+/* What a room shows on its door: what somebody chose, or failing that what the
+   room happens to have in it. */
+const coverOf = (row) => row?.cover || row?.cover_auto || null;
+
+/** Every picture this room holds, newest-looking first. */
+function roomPhotos(code) {
+  const out = [];
+  for (const row of store.roomCards(code)) {
+    let cfg;
+    try {
+      cfg = JSON.parse(row.config);
+    } catch {
+      continue;
+    }
+    for (const g of Array.isArray(cfg.goals) ? cfg.goals : []) if (g?.photo) out.push(g.photo);
+    if (cfg.photo) out.push(cfg.photo);
+  }
+  const chat = q.lastChatPhoto.get(code);
+  if (chat?.photo) out.push(chat.photo);
+  return out;
+}
+
+/* Goal photos before chat photos, deliberately. A picture of the bicycle you
+   are saving for was chosen to stand for something; the last thing anyone
+   happened to send in chat was not, and is as likely to be a screenshot of a
+   bank app as anything worth putting on a door. */
+function refreshCover(code) {
+  const found = roomPhotos(code)[0] || null;
+  const row = q.getRoom.get(code);
+  if (!row || row.cover_auto === found) return;
+  const before = coverOf(row);
+  q.setCoverAuto.run(found, code);
+  const after = coverOf({ ...row, cover_auto: found });
+  /* Tell the room only when the door actually looks different. A chosen cover
+     sits over the automatic one, so a new photo arriving changes nothing
+     visible and is not worth a message — and the browsers need this message
+     because they keep the cover for the landing page, where the room is a
+     door rather than a place. */
+  if (before === after) return;
+  broadcast(code, {
+    t: 'room:update',
+    room: { code, name: store.getRoom(code).name, cover: after, coverPick: row.cover || '' },
+  });
+}
+
 function roomPeople(code) {
   const out = new Map();
   const put = (key, name, avatar) => {
@@ -2108,7 +2200,17 @@ function handleMessage(ws, msg) {
     touchRoom(code, now);
     sendTo(ws, {
       t: 'room',
-      room: { code: room.code, name: room.name },
+      // the cover travels with the room so the browser can keep it for the
+      // landing page, where the room is a door rather than a place
+      room: {
+        code: room.code,
+        name: room.name,
+        // two different questions: what the door looks like, and whether
+        // anybody chose it. The picker needs the second one, or "whichever"
+        // never reads as selected.
+        cover: coverOf(q.getRoom.get(code)),
+        coverPick: q.getRoom.get(code)?.cover || '',
+      },
       cards: store.roomCards(code).map((r) => rowToCard(r, personKey(ws))),
       members: membersOf(code),
       you: ws.meta.id,
@@ -2138,7 +2240,35 @@ function handleMessage(ws, msg) {
       const name = clampStr(msg.name, 40);
       if (!name) return;
       store.renameRoom(name, now, code);
-      broadcast(code, { t: 'room:update', room: { code, name }, by });
+      broadcast(code, {
+        t: 'room:update',
+        room: { code, name, cover: coverOf(q.getRoom.get(code)), coverPick: q.getRoom.get(code)?.cover || '' },
+        by,
+      });
+      return;
+    }
+
+    /* Choosing the picture on the door, or handing the choice back to the room
+       by sending nothing.
+
+       The path is checked against the room's own photos. Without that, setting
+       a cover would be a way to read a picture out of a room you are not in:
+       paste its /u/... path here, and your own landing page fetches it for
+       you. */
+    case 'room:cover': {
+      const want = clampStr(msg.photo, 200);
+      if (!want) {
+        q.setCover.run(null, code);
+      } else {
+        if (!roomPhotos(code).includes(want)) return;
+        q.setCover.run(want, code);
+      }
+      const row = q.getRoom.get(code);
+      broadcast(code, {
+        t: 'room:update',
+        room: { code, name: store.getRoom(code).name, cover: coverOf(row), coverPick: row.cover || '' },
+        by,
+      });
       return;
     }
 
@@ -2176,6 +2306,7 @@ function handleMessage(ws, msg) {
       // new cards land at the top of the board
       const sort = q.minSort.get(code).m - 1;
       store.insertCard(id, code, c.type, title, emoji, JSON.stringify(config), JSON.stringify(state), sort, now);
+      refreshCover(code);
       broadcastCard(code, id, by, 'card:add', clampStr(msg.ref, 40) || undefined);
       pushToRoom(code, 'cardAdd', [ws.meta.name, `${emoji || ''} ${title}`.trim()], ws.meta.cid);
       return;
@@ -2188,6 +2319,7 @@ function handleMessage(ws, msg) {
       const emoji = clampStr(msg.emoji ?? row.emoji, 8);
       const config = msg.config !== undefined ? sanitizeConfig(row.type, msg.config) : JSON.parse(row.config);
       store.updateCardMeta(title, emoji, JSON.stringify(config), row.id);
+      refreshCover(code);
       if (row.type === 'streak' && msg.config?.startAt !== undefined) {
         const state = JSON.parse(row.state);
         state.startAt = toInt(msg.config.startAt, 0, now, state.startAt) || state.startAt;
@@ -2225,6 +2357,7 @@ function handleMessage(ws, msg) {
       for (const p of orphans) fs.unlink(path.join(UPLOAD_DIR, path.basename(p)), () => {});
       clearChainClock(row.id); // nothing left to count down for
       q.deleteCard.run(row.id);
+      refreshCover(code);
       broadcast(code, { t: 'card:delete', id: row.id, title: row.title, by });
       pushToRoom(code, 'cardDelete', [ws.meta.name, row.title], ws.meta.cid);
       return;
@@ -2682,6 +2815,8 @@ function handleMessage(ws, msg) {
         createdAt: now,
       };
       store.insertMsg(m, code);
+      // a picture in the chat is the room's cover if nothing better is in there
+      if (m.photo) refreshCover(code);
       for (const old of q.oldMsgs.all(code, code)) {
         if (old.photo) fs.unlink(path.join(UPLOAD_DIR, path.basename(old.photo)), () => {});
         q.delMsg.run(old.id);

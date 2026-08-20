@@ -24,6 +24,15 @@ en üstüne gelir.
 
 **Hazır paketler:** Tek tıkla birden fazla kart kuran şablonlar — 🏖️ *Tatil planı* (geri sayım + bütçe kumbarası + hazırlık listesi), 📦 *Ev taşınma*, 💪 *Sağlıklı yaşam*.
 
+**Son odaların:** Karşılama sayfasında girdiğin odalar, her biri **odanın
+içinden bir kapak fotoğrafıyla** yan yana kayan bir şeritte duruyor. Kapak
+kendiliğinden seçiliyor: önce kumbara hedeflerinin fotoğrafı (bisiklet, ev —
+zaten odayı temsil etmek için seçilmiş şeyler), yoksa sohbetteki en son
+fotoğraf. Hiç fotoğrafı olmayan bir oda boş kutu göstermiyor; oda koduna göre
+üretilen, hep aynı kalan bir gece göküyüzü ve odanın baş harfi çıkıyor.
+Beğenmezsen odanın içinden (üstteki ✏️) kapağı kendin seçersin — odadaki
+fotoğraflardan biri, yenisi, ya da "kendiliğinden"e geri dön.
+
 **Odaya kimler girer:** Bir odaya **davet bağıyla** girilir. Odanın içindeki 🔗 düğmesi
 her basışta yeni bir bağ üretir (30 gün geçerli, istediğin an geri alınabilir); onu
 karşı tarafa yollarsın, o açar, içeri girer ve odanın üyesi olur. Kişi sayısı sınırlı
