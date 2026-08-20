@@ -110,6 +110,27 @@ db.exec(`
     revoked    INTEGER NOT NULL DEFAULT 0
   );
   CREATE INDEX IF NOT EXISTS idx_invites_room ON room_invites(room_code);
+  /* Getting away from somebody. Both directions matter and are stored as one
+     row: it does not matter who blocked whom, the two of them do not end up in
+     a room together again. */
+  CREATE TABLE IF NOT EXISTS blocks (
+    blocker TEXT NOT NULL,
+    blocked TEXT NOT NULL,
+    at      INTEGER NOT NULL,
+    PRIMARY KEY (blocker, blocked)
+  );
+  CREATE INDEX IF NOT EXISTS idx_blocks_blocked ON blocks(blocked);
+  /* Somebody saying this was not okay. Nothing reads these yet except the log,
+     which is honest about what it is — a place for the person running the app
+     to look, not a moderation system. */
+  CREATE TABLE IF NOT EXISTS reports (
+    id        TEXT PRIMARY KEY,
+    room_code TEXT NOT NULL,
+    reporter  TEXT NOT NULL,
+    target    TEXT NOT NULL,
+    note      TEXT NOT NULL DEFAULT '',
+    at        INTEGER NOT NULL
+  );
   CREATE TABLE IF NOT EXISTS schema_meta (k TEXT PRIMARY KEY, v TEXT);
   CREATE TABLE IF NOT EXISTS users (
     id         TEXT PRIMARY KEY,
@@ -382,6 +403,17 @@ const q = {
     'SELECT person, name, avatar, joined_at FROM room_members WHERE room_code = ? ORDER BY joined_at'
   ),
   dropMember: db.prepare('DELETE FROM room_members WHERE room_code = ? AND person = ?'),
+  addBlock: db.prepare(
+    'INSERT INTO blocks (blocker, blocked, at) VALUES (?, ?, ?) ON CONFLICT DO NOTHING'
+  ),
+  /* Is either of these two done with the other? One query, both directions —
+     a block is a wall, not a one-way sign. */
+  blockedPair: db.prepare(
+    'SELECT 1 FROM blocks WHERE (blocker = ? AND blocked = ?) OR (blocker = ? AND blocked = ?)'
+  ),
+  addReport: db.prepare(
+    'INSERT INTO reports (id, room_code, reporter, target, note, at) VALUES (?, ?, ?, ?, ?, ?)'
+  ),
   memberCount: db.prepare('SELECT COUNT(*) AS n FROM room_members WHERE room_code = ?'),
   lockRoom: db.prepare('UPDATE rooms SET open_until = 0 WHERE code = ?'),
   openRoomUntil: db.prepare('UPDATE rooms SET open_until = ? WHERE code = ?'),
@@ -1457,6 +1489,18 @@ function memberAs(code, who) {
 
 /** A room made before membership existed is still open for its grace window. */
 const roomOpen = (room) => (room?.open_until || 0) > Date.now();
+
+/* Is anybody already in this room done with the person at the door — or the
+   other way round? Checked on the way in rather than kept as a list, because
+   membership changes and a stale list would eventually let somebody through. */
+function blockedFrom(code, person) {
+  if (!person) return false;
+  for (const m of q.roomMembers.all(code)) {
+    if (m.person === person) continue;
+    if (q.blockedPair.get(m.person, person, person, m.person)) return true;
+  }
+  return false;
+}
 const isMember = (code, person) => !!(person && q.isMember.get(code, person));
 
 /* One answer for "no such room" and "not your room" on purpose. Telling them
@@ -1542,6 +1586,10 @@ app.post('/api/invites/:token/accept', (req, res) => {
   if (!room) return res.status(403).json(SHUT);
   const who = askerOf(req);
   if (!who) return res.status(400).json({ error: 'who-are-you' });
+  // a valid invite is not a way around somebody having walked away from you
+  if (blockedFrom(inv.room_code, who.person) || blockedFrom(inv.room_code, who.alt)) {
+    return res.status(403).json(SHUT);
+  }
   store.addMember(inv.room_code, who.person, who.name, who.avatar, now);
   res.json({ code: room.code, name: room.name });
 });
@@ -2160,6 +2208,12 @@ function handleMessage(ws, msg) {
        anything in it. */
     const noOwnerYet = q.memberCount.get(code).n === 0;
     if (!person) return sendTo(ws, { t: 'error', code: 'no-entry' });
+    /* Before the grace window gets a say. A room that predates membership is
+       open to anyone with the code for thirty days, and without this check
+       that window would hand a blocked person the door back. */
+    if (blockedFrom(code, person) || (cid && blockedFrom(code, cid))) {
+      return sendTo(ws, { t: 'error', code: 'no-entry' });
+    }
     if (!q.isMember.get(code, person) && !memberByDevice && !open && !noOwnerYet) {
       return sendTo(ws, { t: 'error', code: 'no-entry' });
     }
@@ -2245,6 +2299,48 @@ function handleMessage(ws, msg) {
         room: { code, name, cover: coverOf(q.getRoom.get(code)), coverPick: q.getRoom.get(code)?.cover || '' },
         by,
       });
+      return;
+    }
+
+    /* Getting away from somebody. They leave this room and cannot come back to
+       any room you are in — not on the invite they used, not on a fresh one,
+       and not through the grace window an old room is still sitting in.
+
+       Anyone can do this to anyone, including to whoever made the room. That
+       is the decision: in an app where two people share a life, the person
+       who needs to get away is not always the one who set things up. The cost
+       is that it can be misused, so the record keeps who did it. */
+    case 'room:block': {
+      const mine = personKey(ws);
+      const target = clampStr(msg.person, 64);
+      if (!target || target === mine) return;
+      q.addBlock.run(mine, target, now);
+      q.dropMember.run(code, target);
+      // an invite handed out before this must not be a way back in
+      q.revokeRoomInvites.run(code);
+      console.log(`block: ${mine} blocked ${target} in ${code}`);
+      broadcast(code, { t: 'members', members: membersOf(code) });
+      // their own screen closes the way any closed room does
+      for (const s of roomSockets.get(code) || []) {
+        if (personKey(s) === target || s.meta?.cid === target) {
+          sendTo(s, { t: 'error', code: 'no-entry' });
+        }
+      }
+      return;
+    }
+
+    /* Saying that something was not okay. Nothing automated happens — there is
+       no moderation queue and pretending otherwise would be worse than saying
+       so. It is written down and it goes to the log, where the person running
+       this can see it, and the app tells the reporter exactly that. */
+    case 'room:report': {
+      const mine = personKey(ws);
+      const target = clampStr(msg.person, 64);
+      if (!target || target === mine) return;
+      const note = clampStr(msg.note, 300);
+      q.addReport.run(crypto.randomUUID(), code, mine, target, note, now);
+      console.error(`report: ${mine} reported ${target} in ${code}${note ? ` — ${note}` : ''}`);
+      sendTo(ws, { t: 'reported' });
       return;
     }
 

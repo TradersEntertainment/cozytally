@@ -320,6 +320,11 @@
   const native = () => !!Cap?.isNativePlatform?.();
   const plugin = (name) => (native() ? Cap.Plugins?.[name] : null);
 
+  /* Somewhere to say something is wrong. Apple asks for a published way to
+     reach whoever runs the app, and this is it — the repository is public, so
+     an issue there is a real door. */
+  const CONTACT_URL = 'https://github.com/TradersEntertainment/cozytally/issues';
+
   const API = (window.CT_API || '').replace(/\/$/, '');
   const url = (path) => API + path;
 
@@ -1114,6 +1119,18 @@
     renderRecents();
   }
 
+  /* Reachable from inside the app, on both the signed-in screen and the one
+     you see before you have an account — being asked to sign up is exactly
+     when somebody wants to read what happens to their things. */
+  const legalLine = () => `
+        <p class="acct-legal">
+          <a href="/privacy.html" target="_blank" rel="noopener">${esc(t('privacyLink'))}</a>
+          <span aria-hidden="true">·</span>
+          <a href="/terms.html" target="_blank" rel="noopener">${esc(t('termsLink'))}</a>
+          <span aria-hidden="true">·</span>
+          <a href="${esc(CONTACT_URL)}" target="_blank" rel="noopener">${esc(t('contactLink'))}</a>
+        </p>`;
+
   function openAccountModal(mode = auth ? 'profile' : 'signin') {
     if (mode === 'profile' && auth) {
       const box = openModal(`
@@ -1150,7 +1167,8 @@
         <div class="modal-actions">
           <button class="btn btn-ghost js-out">${esc(t('signOut'))}</button>
           <button class="btn btn-primary js-close">${esc(t('cancel'))}</button>
-        </div>`);
+        </div>
+        ${legalLine()}`);
       $('.js-close', box).onclick = closeModal;
 
       /* The one thing here that cannot be undone, so it asks twice: type your
@@ -1274,7 +1292,8 @@
         <button class="btn btn-ghost js-swap">${esc(isUp ? t('signIn') : t('signUp'))}</button>
         <button class="btn btn-primary js-go">${esc(isUp ? t('signUp') : t('signIn'))}</button>
       </div>
-      <p class="sub-label" style="margin-top:14px">${esc(t('guestNote'))}</p>`);
+      <p class="sub-label" style="margin-top:14px">${esc(t('guestNote'))}</p>
+      ${legalLine()}`);
 
     $$('.av-opt', box).forEach((b) => {
       b.onclick = () => {
@@ -5857,11 +5876,82 @@
             <input id="rn-file" type="file" accept="image/*" hidden>
           </label>
         </div>
+        <div class="field">
+          <label>${esc(t('roomWho'))}</label>
+          <div class="who-list js-who"><span class="sub-label">…</span></div>
+        </div>
         <div class="modal-actions">
           <button class="btn btn-ghost js-cancel">${esc(t('cancel'))}</button>
           <button class="btn btn-primary js-save">${esc(t('save'))}</button>
         </div>`);
       $('.js-cancel', box).onclick = closeModal;
+
+      /* Who is actually in this room. The row of avatars in the header is only
+         whoever happens to be looking right now; membership has been the thing
+         that decides who gets in since invites arrived, and until now there
+         was nowhere to see it — which also left nowhere to hang "block". */
+      (async () => {
+        const list = $('.js-who', box);
+        let data;
+        try {
+          data = await api('/api/rooms/' + encodeURIComponent(room.code) + '/members?cid=' + encodeURIComponent(myCid));
+        } catch {
+          list.innerHTML = `<span class="sub-label">${esc(t('errNetwork'))}</span>`;
+          return;
+        }
+        const owner = data.owner;
+        list.innerHTML = data.members.map((m) => `
+          <div class="who-row" data-person="${esc(m.person)}">
+            <span class="who-face">${esc(m.avatar || '🐻')}</span>
+            <span class="who-name">${esc(m.name || '—')}${m.person === owner ? ' 👑' : ''}</span>
+            <span class="who-when">${esc(shortDate(m.at))}</span>
+            ${m.person === data.me
+              ? `<span class="who-you">${esc(t('whoYou'))}</span>`
+              : `<button type="button" class="who-act js-report" title="${esc(t('reportPerson'))}">⚑</button>
+                 <button type="button" class="who-act js-block" title="${esc(t('blockPerson'))}">🚫</button>`}
+          </div>`).join('');
+
+        $$('.js-block', list).forEach((btn) => {
+          btn.onclick = async () => {
+            const row = btn.closest('.who-row');
+            const name = $('.who-name', row).textContent.trim();
+            closeModal();
+            const sure = await confirmModal({
+              title: t('blockPerson'),
+              body: t('blockConfirm', { name }),
+              yesLabel: t('blockYes'),
+            });
+            if (sure) {
+              send({ t: 'room:block', person: row.dataset.person });
+              toast(t('blocked', { name }));
+            }
+          };
+        });
+
+        $$('.js-report', list).forEach((btn) => {
+          btn.onclick = () => {
+            const row = btn.closest('.who-row');
+            const name = $('.who-name', row).textContent.trim();
+            closeModal();
+            const rb = openModal(`
+              <h2>${esc(t('reportPerson'))} ⚑</h2>
+              <p class="tour-body">${esc(t('reportBody', { name }))}</p>
+              <div class="field">
+                <input id="rp-note" type="text" maxlength="300" placeholder="${esc(t('reportPh'))}">
+              </div>
+              <div class="modal-actions">
+                <button class="btn btn-ghost js-no">${esc(t('cancel'))}</button>
+                <button class="btn btn-primary js-yes">${esc(t('reportSend'))}</button>
+              </div>`);
+            $('.js-no', rb).onclick = closeModal;
+            $('.js-yes', rb).onclick = () => {
+              send({ t: 'room:report', person: row.dataset.person, note: $('#rp-note', rb).value.trim() });
+              closeModal();
+              toast(t('reportThanks'));
+            };
+          };
+        });
+      })();
 
       let cover = chosen;
       const mark = () => {

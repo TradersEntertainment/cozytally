@@ -880,6 +880,62 @@ textarea {
   .room-card { transition: none; }
 }
 
+/* Who is in the room. Plain rows, because this is a list you read rather than
+   admire — and the two actions on it are serious enough not to be pretty. */
+.who-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.who-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 7px 4px;
+  border-bottom: 0.5px solid var(--hairline);
+}
+
+.who-row:last-child { border-bottom: 0; }
+
+.who-face { font-size: 1.15rem; }
+
+.who-name {
+  flex: 1;
+  font-size: var(--t-callout);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.who-when,
+.who-you {
+  font-size: var(--t-caption);
+  color: var(--ink-dim);
+}
+
+.who-act {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  font-size: 0.95rem;
+  opacity: 0.65;
+  display: grid;
+  place-items: center;
+}
+
+.who-act:hover { opacity: 1; background: rgba(255, 255, 255, 0.08); }
+
+.acct-legal {
+  text-align: center;
+  font-size: var(--t-caption);
+  color: var(--ink-dim);
+  margin: 16px 0 0;
+}
+
+.acct-legal a { color: inherit; text-decoration: none; }
+.acct-legal a:hover { text-decoration: underline; }
+
 /* Choosing the cover: the room's own pictures, small, in a row you can wrap. */
 .cover-picks {
   display: flex;

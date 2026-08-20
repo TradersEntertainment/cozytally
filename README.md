@@ -65,6 +65,19 @@ kutuya düşen bir yazım hatası kimsenin bilmediği bir şifre bırakırdı. D
 girişli kalır: seni kurtaran şeyi kurtardığı için kapatmak, doğrudan aynı yere geri
 dönmenin yoludur.
 
+**Kimler var, ve rahatsız eden biri varsa:** Odanın ✏️ sayfasında artık odanın
+**üye listesi** duruyor — kim, ne zaman katılmış, kim kurmuş. Kendinden başka
+herkesin yanında **⚑ şikâyet et** ve **🚫 engelle** var. Engellemek o kişiyi
+odadan çıkarır ve **senin bulunduğun hiçbir odaya bir daha giremez**: eski
+davetle de, yeni davetle de, doğrudan soketle de, ve eski odaların 30 günlük
+açık penceresinden de. Şikâyet kaydedilir ve uygulamayı işleten kişiye ulaşır;
+otomatik bir işlem yapılmaz ve ekran bunu dümdüz söyler.
+
+> Engellemeyi herkes yapabiliyor, odayı kuranı bile — iki kişinin hayatını
+> paylaştığı bir uygulamada uzaklaşması gereken kişi her zaman kurulumu yapan
+> değil. Bedeli kötüye kullanılabilmesi, o yüzden kimin kimi engellediği
+> kayıtta duruyor.
+
 **Hesabını silmek:** Hesap ekranındaki *Hesabı sil* ile. Giden şey hesap: girişin,
 oturumların, bütün odalardaki üyeliğin, okundu imlerin, o cihazın bildirimleri.
 **Kalan şey pano**, çünkü o hiçbir zaman tek kişinin değildi. Kumbaradaki payın
