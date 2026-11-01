@@ -1198,6 +1198,23 @@ function computeStreak(state, mode) {
 const MAX_CARDS_PER_ROOM = 60;
 
 const clampStr = (v, max) => String(v ?? '').trim().slice(0, max);
+
+/* Who somebody is ends up as a property name on the share map of a piggy
+   bank. A device that calls itself "__proto__" therefore does not get a
+   pocket of its own: the write lands on Object.prototype instead, the
+   money leaves the shares while the total goes up, and the pot can never
+   be spent again because there is nobody to take it from. The rest of the
+   server is poisoned with it too, every plain object in the process.
+
+   Every real identity here is minted by crypto.randomUUID, in the browser
+   or on this side, so a plain token is all a device can honestly be.
+   Anything else is not a browser; it is somebody having a go. */
+const KEY_SHAPE = /^[A-Za-z0-9_-]{1,64}$/;
+const RESERVED_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+const safeKey = (v) => {
+  const s = clampStr(v, 64);
+  return KEY_SHAPE.test(s) && !RESERVED_KEYS.has(s) ? s : '';
+};
 const toInt = (v, min, max, dflt) => {
   const n = Math.round(Number(v));
   if (!Number.isFinite(n)) return dflt;
@@ -1340,7 +1357,9 @@ function spendSplit(raw, by) {
   if (!raw || typeof raw !== 'object') return [];
   const out = [];
   for (const [key, v] of Object.entries(raw)) {
-    const share = by[key];
+    // a pocket is named by a person key, and nothing else is a person key
+    if (!safeKey(key)) return [];
+    const share = Object.hasOwn(by, key) ? by[key] : null;
     if (!share) return []; // an unknown pocket to take from is a refusal, not a zero
     const amount = toInt(v, 0, Math.max(0, share.net || 0), -1);
     if (amount < 0) return []; // asked for more than they have
@@ -1533,7 +1552,7 @@ function allowLookup(ip) {
    `name` in it and it is the room's, not the person's — the creator of
    "Tatil fonu" is not called Tatil fonu. */
 function askerOf(req) {
-  const cid = clampStr(req.body?.me?.cid || req.query?.cid, 64);
+  const cid = safeKey(req.body?.me?.cid || req.query?.cid);
   const user = userFromToken(bearer(req));
   if (user) return { person: user.id, alt: cid, name: user.name, avatar: user.avatar };
   if (!cid) return null;
@@ -1852,7 +1871,7 @@ app.delete('/api/auth/account', (req, res) => {
       ...q.userRooms.all(user.id).map((r) => r.code),
     ]),
   ];
-  const cid = clampStr(req.body?.me?.cid, 64);
+  const cid = safeKey(req.body?.me?.cid);
 
   const touched = forgetPerson(codes, user.id);
   const razed = [];
@@ -2261,7 +2280,7 @@ function handleMessage(ws, msg) {
        out of your own room. A room still inside its grace window lets anyone
        with the code in and writes them down; that window is how rooms that
        predate membership find their people. */
-    const cid = clampStr(msg.cid, 64);
+    const cid = safeKey(msg.cid);
     const account = userFromToken(msg.token);
     const person = account?.id || cid;
     const name = account?.name || clampStr(msg.name, 24) || 'misafir';
