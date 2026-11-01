@@ -2149,6 +2149,187 @@
     });
   }
 
+  const ROW_EDGE = 54;    // how close to the sheet's own edge before it scrolls
+  const ROW_SPEED = 520;  // px per second at the very edge, tapering to 0
+
+  /**
+   * Drag-to-reorder for a short upright list inside a sheet — right now the
+   * goal ladder in the money card's form, where the order *is* the plan: the
+   * pot pays off the first goal before anything spills into the second.
+   *
+   * The board above has its own, richer version. This one is cut down for a
+   * handful of rows, but the feel is deliberately the same: the grip owns the
+   * gesture, a short hold or a decisive move lifts the row, and the arrow keys
+   * on a focused grip do the whole job without a pointer.
+   *
+   * The rows hold inputs someone may be halfway through typing in, so nothing
+   * is ever redrawn mid-drag: the real nodes move around a placeholder, and
+   * the finished order is handed back once, at the drop. The lifted row is
+   * positioned against the list rather than the viewport, because the sheet it
+   * sits in scrolls on its own and may be painting a transform of its own —
+   * either of which would send a fixed row somewhere else entirely.
+   */
+  function dragRows(list, { row: rowSel, grip: gripSel, onDrop }) {
+    let drag = null;
+    const shot = () => new Map($$(rowSel, list).map((el) => [el, el.getBoundingClientRect()]));
+    // .modal-box is the one that scrolls; fall back to the page for a sheet
+    // that ever grows its own scroller
+    const scroller = list.closest('.modal-box') || document.scrollingElement;
+
+    const order = () => $$(rowSel, list).map((el) => Number(el.dataset.i));
+
+    const cleanup = () => {
+      if (!drag) return;
+      clearTimeout(drag.holdTimer);
+      cancelAnimationFrame(drag.raf);
+      const { row, placeholder } = drag;
+      row.classList.remove('dragging');
+      row.style.cssText = '';
+      if (placeholder) placeholder.replaceWith(row);
+      list.classList.remove('rowdrag');
+      $$(rowSel, list).forEach((el) => (el.style.transition = ''));
+      drag = null;
+    };
+
+    /* Put the placeholder wherever the pointer now is, and slide whatever had
+       to move out of the way. */
+    const place = (y) => {
+      drag.row.style.top = y - drag.grabY - list.getBoundingClientRect().top + 'px';
+
+      const target = $$(rowSel + ':not(.dragging)', list).find((el) => {
+        const r = el.getBoundingClientRect();
+        return y < r.top + r.height / 2;
+      });
+      const before = shot();
+      if (target) {
+        if (drag.placeholder.nextElementSibling === target) return;
+        target.before(drag.placeholder);
+      } else {
+        if (list.lastElementChild === drag.placeholder) return;
+        list.appendChild(drag.placeholder);
+      }
+      flip(before);
+    };
+
+    const lift = () => {
+      const r = drag.row.getBoundingClientRect();
+      const lr = list.getBoundingClientRect();
+      drag.lifted = true;
+      drag.grabY = drag.startY - r.top;
+
+      drag.placeholder = document.createElement('div');
+      drag.placeholder.className = 'goal-placeholder';
+      drag.placeholder.style.height = r.height + 'px';
+      drag.row.after(drag.placeholder);
+
+      list.classList.add('rowdrag');
+      Object.assign(drag.row.style, {
+        position: 'absolute',
+        left: r.left - lr.left + 'px',
+        top: r.top - lr.top + 'px',
+        width: r.width + 'px',
+        height: r.height + 'px',
+        margin: '0',
+      });
+      drag.row.classList.add('dragging');
+      feel('tap'); // it has come loose in your hand — say so
+      place(drag.y);
+    };
+
+    const autoScroll = (ts) => {
+      if (!drag) return;
+      // px per second, so a 120 Hz phone doesn't crawl twice as fast as a
+      // 60 Hz one; a long frame is capped so a hiccup can't jump the sheet
+      const dt = Math.min(50, ts - (drag.lastTs ?? ts));
+      drag.lastTs = ts;
+      // the loop has to outlive the hold — bailing out before the lift would
+      // kill it for the rest of the drag
+      if (drag.lifted) {
+        const box = scroller.getBoundingClientRect();
+        // a short sheet must not be all edge, or it scrolls wherever you grab
+        const edge = Math.min(ROW_EDGE, box.height / 3);
+        const over = (d) => ROW_SPEED * Math.min(1, 1 - d / edge);
+        let speed = 0;
+        if (drag.y < box.top + edge) speed = -over(drag.y - box.top);
+        else if (drag.y > box.bottom - edge) speed = over(box.bottom - drag.y);
+        if (speed) {
+          // carry the leftover fraction so a slow crawl near the edge still moves
+          drag.carry = (drag.carry || 0) + (speed * dt) / 1000;
+          const whole = Math.trunc(drag.carry);
+          if (whole) {
+            drag.carry -= whole;
+            const was = scroller.scrollTop;
+            scroller.scrollTop = was + whole;
+            if (scroller.scrollTop !== was) place(drag.y);
+          }
+        }
+      }
+      drag.raf = requestAnimationFrame(autoScroll);
+    };
+
+    list.addEventListener('pointerdown', (e) => {
+      const grip = e.target.closest(gripSel);
+      if (!grip || e.button > 0) return;
+      const row = grip.closest(rowSel);
+      if (!row || !list.contains(row)) return;
+      e.preventDefault();
+      grip.setPointerCapture(e.pointerId);
+
+      drag = {
+        row,
+        pointerId: e.pointerId,
+        startY: e.clientY,
+        y: e.clientY,
+        lifted: false,
+        placeholder: null,
+        raf: 0,
+        holdTimer: setTimeout(() => drag && !drag.lifted && lift(), 150),
+      };
+      drag.raf = requestAnimationFrame(autoScroll);
+    });
+
+    list.addEventListener('pointermove', (e) => {
+      if (!drag || e.pointerId !== drag.pointerId) return;
+      drag.y = e.clientY;
+      // a decisive move lifts it without waiting the hold out
+      if (!drag.lifted) {
+        if (Math.abs(e.clientY - drag.startY) < 6) return;
+        clearTimeout(drag.holdTimer);
+        lift();
+        return;
+      }
+      place(e.clientY);
+    });
+
+    list.addEventListener('pointerup', (e) => {
+      if (!drag || e.pointerId !== drag.pointerId) return;
+      const moved = drag.lifted;
+      // cleanup drops the row into the slot the placeholder was holding, so
+      // the DOM only tells the truth about the order once it has run
+      cleanup();
+      if (moved) onDrop(order(), null);
+    });
+
+    list.addEventListener('pointercancel', cleanup);
+
+    // keyboard: focus a grip and nudge the row up or down
+    list.addEventListener('keydown', (e) => {
+      const grip = e.target.closest?.(gripSel);
+      if (!grip || (e.key !== 'ArrowUp' && e.key !== 'ArrowDown')) return;
+      e.preventDefault();
+      const row = grip.closest(rowSel);
+      const up = e.key === 'ArrowUp';
+      const sibling = up ? row.previousElementSibling : row.nextElementSibling;
+      if (!sibling || !sibling.matches(rowSel)) return;
+      if (up) sibling.before(row);
+      else sibling.after(row);
+      const ids = order();
+      // hand back where the row ended up, so the grip can be handed the focus
+      // again after the redraw — otherwise a second press would go nowhere
+      onDrop(ids, ids.indexOf(Number(row.dataset.i)));
+    });
+  }
+
   function renderAllCards() {
     const board = $('#board');
     board.innerHTML = '';
@@ -5162,6 +5343,10 @@
           .map(
             (g, i) => `
             <div class="goal-row" data-i="${i}">
+              ${goalDraft.length > 1
+                ? `<button type="button" class="gr-grip" title="${esc(t('moveGoal'))}"
+                    aria-label="${esc(t('moveGoal'))}"><span class="gr-rank">${i + 1}</span>≡</button>`
+                : ''}
               <div class="gr-photo js-grphoto${g.busy ? ' busy' : ''}${g.failed ? ' failed' : ''}">
                 ${thumbOf(g)}
               </div>
@@ -5201,6 +5386,37 @@
       };
 
       drawGoals();
+
+      /* The ladder order *is* the payment order — the pot pays off the first
+         goal before anything spills into the second — so it has to be
+         changeable after the fact, not just at the moment you type them in.
+         Drag a row by its grip, or focus the grip and use the arrow keys. */
+      dragRows(goalRows, {
+        row: '.goal-row',
+        grip: '.gr-grip',
+        onDrop: (order, focusAt) => {
+          /* Trust the draft, not the DOM: if what came back is not a clean
+             shuffle of it, redraw from the draft and lose nothing. A row
+             dropped here would be a goal dropped. */
+          const sane =
+            order.length === goalDraft.length &&
+            new Set(order).size === order.length &&
+            order.every((n) => goalDraft[n]);
+          if (!sane) return drawGoals();
+          if (order.some((n, k) => n !== k)) {
+            goalDraft = order.map((n) => goalDraft[n]);
+            feel('move');
+          }
+          // both the ranks and the row indices shift, so this one redraws
+          drawGoals();
+          // a keyboard nudge throws away the grip it was pressed on; hand the
+          // focus to wherever the row landed so the next press keeps going
+          if (focusAt != null) {
+            $(`.goal-row[data-i="${focusAt}"] .gr-grip`, goalRows)?.focus();
+          }
+        },
+      });
+
       $('.js-addgoal', box).onclick = (e) => {
         if (goalDraft.length >= MAX_GOALS) return;
         goalDraft.push({ amount: '', title: '', photo: '', upload: null });

@@ -1261,6 +1261,73 @@ function goalLadder(cfg) {
 }
 
 /**
+ * Follow the paid stamps and the cheered milestones to wherever their goals
+ * went, once the ladder itself has been rearranged.
+ *
+ * The order of the goals is the plan — the pot pays off the first rung before
+ * anything spills into the second — so the order has to be changeable. But a
+ * rung that has been paid off is recorded by its number, and so is one whose
+ * milestone has already been cheered. Move the rungs and those numbers point
+ * at the wrong goal, or at nothing: a settled 150.000 ₺ goal would come back
+ * up for payment, and a line already crossed would be cheered a second time.
+ *
+ * So each record is matched to its own goal by what identifies it — its name
+ * and its price — and takes that goal’s new number. A record whose goal is
+ * gone, or has been edited into a different goal, is dropped. That is exactly
+ * what happened before this function existed, and it is right: a changed rung
+ * is a different goal, and a different goal has not been paid.
+ *
+ * Returns the state to write, or null when nothing has to move.
+ */
+function remapLadder(oldCfg, newCfg, state) {
+  const olds = goalLadder(oldCfg);
+  const news = goalLadder(newCfg);
+  if (!olds.length || !news.length) return null;
+
+  const paid = Array.isArray(state?.paid) ? state.paid : [];
+  const hit = Array.isArray(state?.hit) ? state.hit : [];
+  if (!paid.length && !hit.length) return null;
+
+  const same = (a, b) => !!a && !!b && a.amount === b.amount && (a.title || '') === (b.title || '');
+
+  /* A new rung can only be claimed once, or two goals that happen to cost the
+     same under the same name would both answer to the same record. Each
+     record is offered its own old number first, so nothing moves that did not
+     have to. */
+  const matcher = () => {
+    const taken = new Set();
+    return (goal, was) => {
+      if (!goal) return -1;
+      if (was >= 0 && !taken.has(was) && same(news[was], goal)) {
+        taken.add(was);
+        return was;
+      }
+      const at = news.findIndex((n, i) => !taken.has(i) && same(n, goal));
+      if (at >= 0) taken.add(at);
+      return at;
+    };
+  };
+
+  // a stamp carries its own name and price — that is what it is known by, and
+  // why editing the plan later cannot rewrite what happened
+  const findPaid = matcher();
+  const nextPaid = paid
+    .map((p) => {
+      const at = findPaid(p, p.i);
+      return at < 0 ? null : { ...p, i: at };
+    })
+    .filter(Boolean)
+    .sort((x, y) => x.i - y.i);
+
+  // a cheer carries only its old number, so its goal is looked up as it was
+  const findHit = matcher();
+  const nextHit = hit.map((i) => findHit(olds[i], i)).filter((at) => at >= 0);
+
+  if (JSON.stringify([paid, hit]) === JSON.stringify([nextPaid, nextHit])) return null;
+  return { ...state, paid: nextPaid, hit: nextHit };
+}
+
+/**
  * Read a stated split of a spend: who it comes out of, and how much of each.
  *
  * Nobody can be charged more than they actually have in the pot, which is what
@@ -2416,6 +2483,12 @@ function handleMessage(ws, msg) {
       const config = msg.config !== undefined ? sanitizeConfig(row.type, msg.config) : JSON.parse(row.config);
       store.updateCardMeta(title, emoji, JSON.stringify(config), row.id);
       refreshCover(code);
+      /* The goal ladder can be rearranged from the form, so the stamps that
+         point at its rungs have to travel with it. */
+      if (row.type === 'money' && msg.config !== undefined) {
+        const moved = remapLadder(JSON.parse(row.config), config, JSON.parse(row.state));
+        if (moved) store.updateCardState(JSON.stringify(moved), row.id);
+      }
       if (row.type === 'streak' && msg.config?.startAt !== undefined) {
         const state = JSON.parse(row.state);
         state.startAt = toInt(msg.config.startAt, 0, now, state.startAt) || state.startAt;

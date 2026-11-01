@@ -1984,6 +1984,61 @@ body.reordering {
 
 .gr-fields input { padding: 9px 12px; }
 
+/* The grip that reorders the ladder. It carries the row's rank, because that
+   number is the whole point of the gesture: rung 1 is the one the pot pays
+   off first. It reaches up and down into the row's padding so the entire
+   left edge is grabbable, not just the glyph. */
+.gr-grip {
+  flex: 0 0 auto;
+  align-self: stretch;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  min-width: 26px;
+  margin: -9px 0 -9px -3px;
+  padding: 0 1px;
+  border-radius: var(--r-xs);
+  color: var(--ink-dim);
+  font-size: 1rem;
+  line-height: 1;
+  opacity: 0.5;
+  cursor: grab;
+  touch-action: none; /* the grip owns the gesture; the sheet must not scroll */
+  transition: opacity 0.16s var(--ease), background 0.18s var(--ease);
+}
+
+.gr-grip:active { cursor: grabbing; opacity: 1; }
+.gr-grip:focus-visible { opacity: 1; }
+
+.gr-rank {
+  font-size: 0.62rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.8;
+}
+
+/* only while a row is up in the air, so the list is not a containing block
+   for anything else */
+.goal-rows.rowdrag { position: relative; }
+
+.goal-row.dragging {
+  z-index: 20;
+  pointer-events: none;
+  background: var(--mat-thick);
+  border-color: var(--hairline-strong);
+  box-shadow: var(--shadow-2);
+  transform: scale(1.015);
+}
+
+.goal-placeholder {
+  flex: 0 0 auto;
+  border-radius: var(--r-sm);
+  border: 1px dashed var(--hairline-strong);
+  background: rgba(255, 255, 255, 0.025);
+}
+
 /* contribution race */
 
 .race {
@@ -4401,6 +4456,7 @@ body.rain-open .hint-bubble { opacity: 0; pointer-events: none; }
   .chip-btn:hover { background: rgba(255, 255, 255, 0.16); transform: translateY(-1px); }
   .icon-btn:hover { opacity: 1; background: rgba(255, 255, 255, 0.09); }
   .card-grip:hover { opacity: 1; background: rgba(255, 255, 255, 0.09); }
+  .gr-grip:hover { opacity: 1; background: rgba(255, 255, 255, 0.09); }
   .small-btn:hover { background: rgba(255, 255, 255, 0.15); }
   .small-btn.accent:hover { filter: brightness(1.07); }
   .round-btn:hover { filter: brightness(1.1); }
