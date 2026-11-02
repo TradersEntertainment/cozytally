@@ -1324,6 +1324,83 @@ function newDebtId(taken) {
   }
 }
 
+/* The pot poured down the ladder: the first rung takes what it costs, only
+   the leftover spills into the second. The browser has had this all along —
+   it is what the card has been drawing — and now this side needs it too, to
+   turn a ladder into a list of debts without the picture changing. */
+function ladderFill(goals, total, settled) {
+  let left = total;
+  return goals.map((g, i) => {
+    if (settled.has(i)) return g.amount;
+    const got = Math.max(0, Math.min(left, g.amount));
+    left -= got;
+    return got;
+  });
+}
+
+/* Which bank a line like "Garanti ÖMER" or "İş Bankası Rabia" is about.
+
+   Only used when a piggy bank is rebuilt as a debt card: the goals were
+   named by hand, long before there was a bank to pick from, and the name is
+   the only thing there is to go on. A wrong guess costs one tap in the
+   editor; no guess at all costs the same tap on every row.
+
+   Short keys have to match a whole word — "ing" lives inside a great many
+   Turkish words that are not a Dutch bank. */
+const BANK_HINTS = [
+  ['ziraat', ['ziraat']],
+  ['isbank', ['is bankasi', 'isbank', 'maximum']],
+  ['garanti', ['garanti', 'bonus']],
+  ['akbank', ['akbank', 'axess', 'wings']],
+  ['yapikredi', ['yapi kredi', 'yapikredi', 'world card', 'worldcard']],
+  ['vakifbank', ['vakifbank', 'vakif bank']],
+  ['halkbank', ['halkbank', 'halk bankasi', 'paraf']],
+  ['qnb', ['qnb', 'finansbank', 'cardfinans']],
+  ['enpara', ['enpara', 'en para']],
+  ['denizbank', ['denizbank', 'deniz bank', 'bonus deniz']],
+  ['teb', ['cepteteb', 'teb']],
+  ['ing', ['ing']],
+  ['kuveytturk', ['kuveyt']],
+  ['albaraka', ['albaraka']],
+  ['turkiyefinans', ['turkiye finans', 'happy card']],
+  ['sekerbank', ['sekerbank', 'seker bank']],
+  ['fibabanka', ['fibabanka', 'fiba']],
+  ['odeabank', ['odeabank', 'odea']],
+  ['anadolubank', ['anadolubank', 'anadolu bank']],
+  ['burgan', ['burgan']],
+  ['hsbc', ['hsbc', 'advantage']],
+  ['papara', ['papara']],
+  ['getirfinans', ['getir finans', 'getirfinans']],
+  ['tosla', ['tosla']],
+  ['nkolay', ['n kolay', 'nkolay']],
+  ['card', ['kredi karti', 'credit card', 'kart']],
+  ['person', ['borc verdi', 'odunc', 'arkadas']],
+];
+
+/** Lower case, no Turkish diacritics, single spaces — a name to compare with. */
+function foldName(s) {
+  return String(s || '')
+    .toLocaleLowerCase('tr')
+    .replace(/ı/g, 'i')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+}
+
+function guessBank(title) {
+  const name = foldName(title);
+  if (!name) return 'other';
+  const words = new Set(name.split(' '));
+  for (const [key, hints] of BANK_HINTS) {
+    for (const h of hints) {
+      const hit = h.includes(' ') || h.length > 4 ? name.includes(h) : words.has(h);
+      if (hit) return key;
+    }
+  }
+  return 'other';
+}
+
 /** The debts as a list, and what is still owed on each. */
 function debtRows(cfg, state) {
   const paid = state?.paid && typeof state.paid === 'object' ? state.paid : {};
@@ -2996,6 +3073,70 @@ function handleMessage(ws, msg) {
       }
       return;
     }
+    /* Turning a piggy bank into a list of debts.
+
+       People wrote their debts down as goals, because a goal was the only
+       thing there was to write them down as. It reads backwards the moment
+       money goes in: the card says you are holding 100.000, when what
+       actually happened is that 100.000 left and a debt got smaller.
+
+       So: every rung becomes a debt for what it costs, and whatever the pot
+       had poured into it becomes what has been paid off it. The picture does
+       not change — the same numbers in the same order — it just stops lying
+       about which way the money went. The old card is left exactly where it
+       is, because deciding it is finished with is not this button's call. */
+    case 'money:todebt': {
+      const row = store.getCard(clampStr(msg.id, 40), code);
+      if (!row || row.type !== 'money') return;
+      if (q.cardCount.get(code).n >= MAX_CARDS_PER_ROOM) {
+        return sendTo(ws, { t: 'error', code: 'room-full' });
+      }
+      const cfg = JSON.parse(row.config);
+      const state = JSON.parse(row.state);
+      const goals = goalLadder(cfg).slice(0, MAX_DEBTS);
+      if (!goals.length) return;
+
+      // a rung that was settled outright was paid in full, whatever the pot says
+      const settled = new Set((state.paid || []).map((x) => x.i));
+      const got = ladderFill(goals, state.total || 0, settled);
+
+      const taken = new Set();
+      const debts = goals.map((g) => {
+        const id = newDebtId(taken);
+        taken.add(id);
+        const title = clampStr(g.title, 40);
+        return { id, bank: guessBank(title), title, total: g.amount, min: 0, due: 0 };
+      });
+      const paid = {};
+      debts.forEach((d, i) => {
+        const n = Math.min(d.total, Math.max(0, got[i]));
+        if (n > 0) paid[d.id] = n;
+      });
+
+      const config = { cur: clampStr(cfg.cur, 4) || '₺', shadow: cfg.shadow || '', debts };
+      /* One ledger line per debt, saying where the money came from rather
+         than pretending somebody paid it just now. Dated to the card's own
+         beginning, so none of it lands in "what we paid this month". */
+      const at = Math.min(now, toInt(row.created_at, 0, now, now) || now);
+      const log = debts
+        .filter((d) => paid[d.id])
+        .map((d) => ({ row: d.id, a: paid[d.id], by: ws.meta.name, key: personKey(ws), at, note: '' }));
+
+      const id = crypto.randomUUID();
+      // at the top, where a card you just made belongs
+      const sort = q.minSort.get(code).m - 1;
+      store.insertCard(
+        id, code, 'debt',
+        clampStr(msg.title, 60) || row.title,
+        '🏦',
+        JSON.stringify(config),
+        JSON.stringify({ paid, log }),
+        sort, now
+      );
+      broadcastCard(code, id, by, 'card:add');
+      return;
+    }
+
     /* "That was me too." An old device, or a name a piggy bank pieced together
        out of its own history — anything in this room that belongs to nobody
        can be taken over by somebody signed in. What is offered is worked out

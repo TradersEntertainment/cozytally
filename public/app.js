@@ -4387,7 +4387,11 @@
       const left = d.total - done;
       const mo = Math.max(0, thisMonth[d.id] || 0);
       const need = Math.max(0, Math.min(d.min, left) - mo);
-      return { ...d, done, left, mo, need, covered: left === 0 || need === 0 };
+      /* A debt nobody wrote a minimum for has no month to be on top of, so it
+         is neither covered nor behind — it is just a number that is owed.
+         Calling it "paid this month" would be an answer to a question that
+         was never asked. */
+      return { ...d, done, left, mo, need, covered: left === 0 || (d.min > 0 && need === 0) };
     });
   }
 
@@ -4415,7 +4419,7 @@
     // what still has to leave this month to keep every one of them quiet —
     // what has already gone is not a thing to remind anybody about
     const due = rows.reduce((s, d) => s + d.need, 0);
-    const owing = rows.filter((d) => d.left > 0);
+    const owing = rows.filter((d) => d.left > 0 && d.min > 0);
     const allCovered = owing.length > 0 && owing.every((d) => d.covered);
     const pct = total ? (done / total) * 100 : 0;
     const clear = rows.length > 0 && left === 0;
@@ -5564,7 +5568,14 @@
           <p class="sub-label" style="text-align:left; margin:-2px 0 10px">${esc(t('multiGoalHint'))}</p>
           <div class="goal-rows js-goalrows"></div>
           <button type="button" class="small-btn js-addgoal">➕ ${esc(t('addGoal'))}</button>
-        </div>`;
+        </div>
+        ${isEdit && (existing?.config?.goals || []).length
+          ? `<div class="field">
+               <label>${esc(t('toDebtTitle'))}</label>
+               <p class="sub-label" style="text-align:left; margin:-2px 0 10px">${esc(t('toDebtHint'))}</p>
+               <button type="button" class="small-btn js-todebt">🏦 ${esc(t('toDebt'))}</button>
+             </div>`
+          : ''}`;
     }
 
     if (type === 'debt') {
@@ -5903,6 +5914,23 @@
           }
         },
       });
+
+      const toDebt = $('.js-todebt', box);
+      if (toDebt) {
+        toDebt.onclick = async () => {
+          // read before asking: the question takes this sheet's place
+          const name = $('#cf-title', box)?.value.trim() || '';
+          const yes = await confirmModal({
+            title: t('toDebtTitle'),
+            body: t('toDebtBody'),
+            yesLabel: t('toDebtYes'),
+            danger: false,
+          });
+          if (!yes) return;
+          send({ t: 'money:todebt', id: existing.id, title: name });
+          closeModal();
+        };
+      }
 
       $('.js-addgoal', box).onclick = (e) => {
         if (goalDraft.length >= MAX_GOALS) return;
