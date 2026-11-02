@@ -4662,6 +4662,10 @@
                 <span class="debt-log-amt ${g.a < 0 ? 'back' : ''}"
                   >${sign}${esc(money(Math.abs(g.a)))}${
                   g.at ? `<i class="m-when">${esc(shortDate(g.at))}</i>` : ''}</span>
+                ${g.key
+                  ? `<span class="log-undo" title="${esc(t('debtUndoYes'))}"
+                      aria-label="${esc(t('debtUndoYes'))}">↩</span>`
+                  : ''}
               </${g.key ? 'button' : 'div'}>`;
             })
             .join('')}</div>`

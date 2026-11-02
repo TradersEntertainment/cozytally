@@ -2340,6 +2340,27 @@ button.debt-due:active { background: rgba(255, 255, 255, 0.07); }
 
 .debt-log-row:active { background: rgba(255, 255, 255, 0.07); }
 
+/* A line you can take back has to look like one. Without this the ledger is
+   a paragraph of text that happens to react to being touched, which nobody
+   finds out by guessing. */
+.log-undo {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 26px;
+  min-height: 26px;
+  margin: -4px -4px -4px 0;
+  border-radius: var(--r-pill);
+  font-size: 0.9rem;
+  line-height: 1;
+  color: var(--ink-dim);
+  opacity: 0.55;
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.debt-log-row:active .log-undo { opacity: 1; }
+
 /* whose card it is, tucked into the corner of its bank's mark */
 .owner-dot {
   position: absolute;
@@ -4891,6 +4912,7 @@ body.rain-open .hint-bubble { opacity: 0; pointer-events: none; }
   .chip-btn:hover { background: rgba(255, 255, 255, 0.16); transform: translateY(-1px); }
   .icon-btn:hover { opacity: 1; background: rgba(255, 255, 255, 0.09); }
   .card-grip:hover { opacity: 1; background: rgba(255, 255, 255, 0.09); }
+  .debt-log-row:hover .log-undo { opacity: 1; background: rgba(255, 255, 255, 0.12); }
   .gr-grip:hover { opacity: 1; background: rgba(255, 255, 255, 0.09); }
   .small-btn:hover { background: rgba(255, 255, 255, 0.15); }
   .small-btn.accent:hover { filter: brightness(1.07); }
