@@ -320,6 +320,8 @@ const PUSH_STR = {
     debtPaid: (n, amt, cur, what, left) =>
       `${n} ${what} borcuna ${nf('tr', amt)}${cur} ödedi · kalan ${nf('tr', left)}${cur}`,
     debtCleared: (n, what) => `${what} borcu kapandı! 🎉 ${n} son ödemeyi yaptı`,
+    debtSpread: (n, amt, cur, k) =>
+      `${n} ${nf('tr', amt)}${cur} dağıttı · ${k} borca bölüştürüldü`,
     moneyGoalNamed: (g, c, amt, cur) =>
       `“${g}” hedefine ulaştınız! ⭐ ${c} · ${nf('tr', amt)}${cur} 🎉`,
     cardAdd: (n, c) => `${n} yeni kart ekledi: ${c}`,
@@ -354,6 +356,8 @@ const PUSH_STR = {
     debtPaid: (n, amt, cur, what, left) =>
       `${n} put ${nf('en', amt)}${cur} toward ${what} · ${nf('en', left)}${cur} to go`,
     debtCleared: (n, what) => `${what} is paid off! 🎉 ${n} made the last payment`,
+    debtSpread: (n, amt, cur, k) =>
+      `${n} spread ${nf('en', amt)}${cur} across ${k} debts`,
     moneyGoalNamed: (g, c, amt, cur) =>
       `“${g}” reached! ⭐ ${c} · ${nf('en', amt)}${cur} 🎉`,
     cardAdd: (n, c) => `${n} added a card: ${c}`,
@@ -1408,6 +1412,72 @@ function debtRows(cfg, state) {
     const done = Math.min(d.total, Math.max(0, toInt(paid[d.id], 0, d.total, 0)));
     return { ...d, done, left: d.total - done };
   });
+}
+
+/* Handing one sum out across a pile of debts.
+
+   Two passes, because that is how people actually pay: first you keep every
+   bank quiet — this month's minimum on each, in the order you put them in —
+   and only what is left after that is yours to aim. The leftover goes out in
+   proportion to what each debt still owes, so the big one gets the big share
+   and nothing lands on a debt that is already settled.
+
+   Everything is in whole lira. Flooring each share would leave a few behind,
+   so the loop runs again on what is left until there is nothing to hand out
+   or nowhere to put it; when the shares drop below a lira each it goes down
+   the list a lira at a time rather than vanishing.
+
+   `mo` is what has already gone into each debt this month, which decides how
+   much of a minimum is still owed. It is counted from the browser's own
+   month, because "this month" is a fact about somebody's life and not about
+   UTC — see the `since` the client sends. */
+function spreadDebts(rows, amount, mo) {
+  const give = Object.create(null);
+  const roomOf = (d) => d.left - (give[d.id] || 0);
+  let pot = Math.max(0, amount);
+
+  for (const d of rows) {
+    if (pot <= 0) break;
+    const owed = Math.max(0, Math.min(d.min, d.left) - Math.max(0, mo[d.id] || 0));
+    const n = Math.min(owed, roomOf(d), pot);
+    if (n > 0) {
+      give[d.id] = (give[d.id] || 0) + n;
+      pot -= n;
+    }
+  }
+
+  while (pot > 0) {
+    const open = rows.map((d) => ({ d, room: roomOf(d) })).filter((x) => x.room > 0);
+    if (!open.length) break;
+    const total = open.reduce((n, x) => n + x.room, 0);
+    let handed = 0;
+    for (const x of open) {
+      const n = Math.min(x.room, Math.floor((pot * x.room) / total));
+      if (n > 0) {
+        give[x.d.id] = (give[x.d.id] || 0) + n;
+        handed += n;
+      }
+    }
+    if (!handed) {
+      for (const x of open) {
+        if (handed >= pot) break;
+        give[x.d.id] = (give[x.d.id] || 0) + 1;
+        handed += 1;
+      }
+    }
+    if (!handed) break;
+    pot -= handed;
+  }
+  return { give, left: pot };
+}
+
+/** What has gone into each debt since `since`, read off the ledger. */
+function paidSince(state, since) {
+  const out = {};
+  for (const e of Array.isArray(state?.log) ? state.log : []) {
+    if ((e.at || 0) >= since) out[e.row] = (out[e.row] || 0) + (e.a || 0);
+  }
+  return out;
 }
 
 /* A row that is gone has no payments left to remember, and a row whose
@@ -3004,6 +3074,26 @@ function handleMessage(ws, msg) {
       return;
     }
 
+    /* "If I hand over this much, where does it go?" Asked before anything is
+       written down, so the sheet can show the split and let somebody change
+       their mind. The answer is worked out here rather than in the browser so
+       there is one arithmetic in this app and not two — and it is advisory:
+       the real spread is computed again when it is actually applied, against
+       whatever the card says then. */
+    case 'debt:plan': {
+      const row = store.getCard(clampStr(msg.id, 40), code);
+      if (!row || row.type !== 'debt') return;
+      const amount = toInt(msg.amount, 1, 1000000000, 0);
+      if (!amount) return;
+      const state = JSON.parse(row.state);
+      const rows = debtRows(JSON.parse(row.config), state);
+      // the browser's own month, kept inside two sane months of now
+      const since = toInt(msg.since, now - 62 * 86400000, now, now);
+      const { give, left } = spreadDebts(rows, amount, paidSince(state, since));
+      sendTo(ws, { t: 'debt:plan', id: row.id, amount, give, left });
+      return;
+    }
+
     /* Paying a debt down. Not the same act as filling a piggy bank: there is
        no pot here, no shared pocket to take from. There is a number that is
        owed and a number that has gone, and the only thing anyone can do is
@@ -3019,6 +3109,42 @@ function handleMessage(ws, msg) {
       const cfg = JSON.parse(row.config);
       const state = JSON.parse(row.state);
       const rows = debtRows(cfg, state);
+
+      /* One sum, handed out across the lot: every bank's minimum first, then
+         the rest in proportion to what is still owed. Worked out here and not
+         sent in, so what lands is a split of the money somebody actually has
+         rather than a list of numbers a stale screen made up. */
+      if (msg.op === 'spread') {
+        const want = toInt(msg.amount, 1, 1000000000, 0);
+        if (!want) return;
+        const since = toInt(msg.since, now - 62 * 86400000, now, now);
+        const { give } = spreadDebts(rows, want, paidSince(state, since));
+        const at = toInt(msg.at, 0, now, now);
+        const note = clampStr(msg.note, 60);
+        state.paid = state.paid && typeof state.paid === 'object' ? state.paid : {};
+        const lines = [];
+        let moved = 0;
+        for (const d of rows) {
+          const n = give[d.id] || 0;
+          if (n <= 0) continue;
+          state.paid[d.id] = d.done + n;
+          moved += n;
+          lines.push({ row: d.id, a: n, by: ws.meta.name, key: personKey(ws), at, note });
+        }
+        if (!moved) return;
+        state.log = [...lines, ...(Array.isArray(state.log) ? state.log : [])]
+          .sort((x, y) => (y.at || 0) - (x.at || 0))
+          .slice(0, 150);
+        store.updateCardState(JSON.stringify(state), row.id);
+        broadcastCard(code, row.id, by, 'debt');
+        const cur0 = clampStr(cfg.cur, 4) || '₺';
+        pushToRoom(code, 'debtSpread', [ws.meta.name, moved, cur0, lines.length], ws.meta.cid, {
+          key: `debt:${row.id}`,
+          windowMs: 60000,
+        });
+        return;
+      }
+
       const hit = rows.find((d) => d.id === clampStr(msg.row, 8));
       if (!hit) return;
 

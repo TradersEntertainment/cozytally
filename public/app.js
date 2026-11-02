@@ -1859,6 +1859,15 @@
         if (msg.code === 'no-entry') shutOut();
         return;
 
+      case 'debt:plan': {
+        const w = planWait;
+        if (w && w.id === msg.id && w.amount === msg.amount) {
+          planWait = null;
+          w.resolve(msg);
+        }
+        return;
+      }
+
       case 'room': {
         clockOffset = msg.now - Date.now();
         // the second number on a money or debt card comes from here
@@ -4437,13 +4446,17 @@
      A ladder that only knows "paid off" has nothing to say about a card you
      owe 35.000 on and can find 3.500 for this month — and that, month after
      month, is what carrying a debt actually is. */
+  /* The first of this month, in the reader's own calendar. "This month" is a
+     thing about somebody's life, not about UTC, so it is worked out here and
+     sent along with anything that has to know. */
+  const monthStart = () => {
+    const d = new Date();
+    return new Date(d.getFullYear(), d.getMonth(), 1).getTime();
+  };
+
   function debtRows(card) {
     const paid = card.state?.paid || {};
-    /* What has gone into each debt since the first of this month. Worked out
-       in the reader's own calendar rather than the server's, because "this
-       month" is a thing about the person's life, not about UTC. */
-    const month = new Date();
-    const since = new Date(month.getFullYear(), month.getMonth(), 1).getTime();
+    const since = monthStart();
     const thisMonth = {};
     for (const e of card.state?.log || []) {
       if ((e.at || 0) >= since) thisMonth[e.row] = (thisMonth[e.row] || 0) + (e.a || 0);
@@ -4552,6 +4565,14 @@
           })
           .join('')}
       </div>
+      ${left
+        ? `<div class="debt-form">
+             <input type="number" inputmode="numeric" min="1" class="debt-input js-damt"
+               placeholder="${esc(t('amountPh'))}">
+             <button type="button" class="btn btn-primary js-spread">${esc(t('debtSpread'))}</button>
+           </div>
+           <p class="sub-label debt-form-hint">${esc(t('debtSpreadHint'))}</p>`
+        : ''}
       ${(card.state.log || []).length
         ? `<div class="debt-log">${(card.state.log || [])
             .slice(0, 4)
@@ -4574,7 +4595,127 @@
       el.onclick = () => openDebtPay(card, el.dataset.id);
     });
 
+    const spreadBtn = $('.js-spread', body);
+    if (spreadBtn) {
+      const amt = $('.js-damt', body);
+      const go = () => {
+        const v = Math.round(Math.abs(Number(amt.value)));
+        if (!v) return amt.focus();
+        openSpread(card, v);
+      };
+      spreadBtn.onclick = go;
+      amt.addEventListener('keydown', (e) => e.key === 'Enter' && go());
+    }
+
     if (opts.verb === 'debt') sparklesAt(body.closest('.card'));
+  }
+
+  /* The split, shown before it happens.
+
+     Handing out fifteen thousand across six debts is not a thing anybody
+     should have to take on trust, and it is not a thing that can be undone
+     with one tap afterwards either — so the sheet says where every lira is
+     going, and the button underneath is the first irreversible thing in the
+     whole flow. The server works the split out; this only draws it. */
+  let planWait = null;
+
+  function askPlan(card, amount) {
+    return new Promise((resolve) => {
+      const w = { id: card.id, amount, resolve };
+      planWait = w;
+      send({ t: 'debt:plan', id: card.id, amount, since: monthStart() });
+      // a socket that never answers must not leave the sheet hanging open
+      setTimeout(() => {
+        if (planWait === w) {
+          planWait = null;
+          resolve(null);
+        }
+      }, 5000);
+    });
+  }
+
+  async function openSpread(card, amount) {
+    const cur = card.config.cur || '₺';
+    const shade = card.config.shadow || '';
+    const money = (n) => fmtNum(n) + cur;
+
+    const box = openModal(`
+      <h2>${esc(t('debtSpread'))}</h2>
+      <p class="sub-label" style="text-align:left;margin:0 0 14px">${esc(t('debtSpreadWait'))}</p>`);
+
+    const plan = await askPlan(card, amount);
+    // the sheet may have been closed, or another one opened, while we waited
+    if (!plan || overlay.hidden || $('h2', modalBox)?.textContent !== t('debtSpread')) {
+      if (!plan && !overlay.hidden) {
+        closeModal();
+        toast(t('offlineTap'));
+      }
+      return;
+    }
+
+    const rows = debtRows(card).filter((d) => (plan.give[d.id] || 0) > 0);
+    const moved = rows.reduce((n, d) => n + plan.give[d.id], 0);
+    const second = shade ? shadowAmount(moved, cur, shade) : '';
+
+    if (!moved) {
+      box.innerHTML = `
+        <h2>${esc(t('debtSpread'))}</h2>
+        <p class="sub-label" style="text-align:left">${esc(t('debtSpreadNowhere'))}</p>
+        <div class="modal-actions">
+          <button type="button" class="btn btn-ghost js-cancel">${esc(t('cancel'))}</button>
+        </div>`;
+      $('.js-cancel', box).onclick = closeModal;
+      return;
+    }
+
+    box.innerHTML = `
+      <h2>${esc(t('debtSpread'))}</h2>
+      <div class="spread-sum">
+        <span class="spread-big">${esc(money(moved))}</span>
+        ${second ? `<span class="debt-shadow">${esc(second)}</span>` : ''}
+      </div>
+      <p class="sub-label" style="text-align:left;margin:0 0 12px">${esc(t('debtSpreadHint'))}</p>
+      <div class="spread-list">
+        ${rows
+          .map((d) => {
+            const n = plan.give[d.id];
+            const after = d.left - n;
+            return `<div class="spread-row">
+              ${bankChip(d.bank)}
+              <span class="spread-info">
+                <span class="debt-name">${esc(d.title || bankName(d.bank))}</span>
+                <span class="debt-nums">${after
+                  ? esc(t('debtLeftAfter', { n: money(after) }))
+                  : esc(t('debtClearsHere'))}</span>
+              </span>
+              <span class="spread-amt ${after ? '' : 'clears'}">${esc(money(n))}</span>
+            </div>`;
+          })
+          .join('')}
+      </div>
+      ${plan.left
+        ? `<p class="sub-label debt-due" style="text-align:left">${esc(t('debtSpreadOver', { n: money(plan.left) }))}</p>`
+        : ''}
+      <div class="field" style="margin:14px 0 0">
+        <input type="text" maxlength="60" class="js-note" placeholder="${esc(t('debtNote'))}" autocomplete="off">
+      </div>
+      <div class="modal-actions">
+        <button type="button" class="btn btn-ghost js-cancel">${esc(t('cancel'))}</button>
+        <button type="button" class="btn btn-primary js-go">${esc(t('debtSpreadDo'))}</button>
+      </div>`;
+
+    $('.js-cancel', box).onclick = closeModal;
+    $('.js-go', box).onclick = () => {
+      send({
+        t: 'debt',
+        id: card.id,
+        op: 'spread',
+        amount,
+        since: monthStart(),
+        note: $('.js-note', box).value.trim().slice(0, 60),
+      });
+      closeModal();
+    };
   }
 
   /* One debt, and the three things anybody ever actually does to it: pay the
