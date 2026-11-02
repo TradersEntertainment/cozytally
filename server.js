@@ -317,6 +317,9 @@ const PUSH_STR = {
     moneyOut: (n, c, amt, total, cur) =>
       `${n} kumbaradan −${nf('tr', amt)}${cur} çıkardı 🍃 · ${c}: ${nf('tr', total)}${cur}`,
     moneyGoal: (c, total, cur) => `Hedefe ulaştınız! ${c} · ${nf('tr', total)}${cur} 🎉💰`,
+    debtPaid: (n, amt, cur, what, left) =>
+      `${n} ${what} borcuna ${nf('tr', amt)}${cur} ödedi · kalan ${nf('tr', left)}${cur}`,
+    debtCleared: (n, what) => `${what} borcu kapandı! 🎉 ${n} son ödemeyi yaptı`,
     moneyGoalNamed: (g, c, amt, cur) =>
       `“${g}” hedefine ulaştınız! ⭐ ${c} · ${nf('tr', amt)}${cur} 🎉`,
     cardAdd: (n, c) => `${n} yeni kart ekledi: ${c}`,
@@ -348,6 +351,9 @@ const PUSH_STR = {
     moneyOut: (n, c, amt, total, cur) =>
       `${n} took −${nf('en', amt)}${cur} out 🍃 · ${c}: ${nf('en', total)}${cur}`,
     moneyGoal: (c, total, cur) => `Goal reached! ${c} · ${nf('en', total)}${cur} 🎉💰`,
+    debtPaid: (n, amt, cur, what, left) =>
+      `${n} put ${nf('en', amt)}${cur} toward ${what} · ${nf('en', left)}${cur} to go`,
+    debtCleared: (n, what) => `${what} is paid off! 🎉 ${n} made the last payment`,
     moneyGoalNamed: (g, c, amt, cur) =>
       `“${g}” reached! ⭐ ${c} · ${nf('en', amt)}${cur} 🎉`,
     cardAdd: (n, c) => `${n} added a card: ${c}`,
@@ -1153,7 +1159,9 @@ function newRoomCode() {
 
 const CARD_TYPES = new Set([
   'tally', 'streak', 'timer', 'countdown', 'note', 'money', 'list', 'checkin', 'game', 'pet',
+  'debt',
 ]);
+const MAX_DEBTS = 12;
 /** cards that carry a little conversation of their own */
 const COMMENTABLE = new Set(['note', 'game', 'pet']);
 const MAX_LIST_ITEMS = 60;
@@ -1241,6 +1249,8 @@ function sanitizeConfig(type, raw) {
   if (type === 'checkin') out.mode = src.mode === 'any' ? 'any' : 'all';
   if (type === 'money') {
     out.cur = clampStr(src.cur, 4) || '₺';
+    // the same lens the debt card offers: a second number beside the first
+    out.shadow = /^[A-Z]{3}$/.test(src.shadow) ? src.shadow : '';
     const photoOf = (v) =>
       typeof v === 'string' && /^\/u\/[\w-]+\.(jpg|png|webp|gif)$/.test(v) ? v : undefined;
 
@@ -1267,7 +1277,75 @@ function sanitizeConfig(type, raw) {
       if (photo) out.photo = photo;
     }
   }
+  if (type === 'debt') {
+    out.cur = clampStr(src.cur, 4) || '₺';
+    /* The second currency is a lens on the same money, so it is allowed to
+       be nothing at all — most people only think in one. */
+    out.shadow = /^[A-Z]{3}$/.test(src.shadow) ? src.shadow : '';
+
+    /* A debt keeps an id of its own, minted here and echoed back by the
+       browser. Everything that happened to it — every payment — is filed
+       under that id, so the row can be renamed, repriced, or dragged to a
+       different rung without its history going anywhere. The goal ladder
+       next door has to match on name and price precisely because it has no
+       id; this one learned from it. */
+    const seen = new Set();
+    out.debts = (Array.isArray(src.debts) ? src.debts : [])
+      .slice(0, MAX_DEBTS)
+      .map((d) => {
+        const given = clampStr(d?.id, 8);
+        const id = /^[a-f0-9]{8}$/.test(given) && !seen.has(given) ? given : newDebtId(seen);
+        seen.add(id);
+        const total = toInt(d?.total, 0, 1000000000, 0);
+        return {
+          id,
+          bank: clampStr(d?.bank, 24),
+          title: clampStr(d?.title, 40),
+          total,
+          // the smallest payment that keeps the bank quiet this month
+          min: toInt(d?.min, 0, total, 0),
+          /* The day of the month it is due. Nothing enforces it and nothing
+             is calculated from it on this side — it is simply the thing you
+             would otherwise be keeping in your head, and the one thing about
+             a debt that actually has a deadline. 0 means you never said. */
+          due: toInt(d?.due, 0, 31, 0),
+        };
+      })
+      .filter((d) => d.total > 0);
+  }
   return out;
+}
+
+/** An id no other debt on this card is already using. */
+function newDebtId(taken) {
+  for (;;) {
+    const id = crypto.randomBytes(4).toString('hex');
+    if (!taken.has(id)) return id;
+  }
+}
+
+/** The debts as a list, and what is still owed on each. */
+function debtRows(cfg, state) {
+  const paid = state?.paid && typeof state.paid === 'object' ? state.paid : {};
+  return (Array.isArray(cfg?.debts) ? cfg.debts : []).map((d) => {
+    const done = Math.min(d.total, Math.max(0, toInt(paid[d.id], 0, d.total, 0)));
+    return { ...d, done, left: d.total - done };
+  });
+}
+
+/* A row that is gone has no payments left to remember, and a row whose
+   price came down below what has already gone into it is simply settled.
+   Returns the state to write, or null when nothing has to change. */
+function trimDebts(cfg, state) {
+  const rows = Array.isArray(cfg?.debts) ? cfg.debts : [];
+  const was = state?.paid && typeof state.paid === 'object' ? state.paid : {};
+  const next = {};
+  for (const d of rows) {
+    const n = Math.min(d.total, Math.max(0, toInt(was[d.id], 0, d.total, 0)));
+    if (n > 0) next[d.id] = n;
+  }
+  if (JSON.stringify(was) === JSON.stringify(next)) return null;
+  return { ...state, paid: next };
 }
 
 /** The goal ladder as a list, whichever of the two shapes the card was made in. */
@@ -1403,6 +1481,7 @@ function defaultState(type, now, config) {
   if (type === 'timer') return { running: false, startedAt: 0, accumulated: 0 };
   if (type === 'note') return { text: '', author: '', updatedAt: 0, comments: [] };
   if (type === 'money') return { total: 0, log: [], by: {}, paid: [], hit: [] };
+  if (type === 'debt') return { paid: {}, log: [] };
   if (type === 'list') return { items: [] };
   if (type === 'checkin')
     return { people: {}, days: {}, best: 0, tokens: COVER_TOKENS_PER_MONTH, tokenMonth: '', covers: [] };
@@ -2352,6 +2431,9 @@ function handleMessage(ws, msg) {
         coverPick: q.getRoom.get(code)?.cover || '',
       },
       cards: store.roomCards(code).map((r) => rowToCard(r, personKey(ws))),
+      // so a lira figure can carry a second number beside it from the
+      // first paint, without a round trip of its own
+      rates: ratesPayload(),
       members: membersOf(code),
       you: ws.meta.id,
       unclaimed,
@@ -2504,6 +2586,10 @@ function handleMessage(ws, msg) {
       refreshCover(code);
       /* The goal ladder can be rearranged from the form, so the stamps that
          point at its rungs have to travel with it. */
+      if (row.type === 'debt' && msg.config !== undefined) {
+        const trimmed = trimDebts(config, JSON.parse(row.state));
+        if (trimmed) store.updateCardState(JSON.stringify(trimmed), row.id);
+      }
       if (row.type === 'money' && msg.config !== undefined) {
         const moved = remapLadder(JSON.parse(row.config), config, JSON.parse(row.state));
         if (moved) store.updateCardState(JSON.stringify(moved), row.id);
@@ -2841,6 +2927,75 @@ function handleMessage(ws, msg) {
       return;
     }
 
+    /* Paying a debt down. Not the same act as filling a piggy bank: there is
+       no pot here, no shared pocket to take from. There is a number that is
+       owed and a number that has gone, and the only thing anyone can do is
+       move the second one toward the first.
+
+       Which is why the minimum payment matters. A ladder that only lets you
+       settle a rung outright has nothing to say about a card you owe 35.000
+       on and can pay 2.100 of this month — and that, month after month, is
+       what having a debt actually is. */
+    case 'debt': {
+      const row = store.getCard(clampStr(msg.id, 40), code);
+      if (!row || row.type !== 'debt') return;
+      const cfg = JSON.parse(row.config);
+      const state = JSON.parse(row.state);
+      const rows = debtRows(cfg, state);
+      const hit = rows.find((d) => d.id === clampStr(msg.row, 8));
+      if (!hit) return;
+
+      /* Three ways to say it, one thing written down. "The minimum" and
+         "close it" are the two amounts anybody ever reaches for, and asking
+         the browser to work them out would mean trusting a number it
+         computed from a card that may already have moved. */
+      const want =
+        msg.op === 'min' ? Math.min(hit.min, hit.left)
+        : msg.op === 'all' ? hit.left
+        : toInt(msg.amount, -1000000000, 1000000000, 0);
+      if (!want) return;
+
+      /* You cannot pay more than is owed, and you cannot un-pay more than
+         has gone. Both ends matter: the first keeps a slip of the thumb from
+         inventing a credit the bank never gave, the second keeps a
+         correction from digging a hole underneath the debt. */
+      const amount = Math.max(-hit.done, Math.min(hit.left, want));
+      if (!amount) return;
+
+      state.paid = state.paid && typeof state.paid === "object" ? state.paid : {};
+      const after = hit.done + amount;
+      if (after > 0) state.paid[hit.id] = after;
+      else delete state.paid[hit.id];
+
+      const at = toInt(msg.at, 0, now, now);
+      const note = clampStr(msg.note, 60);
+      state.log = [
+        { row: hit.id, a: amount, by: ws.meta.name, key: personKey(ws), at, note },
+        ...(Array.isArray(state.log) ? state.log : []),
+      ]
+        .sort((x, y) => (y.at || 0) - (x.at || 0))
+        /* Longer than the piggy bank's twenty, because this ledger is read
+           and not just shown: whether this month's minimum has been covered
+           is worked out from it, and a month that fell off the end would be
+           answered with a confident "no". */
+        .slice(0, 150);
+
+      store.updateCardState(JSON.stringify(state), row.id);
+      broadcastCard(code, row.id, by, 'debt');
+
+      const left = hit.left - amount;
+      const cur = clampStr(cfg.cur, 4) || '₺';
+      const what = hit.title || hit.bank || row.title;
+      if (amount > 0 && left === 0) {
+        pushToRoom(code, 'debtCleared', [ws.meta.name, what], ws.meta.cid);
+      } else if (amount > 0) {
+        pushToRoom(code, 'debtPaid', [ws.meta.name, amount, cur, what, left], ws.meta.cid, {
+          key: `debt:${row.id}`,
+          windowMs: 60000,
+        });
+      }
+      return;
+    }
     /* "That was me too." An old device, or a name a piggy bank pieced together
        out of its own history — anything in this room that belongs to nobody
        can be taken over by somebody signed in. What is offered is worked out
@@ -3288,11 +3443,83 @@ async function encryptExisting() {
 setTimeout(takeBackup, BACKUP_FIRST).unref?.();
 setInterval(takeBackup, BACKUP_EVERY).unref?.();
 
+/* ---------------------------------------------------------------- rates
+
+   What a number means depends on the day you read it. A 180.000 ₺ debt is a
+   different sum this winter than it was last, and the person carrying it
+   knows that better than anyone — so every amount on a money or debt card can
+   carry a second number beside it, in whatever currency they actually think
+   in.
+
+   The rates come from a free public table once a day, which is as often as it
+   is published. The last good set is written down, so a restart in the middle
+   of the night does not leave the app currency-blind until morning: a rate
+   from yesterday is wrong by a fraction of a percent, and no rate at all is
+   wrong by the whole number. Nothing is ever *stored* converted — the rate is
+   a lens, not a fact about the money. */
+
+const RATES_KEY = 'fx_rates_v1';
+const RATES_EVERY = 6 * 60 * 60 * 1000; // the table itself moves once a day
+const RATE_SOURCES = [
+  {
+    url: 'https://open.er-api.com/v6/latest/TRY',
+    read: (d) => (d?.result === 'success' ? d.rates : null),
+  },
+  {
+    url: 'https://api.frankfurter.dev/v1/latest?base=TRY',
+    read: (d) => (d?.rates ? { ...d.rates, TRY: 1 } : null),
+  },
+];
+
+/** Everything is held against the lira, because that is what this is for. */
+let fx = { base: 'TRY', at: 0, rates: { TRY: 1 } };
+
+try {
+  const saved = q.getMeta.get(RATES_KEY);
+  if (saved) {
+    const got = JSON.parse(dec(saved.v, '{}'));
+    if (got?.rates?.TRY) fx = got;
+  }
+} catch (err) {
+  console.error('fx restore:', err.message);
+}
+
+async function refreshRates() {
+  for (const src of RATE_SOURCES) {
+    try {
+      const res = await fetch(src.url, { signal: AbortSignal.timeout(8000) });
+      if (!res.ok) continue;
+      const rates = src.read(await res.json());
+      // a table without the lira in it is a table about something else
+      if (!rates || typeof rates.USD !== 'number' || rates.TRY !== 1) continue;
+      const keep = {};
+      for (const [k, v] of Object.entries(rates)) {
+        if (/^[A-Z]{3}$/.test(k) && Number.isFinite(v) && v > 0) keep[k] = v;
+      }
+      fx = { base: 'TRY', at: Date.now(), rates: keep };
+      q.setMeta.run(RATES_KEY, enc(JSON.stringify(fx)));
+      return true;
+    } catch {
+      // a source that is down is not an error worth a line in the log; the
+      // next one, or the next hour, will do
+    }
+  }
+  return false;
+}
+
+/** What the browser needs to draw a second number: the table and its age. */
+const ratesPayload = () => ({ base: fx.base, at: fx.at, rates: fx.rates });
+
+app.get('/api/rates', (_req, res) => res.json(ratesPayload()));
+
 server.listen(PORT, () => {
   console.log(`CozyTally listening on :${PORT} (data: ${DATA_DIR})`);
   // after the door is open: the rows are quick, but a big uploads folder is
   // not, and nothing here should stand between a deploy and its health check
   encryptExisting();
+  // the saved table is already in hand, so this is a top-up, not a wait
+  refreshRates();
+  setInterval(refreshRates, RATES_EVERY).unref?.();
 });
 
 /* Every deploy used to kill this process outright, so the log was never

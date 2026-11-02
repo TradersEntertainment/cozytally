@@ -2039,6 +2039,284 @@ body.reordering {
   background: rgba(255, 255, 255, 0.025);
 }
 
+
+/* ============================================================
+   debts
+   ============================================================ */
+
+/* The bank, in its own colour and its own initials. Drawn rather than
+   downloaded — see BANKS in app.js for why. */
+.bank-chip {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 42px;
+  height: 42px;
+  border-radius: var(--r-xs);
+  background: linear-gradient(160deg, color-mix(in srgb, var(--bank) 82%, white 18%), var(--bank));
+  color: #fff;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
+  box-shadow: var(--specular-soft), var(--shadow-1);
+}
+
+.debt-head {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  margin-bottom: 10px;
+}
+
+.debt-headline {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+.debt-big {
+  font-size: var(--t-large);
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  color: var(--amber);
+}
+
+.debt-big.clear { color: var(--mint); font-size: var(--t-title); }
+
+/* the same money read in the currency you actually think in */
+.debt-shadow {
+  font-size: var(--t-footnote);
+  color: var(--ink-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+.debt-of {
+  font-size: var(--t-caption);
+  color: var(--ink-dim);
+}
+
+.debt-due {
+  margin: 8px 0 2px;
+  color: var(--peach);
+}
+
+.debt-covered {
+  margin: 8px 0 2px;
+  color: var(--mint);
+}
+
+/* when a debt is due, and how much that matters today */
+.debt-when { color: var(--ink-dim); }
+.debt-when.soon { color: var(--peach); }
+.debt-when.late { color: var(--pink); font-weight: 600; }
+
+.debt-tick { color: var(--mint); font-size: 0.95rem; line-height: 1; }
+
+.debt-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.debt-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 9px 10px;
+  border: 0.5px solid var(--hairline);
+  border-radius: var(--r-sm);
+  background: rgba(255, 255, 255, 0.045);
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.18s var(--ease), transform 0.14s var(--ease);
+}
+
+.debt-row:active { transform: scale(0.985); background: rgba(255, 255, 255, 0.08); }
+.debt-row.done { opacity: 0.55; }
+
+.debt-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.debt-name {
+  font-size: var(--t-callout);
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.debt-row.done .debt-name { text-decoration: line-through; }
+
+.debt-nums {
+  font-size: var(--t-caption);
+  line-height: 1.35;
+  color: var(--ink-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+.debt-mini {
+  height: 4px;
+  border-radius: var(--r-pill);
+  background: rgba(255, 255, 255, 0.1);
+  overflow: hidden;
+}
+
+.debt-mini > span {
+  display: block;
+  height: 100%;
+  border-radius: var(--r-pill);
+  background: linear-gradient(90deg, var(--amber), var(--peach));
+  transition: width 0.5s var(--ease);
+}
+
+.debt-min {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 1px;
+  font-size: var(--t-caption);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-2);
+}
+
+.debt-min small {
+  font-size: 0.62rem;
+  font-weight: 500;
+  color: var(--ink-dim);
+}
+
+.debt-log {
+  margin-top: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.debt-log-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: var(--t-caption);
+  color: var(--ink-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+.debt-log-row > span:first-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* money that was written down and never actually left */
+.debt-log-row .back { color: var(--pink); }
+
+.debt-log-amt {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.debt-log-amt .m-when { font-style: normal; opacity: 0.7; }
+
+/* ---- the payment sheet ---- */
+
+.debt-sheet-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.debt-sheet-left {
+  font-size: var(--t-title);
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--amber);
+}
+
+.debt-quick {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.debt-quick .btn {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 12px 10px;
+}
+
+.debt-quick .btn small {
+  font-size: var(--t-caption);
+  font-weight: 600;
+  opacity: 0.8;
+}
+
+/* ---- the editor ---- */
+
+.debt-edit-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  padding: 9px;
+  border-radius: var(--r-sm);
+  background: rgba(255, 255, 255, 0.045);
+  border: 0.5px solid var(--hairline);
+}
+
+.debt-edit-row .gr-grip { align-self: stretch; }
+
+.de-fields {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.de-bank {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.de-bank .bank-chip { width: 34px; height: 34px; font-size: 0.64rem; }
+.de-bank select { flex: 1; min-width: 0; }
+
+.de-pair { display: flex; gap: 6px; }
+.de-pair input { min-width: 0; flex: 1; }
+.de-fields input { padding: 9px 12px; }
+
+.debt-edit-row .js-dedel { align-self: center; }
+
+.debt-edit-row.dragging {
+  z-index: 20;
+  pointer-events: none;
+  background: var(--mat-thick);
+  border-color: var(--hairline-strong);
+  box-shadow: var(--shadow-2);
+  transform: scale(1.015);
+}
+
 /* contribution race */
 
 .race {

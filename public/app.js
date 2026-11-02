@@ -249,8 +249,113 @@
     list: { emoji: '📝', nameKey: 'typeList', descKey: 'typeListDesc' },
     checkin: { emoji: '🤝', nameKey: 'typeCheckin', descKey: 'typeCheckinDesc' },
     pet: { emoji: '🐾', nameKey: 'typePet', descKey: 'typePetDesc' },
+    debt: { emoji: '🏦', nameKey: 'typeDebt', descKey: 'typeDebtDesc' },
     game: { emoji: '🎲', nameKey: 'typeGame', descKey: 'typeGameDesc' },
   };
+
+  /* ---------------------------------------------------------------- banks
+
+     A debt is easier to recognise by its bank than by whatever you called the
+     row at eleven at night. So each one wears a chip in its bank's own colour
+     with its initials on it.
+
+     Drawn here rather than downloaded. Real logos would mean carrying someone
+     else's trademark inside an App Store build and chasing every rebrand with
+     a new image; initials in the right colour read just as fast, stay sharp at
+     any size, and belong to the same night sky as everything else. */
+  const BANKS = {
+    ziraat: { name: 'Ziraat Bankası', s: 'ZB', c: '#d6001c' },
+    isbank: { name: 'İş Bankası', s: 'İŞ', c: '#0b3d91' },
+    garanti: { name: 'Garanti BBVA', s: 'GA', c: '#00a650' },
+    akbank: { name: 'Akbank', s: 'AK', c: '#e2001a' },
+    yapikredi: { name: 'Yapı Kredi', s: 'YK', c: '#00529c' },
+    vakifbank: { name: 'VakıfBank', s: 'VB', c: '#f0a500' },
+    halkbank: { name: 'Halkbank', s: 'HB', c: '#005eb8' },
+    qnb: { name: 'QNB', s: 'QNB', c: '#6a1b5a' },
+    enpara: { name: 'Enpara', s: 'EN', c: '#ff6900' },
+    denizbank: { name: 'DenizBank', s: 'DB', c: '#0071ce' },
+    teb: { name: 'TEB', s: 'TEB', c: '#006a4d' },
+    ing: { name: 'ING', s: 'ING', c: '#ff6200' },
+    kuveytturk: { name: 'Kuveyt Türk', s: 'KT', c: '#00843d' },
+    albaraka: { name: 'Albaraka Türk', s: 'AL', c: '#00693e' },
+    turkiyefinans: { name: 'Türkiye Finans', s: 'TF', c: '#1b4f72' },
+    sekerbank: { name: 'Şekerbank', s: 'ŞB', c: '#009640' },
+    fibabanka: { name: 'Fibabanka', s: 'FB', c: '#e30613' },
+    odeabank: { name: 'Odeabank', s: 'OD', c: '#c8102e' },
+    anadolubank: { name: 'Anadolubank', s: 'AB', c: '#0054a6' },
+    burgan: { name: 'Burgan Bank', s: 'BU', c: '#b11116' },
+    hsbc: { name: 'HSBC', s: 'HS', c: '#db0011' },
+    papara: { name: 'Papara', s: 'PP', c: '#6c3fc4' },
+    getirfinans: { name: 'Getir Finans', s: 'GF', c: '#5d3ebc' },
+    tosla: { name: 'Tosla', s: 'TO', c: '#ff4f5e' },
+    nkolay: { name: 'N Kolay', s: 'NK', c: '#ee7203' },
+    card: { nameKey: 'bankCard', s: '💳', c: '#8e7cc3' },
+    person: { nameKey: 'bankPerson', s: '🧑', c: '#c08457' },
+    other: { nameKey: 'bankOther', s: '🏦', c: '#6b6a8f' },
+  };
+  const bankOf = (key) => BANKS[key] || BANKS.other;
+  const bankName = (key) => {
+    const b = bankOf(key);
+    return b.nameKey ? t(b.nameKey) : b.name;
+  };
+  const bankChip = (key) => {
+    const b = bankOf(key);
+    return `<span class="bank-chip" style="--bank:${b.c}" title="${esc(bankName(key))}">${esc(b.s)}</span>`;
+  };
+
+  /* ------------------------------------------------------------- currency
+
+     What a sum means depends on which money you actually think in. A debt
+     written in lira can carry a second number beside it, so the person
+     reading it does not have to do the arithmetic in their head every time
+     the rate moves.
+
+     Nothing is ever stored converted. The rate is a lens held over the
+     number, not a fact about it — the debt is in lira and stays in lira. */
+  let fx = null;
+  let fxAsked = 0;
+  const CUR_CODE = { '₺': 'TRY', $: 'USD', '€': 'EUR', '£': 'GBP' };
+  const CODE_CUR = { TRY: '₺', USD: '$', EUR: '€', GBP: '£' };
+  const SHADOWS = ['', 'USD', 'EUR', 'GBP', 'TRY'];
+
+  const setRates = (got) => {
+    if (got?.rates?.TRY === 1) fx = got;
+  };
+
+  /* The table is published once a day, so this is never urgent. But a room
+     opened in the minute after a deploy can arrive before the server's first
+     fetch has landed, and a card asking for a second currency would then show
+     nothing at all. Ask once, quietly, and let the next paint pick it up. */
+  async function ensureRates(repaint) {
+    if (fx || Date.now() - fxAsked < 60000) return;
+    fxAsked = Date.now();
+    try {
+      setRates(await (await fetch(url('/api/rates'))).json());
+      if (fx && repaint) repaint();
+    } catch {
+      // no table is a reason to show one number instead of two, nothing more
+    }
+  }
+
+  /** `amount` of `cur`, read in `code` — or null when we cannot say honestly. */
+  function convert(amount, cur, code) {
+    const from = CUR_CODE[cur] || cur;
+    if (!fx || !code || from === code) return null;
+    const a = fx.rates[from];
+    const b = fx.rates[code];
+    if (!a || !b) return null;
+    return (amount * b) / a;
+  }
+
+  /** The second number — "≈ $1.362" — or an empty string, never a guess. */
+  function shadowAmount(amount, cur, code) {
+    const v = convert(amount, cur, code);
+    if (v === null) return '';
+    // whole units once the number is big enough that the cents are noise
+    const n = Math.abs(v) >= 100 ? Math.round(v) : Math.round(v * 100) / 100;
+    const sym = CODE_CUR[code];
+    return '≈ ' + (sym ? sym + fmtNum(n) : fmtNum(n) + ' ' + code);
+  }
 
   /* The four mini games. They all live behind the one 'game' card type, so
      the picker lists these rather than the type. Board sizes are fixed on the
@@ -1690,6 +1795,8 @@
 
       case 'room': {
         clockOffset = msg.now - Date.now();
+        // the second number on a money or debt card comes from here
+        setRates(msg.rates);
         room = msg.room;
         cards = new Map(msg.cards.map((c) => [c.id, c]));
         chatMsgs = msg.chat || [];
@@ -1954,6 +2061,7 @@
   const EDGE = 90;        // how close to the screen edge before we auto-scroll
   const EDGE_SPEED = 900; // px per second at the very edge, tapering to 0
   const MAX_GOALS = 6;    // matches the server's cap
+  const MAX_DEBTS = 12;   // and so does this one
 
   function currentOrder() {
     return $$('#board .card').map((el) => el.dataset.id);
@@ -2404,6 +2512,7 @@
     if (card.type === 'countdown') renderCountdownBody(body, card);
     if (card.type === 'note') renderNoteBody(body, card);
     if (card.type === 'money') renderMoneyBody(body, card, opts);
+    if (card.type === 'debt') renderDebtBody(body, card, opts);
     if (card.type === 'list') renderListBody(body, card);
     if (card.type === 'checkin') renderCheckinBody(body, card);
     if (card.type === 'game') renderGameBody(body, card, opts);
@@ -4252,9 +4361,231 @@
     });
   }
 
+  /* ------------------------------------------------------------- the debts
+
+     A piggy bank fills; a debt empties. Same money, opposite direction, and
+     the difference is not cosmetic — there is no shared pot here to spend
+     from, only a number that is owed and a number that has gone.
+
+     Which is why the minimum payment is the thing this card is built around.
+     A ladder that only knows "paid off" has nothing to say about a card you
+     owe 35.000 on and can find 3.500 for this month — and that, month after
+     month, is what carrying a debt actually is. */
+  function debtRows(card) {
+    const paid = card.state?.paid || {};
+    /* What has gone into each debt since the first of this month. Worked out
+       in the reader's own calendar rather than the server's, because "this
+       month" is a thing about the person's life, not about UTC. */
+    const month = new Date();
+    const since = new Date(month.getFullYear(), month.getMonth(), 1).getTime();
+    const thisMonth = {};
+    for (const e of card.state?.log || []) {
+      if ((e.at || 0) >= since) thisMonth[e.row] = (thisMonth[e.row] || 0) + (e.a || 0);
+    }
+    return (card.config?.debts || []).map((d) => {
+      const done = Math.max(0, Math.min(d.total, Number(paid[d.id]) || 0));
+      const left = d.total - done;
+      const mo = Math.max(0, thisMonth[d.id] || 0);
+      const need = Math.max(0, Math.min(d.min, left) - mo);
+      return { ...d, done, left, mo, need, covered: left === 0 || need === 0 };
+    });
+  }
+
+  /* How a due day reads today: the day itself, and whether it is close enough
+     to matter. A debt whose minimum is already covered has no deadline left
+     this month, so it says nothing at all. */
+  function dueState(d) {
+    if (!d.due || !d.left || d.covered) return null;
+    const now = new Date();
+    const last = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+    // the 31st of a thirty-day month is the 30th
+    const day = Math.min(d.due, last);
+    const days = day - now.getDate();
+    if (days < 0) return { day, days, late: true };
+    return { day, days, late: false };
+  }
+
+  function renderDebtBody(body, card, opts = {}) {
+    const cur = card.config.cur || '₺';
+    const shade = card.config.shadow || '';
+    const rows = debtRows(card);
+    const total = rows.reduce((s, d) => s + d.total, 0);
+    const done = rows.reduce((s, d) => s + d.done, 0);
+    const left = total - done;
+    // what still has to leave this month to keep every one of them quiet —
+    // what has already gone is not a thing to remind anybody about
+    const due = rows.reduce((s, d) => s + d.need, 0);
+    const owing = rows.filter((d) => d.left > 0);
+    const allCovered = owing.length > 0 && owing.every((d) => d.covered);
+    const pct = total ? (done / total) * 100 : 0;
+    const clear = rows.length > 0 && left === 0;
+
+    // a card asking for a second number, on a browser that arrived before the
+    // rate table did, should get it on the next paint rather than never
+    if (shade && !fx) ensureRates(() => renderCard(card));
+
+    const money = (n) => fmtNum(n) + cur;
+    const second = (n) => (shade ? shadowAmount(n, cur, shade) : '');
+    const dueLine = (d) => {
+      const due = dueState(d);
+      if (!due) return '';
+      const text = due.late
+        ? t('debtLate', { d: due.day })
+        : due.days === 0
+          ? t('debtDueToday')
+          : due.days <= 7
+            ? t('debtDueSoon', { n: due.days })
+            : t('debtDueDay', { d: due.day });
+      const tone = due.late ? 'late' : due.days <= 7 ? 'soon' : '';
+      return ` · <span class="debt-when ${tone}">${esc(text)}</span>`;
+    };
+
+    if (!rows.length) {
+      body.innerHTML = `<p class="sub-label">${esc(t('debtEmpty'))}</p>`;
+      return;
+    }
+
+    body.innerHTML = `
+      <div class="debt-head">
+        <div class="debt-headline">
+          <span class="debt-big ${clear ? 'clear' : ''}">${clear ? esc(t('debtAllClear')) : esc(money(left))}</span>
+          ${!clear && second(left) ? `<span class="debt-shadow">${esc(second(left))}</span>` : ''}
+        </div>
+        <div class="debt-of">${esc(t('debtPaidOf', { done: money(done), total: money(total) }))}</div>
+      </div>
+      <div class="goal-bar"><div class="goal-fill" style="width:${Math.min(100, pct)}%"></div></div>
+      ${due
+        ? `<div class="sub-label debt-due">${esc(t('debtMinSum', { n: money(due) }))}</div>`
+        : allCovered
+          ? `<div class="sub-label debt-covered">${esc(t('debtMonthDone'))}</div>`
+          : ''}
+      <div class="debt-list">
+        ${rows
+          .map((d) => {
+            const p = d.total ? (d.done / d.total) * 100 : 0;
+            return `
+          <button type="button" class="debt-row ${d.left ? '' : 'done'}" data-id="${esc(d.id)}">
+            ${bankChip(d.bank)}
+            <span class="debt-info">
+              <span class="debt-name">${esc(d.title || bankName(d.bank))}</span>
+              <span class="debt-nums">${d.left
+                ? esc(t('debtLeft', { n: money(d.left), total: money(d.total) }))
+                : esc(t('debtRowClear'))}${dueLine(d)}</span>
+              <span class="debt-mini"><span style="width:${Math.min(100, p)}%"></span></span>
+            </span>
+            <span class="debt-min">${d.left && d.covered && d.min
+              ? `<small>${esc(t('debtMin'))}</small><span class="debt-tick">✓</span>`
+              : d.left && d.need
+                ? `<small>${esc(t('debtMin'))}</small>${esc(money(d.need))}`
+                : d.left ? '›' : '✓'}</span>
+          </button>`;
+          })
+          .join('')}
+      </div>
+      ${(card.state.log || []).length
+        ? `<div class="debt-log">${(card.state.log || [])
+            .slice(0, 4)
+            .map((e) => {
+              const row = rows.find((d) => d.id === e.row);
+              const who = esc(e.by || '');
+              const what = esc(row ? row.title || bankName(row.bank) : '—');
+              const sign = e.a < 0 ? '−' : '';
+              return `<div class="debt-log-row">
+                <span>${who} · ${what}${e.note ? ' · ' + esc(e.note) : ''}</span>
+                <span class="debt-log-amt ${e.a < 0 ? 'back' : ''}"
+                  >${sign}${esc(money(Math.abs(e.a)))}${
+                  e.at ? `<i class="m-when">${esc(shortDate(e.at))}</i>` : ''}</span>
+              </div>`;
+            })
+            .join('')}</div>`
+        : ''}`;
+
+    $$('.debt-row', body).forEach((el) => {
+      el.onclick = () => openDebtPay(card, el.dataset.id);
+    });
+
+    if (opts.verb === 'debt') sparklesAt(body.closest('.card'));
+  }
+
+  /* One debt, and the three things anybody ever actually does to it: pay the
+     minimum, close it outright, or type the number that really left the
+     account. The first two are sent as intentions rather than amounts — the
+     card may have moved since this sheet was drawn, and the server knows what
+     is owed better than a screen that has been open for ten minutes. */
+  function openDebtPay(card, id) {
+    const d = debtRows(card).find((x) => x.id === id);
+    if (!d) return;
+    const cur = card.config.cur || '₺';
+    const shade = card.config.shadow || '';
+    const money = (n) => fmtNum(n) + cur;
+    const minNow = Math.min(d.min, d.left);
+    const second = shade ? shadowAmount(d.left, cur, shade) : '';
+
+    const box = openModal(`
+      <h2>${esc(d.title || bankName(d.bank))}</h2>
+      <div class="debt-sheet-head">
+        ${bankChip(d.bank)}
+        <div>
+          <div class="debt-sheet-left">${d.left ? esc(money(d.left)) : esc(t('debtRowClear'))}</div>
+          <div class="sub-label" style="margin:0;text-align:left">
+            ${esc(t('debtPaidOf', { done: money(d.done), total: money(d.total) }))}${second ? ' · ' + esc(second) : ''}
+          </div>
+        </div>
+      </div>
+      ${d.left
+        ? `<div class="debt-quick">
+             ${minNow ? `<button type="button" class="btn btn-primary js-min">${esc(t('debtPayMin'))}<small>${esc(money(minNow))}</small></button>` : ''}
+             <button type="button" class="btn btn-secondary js-all">${esc(t('debtPayAll'))}<small>${esc(money(d.left))}</small></button>
+           </div>`
+        : ''}
+      <div class="field">
+        <label>${esc(t('debtCustom'))}</label>
+        <input type="number" inputmode="numeric" min="1" class="js-amt" placeholder="0">
+        <input type="text" maxlength="60" class="js-note" placeholder="${esc(t('debtNote'))}" autocomplete="off">
+      </div>
+      <div class="modal-actions">
+        <button type="button" class="btn btn-ghost js-back">${esc(t('debtUndo'))}</button>
+        <button type="button" class="btn btn-primary js-pay">${esc(t('debtPay'))}</button>
+      </div>
+      <button type="button" class="btn btn-ghost js-cancel" style="width:100%;margin-top:10px">${esc(t('cancel'))}</button>`);
+
+    const pay = (body) => {
+      send({ t: 'debt', id: card.id, row: d.id, ...body });
+      closeModal();
+    };
+    const typed = () => {
+      const v = Math.round(Math.abs(Number($('.js-amt', box).value)));
+      if (!v) {
+        $('.js-amt', box).focus();
+        return null;
+      }
+      return { amount: v, note: $('.js-note', box).value.trim().slice(0, 60) };
+    };
+
+    const minBtn = $('.js-min', box);
+    if (minBtn) minBtn.onclick = () => pay({ op: 'min' });
+    const allBtn = $('.js-all', box);
+    if (allBtn) allBtn.onclick = () => pay({ op: 'all' });
+
+    $('.js-pay', box).onclick = () => {
+      const got = typed();
+      if (got) pay(got);
+    };
+    // the same field, the other way: a payment written down that never left
+    $('.js-back', box).onclick = () => {
+      const got = typed();
+      if (got) pay({ ...got, amount: -got.amount });
+    };
+    $('.js-cancel', box).onclick = closeModal;
+    setTimeout(() => $('.js-amt', box)?.focus(), 60);
+  }
+
   function renderMoneyBody(body, card, opts = {}) {
     const total = card.state.total || 0;
     const cur = card.config.cur || '₺';
+    const shade = card.config.shadow || '';
+    if (shade && !fx) ensureRates(() => renderCard(card));
+    const secondLine = shade ? shadowAmount(total, cur, shade) : '';
     const goals = goalsOf(card);
     const paid = paidOf(card, goals);
     const rungs = fillGoals(goals, total, paid);
@@ -4344,6 +4675,7 @@
     body.innerHTML = `
       ${heroPhoto ? `<img class="money-photo" src="${esc(mediaUrl(heroPhoto))}" alt="">` : ''}
       <div class="money-total">${fmtNum(total)}<small>${esc(cur)}</small></div>
+      ${secondLine ? `<div class="debt-shadow" style="display:block;text-align:center;margin:-4px 0 6px">${esc(secondLine)}</div>` : ''}
       ${milestones}
       ${strip}
       ${race}
@@ -5221,10 +5553,43 @@
           </div>
         </div>
         <div class="field">
+          <label>${esc(t('fieldShadow'))}</label>
+          <p class="sub-label" style="text-align:left; margin:-2px 0 10px">${esc(t('shadowHint'))}</p>
+          <div class="emoji-row">
+            ${SHADOWS.map((code) => `<button type="button" class="emoji-opt shade-opt ${code === (existing?.config?.shadow || '') ? 'selected' : ''}" data-s="${code}">${code ? esc((CODE_CUR[code] || '') + ' ' + code) : esc(t('shadowNone'))}</button>`).join('')}
+          </div>
+        </div>
+        <div class="field">
           <label>${esc(t('fieldMoneyGoal'))}</label>
           <p class="sub-label" style="text-align:left; margin:-2px 0 10px">${esc(t('multiGoalHint'))}</p>
           <div class="goal-rows js-goalrows"></div>
           <button type="button" class="small-btn js-addgoal">➕ ${esc(t('addGoal'))}</button>
+        </div>`;
+    }
+
+    if (type === 'debt') {
+      const curs = ['₺', '$', '€', '£'];
+      const curNow = existing?.config?.cur || '₺';
+      const shadeNow = existing?.config?.shadow || '';
+      extraFields = `
+        <div class="field">
+          <label>${esc(t('fieldCurrency'))}</label>
+          <div class="emoji-row">
+            ${curs.map((c) => `<button type="button" class="emoji-opt cur-opt ${c === curNow ? 'selected' : ''}" data-c="${c}">${c}</button>`).join('')}
+          </div>
+        </div>
+        <div class="field">
+          <label>${esc(t('fieldShadow'))}</label>
+          <p class="sub-label" style="text-align:left; margin:-2px 0 10px">${esc(t('shadowHint'))}</p>
+          <div class="emoji-row">
+            ${SHADOWS.map((code) => `<button type="button" class="emoji-opt shade-opt ${code === shadeNow ? 'selected' : ''}" data-s="${code}">${code ? esc((CODE_CUR[code] || '') + ' ' + code) : esc(t('shadowNone'))}</button>`).join('')}
+          </div>
+        </div>
+        <div class="field">
+          <label>${esc(t('fieldDebts'))}</label>
+          <p class="sub-label" style="text-align:left; margin:-2px 0 10px">${esc(t('debtHint'))}</p>
+          <div class="goal-rows js-debtrows"></div>
+          <button type="button" class="small-btn js-adddebt">➕ ${esc(t('addDebt'))}</button>
         </div>`;
     }
 
@@ -5277,6 +5642,128 @@
         $$('.cur-opt', box).forEach((b) => b.classList.toggle('selected', b === btn));
       };
     });
+    /* ---- the debt list editor (debt cards)
+
+       Each row keeps the id the server gave it, so renaming a debt, repricing
+       it or dragging it somewhere else never loses what has already been paid
+       into it. A row typed here for the first time has no id yet; it gets one
+       when it lands. */
+    let shade = existing?.config?.shadow || '';
+    $$('.shade-opt', box).forEach((btn) => {
+      btn.onclick = () => {
+        shade = btn.dataset.s;
+        $$('.shade-opt', box).forEach((b) => b.classList.toggle('selected', b === btn));
+      };
+    });
+
+    const debtRowsEl = $('.js-debtrows', box);
+    let debtDraft = [];
+    if (debtRowsEl) {
+      debtDraft = (existing?.config?.debts || []).map((d) => ({
+        id: d.id,
+        bank: d.bank || 'other',
+        title: d.title || '',
+        total: d.total || '',
+        min: d.min || '',
+        due: d.due || '',
+      }));
+      if (!debtDraft.length) debtDraft.push({ bank: 'other', title: '', total: '', min: '', due: '' });
+
+      const drawDebts = () => {
+        debtRowsEl.innerHTML = debtDraft
+          .map(
+            (d, i) => `
+            <div class="debt-edit-row" data-i="${i}">
+              ${debtDraft.length > 1
+                ? `<button type="button" class="gr-grip" title="${esc(t('moveDebt'))}"
+                    aria-label="${esc(t('moveDebt'))}"><span class="gr-rank">${i + 1}</span>≡</button>`
+                : ''}
+              <div class="de-fields">
+                <div class="de-bank">
+                  ${bankChip(d.bank)}
+                  <select class="js-debank" aria-label="${esc(t('fieldBank'))}">
+                    ${Object.keys(BANKS)
+                      .map((k) => `<option value="${k}" ${k === d.bank ? 'selected' : ''}>${esc(bankName(k))}</option>`)
+                      .join('')}
+                  </select>
+                </div>
+                <input type="text" class="js-detitle" maxlength="40"
+                  placeholder="${esc(t('debtNamePh'))}" value="${esc(d.title)}" autocomplete="off">
+                <div class="de-pair">
+                  <input type="number" inputmode="numeric" min="1" class="js-detotal"
+                    placeholder="${esc(t('debtTotalPh'))}" value="${d.total || ''}">
+                  <input type="number" inputmode="numeric" min="0" class="js-demin"
+                    placeholder="${esc(t('debtMinPh'))}" value="${d.min || ''}">
+                  <input type="number" inputmode="numeric" min="1" max="31" class="js-dedue"
+                    placeholder="${esc(t('debtDuePh'))}" value="${d.due || ''}">
+                </div>
+              </div>
+              ${debtDraft.length > 1
+                ? `<button type="button" class="icon-btn js-dedel" title="${esc(t('removeDebt'))}">✕</button>`
+                : ''}
+            </div>`
+          )
+          .join('');
+
+        $$('.debt-edit-row', debtRowsEl).forEach((row) => {
+          const i = Number(row.dataset.i);
+          const bank = $('.js-debank', row);
+          bank.onchange = () => {
+            debtDraft[i].bank = bank.value;
+            // only the chip changes, and redrawing would take the caret with it
+            const chip = $('.bank-chip', row);
+            const b = bankOf(bank.value);
+            chip.style.setProperty('--bank', b.c);
+            chip.textContent = b.s;
+            chip.title = bankName(bank.value);
+          };
+          $('.js-detitle', row).oninput = (e) => (debtDraft[i].title = e.target.value);
+          $('.js-detotal', row).oninput = (e) => (debtDraft[i].total = e.target.value);
+          $('.js-demin', row).oninput = (e) => (debtDraft[i].min = e.target.value);
+          $('.js-dedue', row).oninput = (e) => (debtDraft[i].due = e.target.value);
+          const del = $('.js-dedel', row);
+          if (del) {
+            del.onclick = () => {
+              debtDraft.splice(i, 1);
+              drawDebts();
+            };
+          }
+        });
+      };
+
+      drawDebts();
+
+      /* Same gesture as the goal ladder next door, and for the same reason:
+         the order is the plan. Which debt you attack first is the only real
+         decision there is to make about a pile of them. */
+      dragRows(debtRowsEl, {
+        row: '.debt-edit-row',
+        grip: '.gr-grip',
+        onDrop: (order, focusAt) => {
+          const sane =
+            order.length === debtDraft.length &&
+            new Set(order).size === order.length &&
+            order.every((n) => debtDraft[n]);
+          if (!sane) return drawDebts();
+          if (order.some((n, k) => n !== k)) {
+            debtDraft = order.map((n) => debtDraft[n]);
+            feel('move');
+          }
+          drawDebts();
+          if (focusAt != null) {
+            $(`.debt-edit-row[data-i="${focusAt}"] .gr-grip`, debtRowsEl)?.focus();
+          }
+        },
+      });
+
+      $('.js-adddebt', box).onclick = (e) => {
+        if (debtDraft.length >= MAX_DEBTS) return;
+        debtDraft.push({ bank: 'other', title: '', total: '', min: '', due: '' });
+        drawDebts();
+        if (debtDraft.length >= MAX_DEBTS) e.currentTarget.disabled = true;
+      };
+    }
+
     // ---- goal ladder editor (money cards)
     const goalRows = $('.js-goalrows', box);
     let goalDraft = [];
@@ -5463,8 +5950,24 @@
       if (type === 'note' && !isEdit) {
         config.text = $('#cf-note', box)?.value.trim() || '';
       }
+      if (type === 'debt') {
+        config.cur = cur;
+        config.shadow = shade;
+        // a debt with no number on it is a worry, not a debt
+        config.debts = debtDraft
+          .filter((d) => Math.round(Number(d.total)) > 0)
+          .map((d) => ({
+            ...(d.id ? { id: d.id } : {}),
+            bank: d.bank || 'other',
+            title: d.title.trim(),
+            total: Math.round(Number(d.total)),
+            min: Math.max(0, Math.round(Number(d.min) || 0)),
+            due: Math.min(31, Math.max(0, Math.round(Number(d.due) || 0))),
+          }));
+      }
       if (type === 'money') {
         config.cur = cur;
+        config.shadow = shade;
         const filled = goalDraft.filter((g) => Math.round(Number(g.amount)) > 0);
         // the order you wrote them in is the order they get paid off
         config.goals = filled.map((g) => ({
