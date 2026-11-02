@@ -672,6 +672,65 @@ const backfillMoney = db.transaction(() => {
   return touched;
 });
 
+/** A mark for one line of the ledger, or for a whole handing-out. */
+const newEntryId = () => crypto.randomBytes(4).toString('hex');
+
+/* Ledger lines written before they had names.
+
+   A line can be taken back, and the lines of one handing-out come back
+   together — both of which need a mark on the line to point at. Cards that
+   were paid into before those marks existed would be stuck with a ledger
+   nobody can undo, which is exactly the situation somebody is in the moment
+   they want to undo something.
+
+   A spread wrote all its lines in the same instant, by the same person, with
+   the same note, so that is enough to put them back together: nobody makes
+   two separate payments inside one millisecond. */
+const LOG_ID_KEY = 'debt_log_ids_v1';
+
+function nameOldLogs() {
+  const rows = db.prepare("SELECT id, state FROM cards WHERE type = 'debt'").all();
+  let touched = 0;
+  for (const row of rows) {
+    let state;
+    try {
+      state = JSON.parse(dec(row.state, '{}'));
+    } catch {
+      continue;
+    }
+    const log = Array.isArray(state.log) ? state.log : [];
+    if (!log.length || log.every((e) => e.eid)) continue;
+
+    const batches = new Map();
+    for (const e of log) {
+      const k = `${e.at || 0}|${e.key || ''}|${e.note || ''}`;
+      batches.set(k, (batches.get(k) || 0) + 1);
+    }
+    const groups = new Map();
+    for (const e of log) {
+      if (!e.eid) e.eid = newEntryId();
+      const k = `${e.at || 0}|${e.key || ''}|${e.note || ''}`;
+      if (!e.g && batches.get(k) > 1) {
+        if (!groups.has(k)) groups.set(k, newEntryId());
+        e.g = groups.get(k);
+      }
+    }
+    store.updateCardState(JSON.stringify(state), row.id);
+    touched++;
+  }
+  return touched;
+}
+
+try {
+  if (!q.getMeta.get(LOG_ID_KEY)) {
+    const n = nameOldLogs();
+    q.setMeta.run(LOG_ID_KEY, String(Date.now()));
+    if (n) console.log(`Named the ledger lines on ${n} debt card(s) so they can be undone`);
+  }
+} catch (err) {
+  console.error('debt log id backfill skipped:', err.message);
+}
+
 const MONEY_BACKFILL_KEY = 'money_backfill_v1';
 try {
   // it scanned every card on every boot to find work it had already done
@@ -1324,9 +1383,6 @@ function sanitizeConfig(type, raw) {
   }
   return out;
 }
-
-/** A mark for one line of the ledger, or for a whole handing-out. */
-const newEntryId = () => crypto.randomBytes(4).toString('hex');
 
 /** An id no other debt on this card is already using. */
 function newDebtId(taken) {
@@ -3313,9 +3369,13 @@ function handleMessage(ws, msg) {
          than pretending somebody paid it just now. Dated to the card's own
          beginning, so none of it lands in "what we paid this month". */
       const at = Math.min(now, toInt(row.created_at, 0, now, now) || now);
+      const g = newEntryId();
       const log = debts
         .filter((d) => paid[d.id])
-        .map((d) => ({ row: d.id, a: paid[d.id], by: ws.meta.name, key: personKey(ws), at, note: '' }));
+        .map((d) => ({
+          eid: newEntryId(), g, row: d.id, a: paid[d.id],
+          by: ws.meta.name, key: personKey(ws), at, note: '',
+        }));
 
       const id = crypto.randomUUID();
       // at the top, where a card you just made belongs

@@ -4654,12 +4654,15 @@
                 ? t('debtSpreadLine', { n: g.n })
                 : row ? row.title || bankName(row.bank) : '—';
               const sign = g.a < 0 ? '−' : '';
-              return `<button type="button" class="debt-log-row" data-undo="${esc(g.key)}">
+              // a line with no mark on it cannot be pointed at, so it is not
+              // offered as something you can tap
+              return `<${g.key ? 'button' : 'div'} class="debt-log-row"${
+                g.key ? ` type="button" data-undo="${esc(g.key)}"` : ''}>
                 <span>${esc(g.by || '')} · ${esc(what)}${g.note ? ' · ' + esc(g.note) : ''}</span>
                 <span class="debt-log-amt ${g.a < 0 ? 'back' : ''}"
                   >${sign}${esc(money(Math.abs(g.a)))}${
                   g.at ? `<i class="m-when">${esc(shortDate(g.at))}</i>` : ''}</span>
-              </button>`;
+              </${g.key ? 'button' : 'div'}>`;
             })
             .join('')}</div>`
         : ''}`;
