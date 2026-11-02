@@ -710,239 +710,16 @@
   })();
 
   /* ------------------------------------------------------------------
-     The music box — something sweet playing under the room.
+     What the room can play.
 
-     Synthesised, like the sounds above and for the same reasons: there is
-     no file to download, nothing to keep in sync with the page and no
-     licence to honour. A pad, a bass note and a sparse music-box melody
-     over the four chords every lullaby is made of, with the tune picked
-     from a pentatonic scale — where no two notes can clash, so a melody
-     that wanders is never a wrong one. Nothing repeats exactly, which is
-     what keeps a loop from starting to itch after the third time round.
+     Five short pieces, each one crossfaded onto itself so it comes round
+     without a seam. A room is a place you leave open for hours, so they are
+     quiet, slow, and have nothing in them that asks to be listened to.
 
-     It starts off, and stays off until somebody asks for it. Browsers
-     refuse to make a sound before the page has been touched anyway, and a
-     room that begins singing at you uninvited is worse than one that
-     waits to be asked.
-     ------------------------------------------------------------------ */
-  const music = (() => {
-    const KEY = 'ct:music';
-    const hz = (n) => 440 * 2 ** ((n - 69) / 12); // MIDI note number to Hz
-
-    /* C – Am – F – G. Bass note underneath, three notes of pad above it. */
-    const TURN = [
-      { bass: 36, pad: [60, 64, 67] },
-      { bass: 45, pad: [57, 60, 64] },
-      { bass: 41, pad: [53, 57, 60] },
-      { bass: 43, pad: [55, 59, 62] },
-    ];
-    // C major pentatonic across two octaves
-    const SCALE = [72, 74, 76, 79, 81, 84, 86, 88];
-    const WALK = [-2, -1, -1, 1, 1, 2]; // how far the tune steps each time
-
-    const STEP = 1.05; // seconds between melody steps — about 57 bpm
-    const HELD = 8; // steps each chord is held for
-    const AHEAD = 1.2; // how far in front of the clock notes are written
-    const LEVEL = 0.6; // under everything else, never over it
-
-    let ctx = null;
-    let master = null;
-    let hall = null; // the delay that stands in for a room
-    let timer = null;
-    let sleeper = null;
-    let at = 0; // context time the next step belongs to
-    let step = 0;
-    let where = 3; // where in SCALE the melody currently sits
-    let on = localStorage.getItem(KEY) === '1';
-
-    function build() {
-      const Ctx = window.AudioContext || window.webkitAudioContext;
-      if (!Ctx) return false;
-      if (ctx) return true;
-      ctx = new Ctx();
-      master = ctx.createGain();
-      master.gain.value = 0.0001;
-      master.connect(ctx.destination);
-
-      /* A delay fed a little of itself back is the cheapest room there is.
-         A real reverb wants an impulse response, and a file to download is
-         the one thing this is written to avoid. */
-      hall = ctx.createDelay(1);
-      hall.delayTime.value = 0.38;
-      const back = ctx.createGain();
-      back.gain.value = 0.3;
-      const damp = ctx.createBiquadFilter();
-      damp.type = 'lowpass';
-      damp.frequency.value = 1800; // each echo darker than the last
-      hall.connect(damp).connect(back).connect(hall);
-      hall.connect(master);
-      return true;
-    }
-
-    /** One note. `send` is how much of it goes round the room. */
-    function note(when, freq, { type = 'sine', vol = 0.09, len = 2.4, attack = 0.008, send = 0.4 }) {
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-      osc.type = type;
-      osc.frequency.value = freq;
-      gain.gain.setValueAtTime(0.0001, when);
-      gain.gain.exponentialRampToValueAtTime(vol, when + attack);
-      gain.gain.exponentialRampToValueAtTime(0.0001, when + len);
-      osc.connect(gain).connect(master);
-      let wet = null;
-      if (send) {
-        wet = ctx.createGain();
-        wet.gain.value = send;
-        gain.connect(wet).connect(hall);
-      }
-      osc.start(when);
-      osc.stop(when + len + 0.05);
-      osc.onended = () => {
-        osc.disconnect();
-        gain.disconnect();
-        wet?.disconnect();
-      };
-    }
-
-    /** The chord underneath, breathed in over a couple of seconds. */
-    function pad(when, chord) {
-      const len = STEP * HELD;
-      const filter = ctx.createBiquadFilter();
-      filter.type = 'lowpass';
-      filter.frequency.value = 900; // no edge on it at all
-      const gain = ctx.createGain();
-      gain.gain.setValueAtTime(0.0001, when);
-      gain.gain.exponentialRampToValueAtTime(0.05, when + 2.2);
-      gain.gain.setValueAtTime(0.05, when + len - 2.6);
-      gain.gain.exponentialRampToValueAtTime(0.0001, when + len);
-      filter.connect(gain).connect(master);
-
-      chord.forEach((n, i) => {
-        const osc = ctx.createOscillator();
-        osc.type = 'triangle';
-        osc.frequency.value = hz(n);
-        osc.detune.value = (i - 1) * 5; // a few cents apart, so it breathes
-        osc.connect(filter);
-        osc.start(when);
-        osc.stop(when + len + 0.1);
-        osc.onended = () => {
-          osc.disconnect();
-          if (i === chord.length - 1) {
-            filter.disconnect();
-            gain.disconnect();
-          }
-        };
-      });
-    }
-
-    /* Write whatever falls inside the next second or so and leave the rest
-       to the next tick — scheduling against the audio clock rather than a
-       timer is what keeps it from wobbling under a busy page. */
-    function tick() {
-      if (!ctx) return;
-      while (at < ctx.currentTime + AHEAD) {
-        const into = step % (HELD * TURN.length);
-        const chord = TURN[Math.floor(into / HELD)];
-        if (into % HELD === 0) {
-          pad(at, chord.pad);
-          note(at, hz(chord.bass), { vol: 0.075, len: 3.6, attack: 0.06, send: 0.12 });
-        }
-        /* The tune sits out about a third of the time. The gaps are most of
-           the difference between a lullaby and a ringtone. */
-        if (Math.random() > 0.34) {
-          where += WALK[Math.floor(Math.random() * WALK.length)];
-          if (where < 0) where = 1;
-          if (where >= SCALE.length) where = SCALE.length - 2;
-          const f = hz(SCALE[where]);
-          note(at, f, { vol: 0.085, len: 2.4 });
-          // a quiet octave on top is what makes it read as a music box
-          note(at, f * 2, { type: 'triangle', vol: 0.02, len: 1.1, send: 0.3 });
-        }
-        at += STEP;
-        step++;
-      }
-    }
-
-    function start() {
-      if (!build()) return;
-      clearTimeout(sleeper);
-      ctx
-        .resume()
-        .then(() => {
-          if (!on || ctx.state !== 'running') return;
-          /* A suspended context has a frozen clock, so where the music had
-             got to is behind where it is now — pick it up from here rather
-             than firing everything it missed all at once. */
-          at = Math.max(at, ctx.currentTime + 0.15);
-          const t0 = ctx.currentTime;
-          master.gain.cancelScheduledValues(t0);
-          master.gain.setValueAtTime(Math.max(0.0001, master.gain.value), t0);
-          master.gain.exponentialRampToValueAtTime(LEVEL, t0 + 2.5);
-          clearInterval(timer);
-          timer = setInterval(tick, 250);
-          tick();
-        })
-        .catch(() => {});
-    }
-
-    function stop(quick) {
-      clearInterval(timer);
-      timer = null;
-      if (!ctx || ctx.state !== 'running') return;
-      const fade = quick ? 0.35 : 1.6;
-      const t0 = ctx.currentTime;
-      master.gain.cancelScheduledValues(t0);
-      master.gain.setValueAtTime(Math.max(0.0001, master.gain.value), t0);
-      master.gain.exponentialRampToValueAtTime(0.0001, t0 + fade);
-      /* Let the tail ring out, then park the context: a running one holds a
-         real-time render thread and the phone's audio route open. */
-      clearTimeout(sleeper);
-      sleeper = setTimeout(() => ctx?.state === 'running' && ctx.suspend(), (fade + 4) * 1000);
-    }
-
-    // nothing to listen to in a tab nobody is looking at
-    document.addEventListener('visibilitychange', () => {
-      if (!on) return;
-      if (document.hidden) stop(true);
-      else start();
-    });
-
-    return {
-      enabled: () => on,
-      /* Whether it is playing is no longer the same question as what the room
-         is playing — there is a shelf of recordings next to it now. So the
-         switch lives outside, and this only answers to it. */
-      set(want) {
-        if (on === !!want) return;
-        on = !!want;
-        if (on) start();
-        else stop();
-      },
-      /* Armed once a room is open — never on the landing page, where the
-         switch to turn it off again isn't on screen. Remembered as on, it
-         still can't make a sound until the page has been touched, so it
-         waits by the door rather than failing silently. */
-      arm() {
-        if (!on) return;
-        const wake = () => {
-          removeEventListener('pointerdown', wake);
-          removeEventListener('keydown', wake);
-          if (on && !document.hidden) start();
-        };
-        addEventListener('pointerdown', wake, { once: true, passive: true });
-        addEventListener('keydown', wake, { once: true });
-      },
-    };
-  })();
-
-  /* ------------------------------------------------------------------
-     The shelf next to the music box.
-
-     The box above is made of oscillators and never plays the same bar
-     twice. These are recordings — four short pieces, each one crossfaded
-     onto itself so it comes round without a seam. A room is a place you
-     leave open for hours, so they are quiet, slow, and have nothing in
-     them that asks to be listened to.
+     There used to be a music box here made of oscillators, which never
+     played the same bar twice and never sounded like a music box either.
+     Next to a recording of one it had nowhere to stand, so it is gone —
+     and the lullaby is where anybody who had it switched on ends up.
 
      Fetched the first time somebody picks one and not before: a couple who
      never turn the music on should not pay for a megabyte of it. Once
@@ -950,7 +727,7 @@
      nothing and works on a train.
      ------------------------------------------------------------------ */
   const TUNES = [
-    { key: 'box', nameKey: 'tuneBox' },
+    { key: 'ninni', nameKey: 'tuneNinni' },
     { key: 'gece', nameKey: 'tuneGece' },
     { key: 'yildiz', nameKey: 'tuneYildiz' },
     { key: 'yagmur', nameKey: 'tuneYagmur' },
@@ -963,8 +740,9 @@
 
     const read = () => {
       const v = localStorage.getItem(KEY);
-      if (v === '1') return 'box'; // what the old on/off switch meant
       if (!v || v === '0') return '';
+      // the old on/off switch, and the box it used to turn on
+      if (v === '1' || v === 'box') return 'ninni';
       return TUNES.some((x) => x.key === v) ? v : '';
     };
 
@@ -1015,18 +793,13 @@
     }
 
     function apply() {
-      if (now === 'box') {
-        hush(true);
-        music.set(true);
-        return;
-      }
-      music.set(false);
       if (now) play(now);
       else hush();
     }
 
+    // nothing to listen to in a tab nobody is looking at
     document.addEventListener('visibilitychange', () => {
-      if (!now || now === 'box') return; // the box minds itself
+      if (!now) return;
       if (document.hidden) hush(true);
       else play(now);
     });
@@ -1040,14 +813,14 @@
         apply();
         return now;
       },
-      /* Waits by the door, like the box: nothing may make a sound until the
-         page has been touched, and a remembered choice is not a touch. */
+      /* Waits by the door: nothing may make a sound until the page has been
+         touched, and a choice remembered from last time is not a touch. */
       arm() {
-        if (!now || now === 'box') return music.arm();
+        if (!now) return;
         const wake = () => {
           removeEventListener('pointerdown', wake);
           removeEventListener('keydown', wake);
-          if (now && now !== 'box' && !document.hidden) play(now);
+          if (now && !document.hidden) play(now);
         };
         addEventListener('pointerdown', wake, { once: true, passive: true });
         addEventListener('keydown', wake, { once: true });

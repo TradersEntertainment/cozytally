@@ -30,6 +30,8 @@ const LENGTH_MS = 45000;
 const FADE = 2.5; // seconds of the end folded back over the beginning
 
 const PIECES = [
+  ['ninni',
+   'A tender lullaby played on a real music box, with a soft felt piano doubling the melody an octave below and a warm string pad underneath. Simple, singable, rocking 3/4 feel, very slow, tape warmth, no drums, no vocals, endlessly soothing, loopable.'],
   ['gece',
    'Gentle lo-fi lullaby for a cosy night. Soft felt piano and a sparse music box melody over a warm pad, slow tempo around 60 BPM, tape warmth, no drums, no vocals, seamless and calm, loopable background music.'],
   ['yildiz',
