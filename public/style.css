@@ -2379,6 +2379,42 @@ button.debt-due:active { background: rgba(255, 255, 255, 0.07); }
 
 .spread-scope { margin-bottom: 12px; }
 
+/* the shelf of things the room can play */
+.tune-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.tune-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+  padding: 13px 14px;
+  border: 0.5px solid var(--hairline);
+  border-radius: var(--r-sm);
+  background: rgba(255, 255, 255, 0.045);
+  color: inherit;
+  font: inherit;
+  font-size: var(--t-callout);
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.18s var(--ease), border-color 0.18s var(--ease);
+}
+
+.tune-row:active { background: rgba(255, 255, 255, 0.09); }
+
+.tune-row.on {
+  border-color: var(--amber);
+  background: rgba(255, 184, 107, 0.1);
+}
+
+.tune-tick { opacity: 0; color: var(--amber); font-weight: 700; }
+.tune-row.on .tune-tick { opacity: 1; }
+
 /* An emoji option is a 44px square because an emoji is one character wide.
    These carry a name as well — whose debt, who paid — so they are pills that
    grow to fit instead of squares that the text spills out of. */

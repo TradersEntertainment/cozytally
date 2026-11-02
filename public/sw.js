@@ -7,6 +7,7 @@
 const BUILD = 'dev';
 const SHELL = `ct-shell-${BUILD}`;
 const MEDIA = 'ct-media'; // photos: user content, kept across builds
+const TUNES = 'ct-tunes'; // the music: big, chosen deliberately, never evicted
 const FONTS = 'ct-fonts';
 const MEDIA_MAX = 60;
 
@@ -104,6 +105,25 @@ self.addEventListener('fetch', (e) => {
      rebrands, so they belong with the shell — and a debt card that loses its
      logos on a train stops being readable at a glance, which is the only
      thing the logos were for. */
+  /* The music. Most of a megabyte, fetched because somebody chose it — so it
+     gets a shelf of its own rather than a place in the photo cache, where the
+     next sixty pictures would quietly push it back off. It outlives deploys
+     too: the tune did not change because the app did. */
+  if (url.origin === location.origin && url.pathname.startsWith('/music/')) {
+    e.respondWith(
+      caches.match(req).then(
+        (hit) =>
+          hit ||
+          fetch(req).then((res) => {
+            const copy = res.clone();
+            if (res.ok) caches.open(TUNES).then((c) => c.put(req, copy));
+            return res;
+          })
+      )
+    );
+    return;
+  }
+
   if (url.origin === location.origin && url.pathname.startsWith('/banks/')) {
     e.respondWith(
       caches.match(req).then(

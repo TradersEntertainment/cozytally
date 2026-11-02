@@ -909,7 +909,16 @@
 
     return {
       enabled: () => on,
-      /* Called once a room is open — never on the landing page, where the
+      /* Whether it is playing is no longer the same question as what the room
+         is playing — there is a shelf of recordings next to it now. So the
+         switch lives outside, and this only answers to it. */
+      set(want) {
+        if (on === !!want) return;
+        on = !!want;
+        if (on) start();
+        else stop();
+      },
+      /* Armed once a room is open — never on the landing page, where the
          switch to turn it off again isn't on screen. Remembered as on, it
          still can't make a sound until the page has been touched, so it
          waits by the door rather than failing silently. */
@@ -923,12 +932,125 @@
         addEventListener('pointerdown', wake, { once: true, passive: true });
         addEventListener('keydown', wake, { once: true });
       },
-      toggle() {
-        on = !on;
-        localStorage.setItem(KEY, on ? '1' : '0');
-        if (on) start();
-        else stop();
-        return on;
+    };
+  })();
+
+  /* ------------------------------------------------------------------
+     The shelf next to the music box.
+
+     The box above is made of oscillators and never plays the same bar
+     twice. These are recordings — four short pieces, each one crossfaded
+     onto itself so it comes round without a seam. A room is a place you
+     leave open for hours, so they are quiet, slow, and have nothing in
+     them that asks to be listened to.
+
+     Fetched the first time somebody picks one and not before: a couple who
+     never turn the music on should not pay for a megabyte of it. Once
+     fetched the service worker keeps it, so the second evening costs
+     nothing and works on a train.
+     ------------------------------------------------------------------ */
+  const TUNES = [
+    { key: 'box', nameKey: 'tuneBox' },
+    { key: 'gece', nameKey: 'tuneGece' },
+    { key: 'yildiz', nameKey: 'tuneYildiz' },
+    { key: 'yagmur', nameKey: 'tuneYagmur' },
+    { key: 'sabah', nameKey: 'tuneSabah' },
+  ];
+
+  const tunes = (() => {
+    const KEY = 'ct:music';
+    const LEVEL = 0.42;
+
+    const read = () => {
+      const v = localStorage.getItem(KEY);
+      if (v === '1') return 'box'; // what the old on/off switch meant
+      if (!v || v === '0') return '';
+      return TUNES.some((x) => x.key === v) ? v : '';
+    };
+
+    let now = read();
+    let el = null;
+    let fader = null;
+
+    const fade = (to, ms, then) => {
+      clearInterval(fader);
+      if (!el) return;
+      const from = el.volume;
+      const t0 = performance.now();
+      fader = setInterval(() => {
+        if (!el) return clearInterval(fader);
+        const k = Math.min(1, (performance.now() - t0) / ms);
+        el.volume = Math.max(0, Math.min(1, from + (to - from) * k));
+        if (k >= 1) {
+          clearInterval(fader);
+          then?.();
+        }
+      }, 50);
+    };
+
+    function play(key) {
+      const src = `/music/${key}.mp3`;
+      if (!el) {
+        el = new Audio();
+        el.loop = true;
+        el.preload = 'none';
+        /* In the document rather than floating in the heap: a media element
+           that belongs to the page is the one browsers treat as the page's
+           sound, and it is the one anybody debugging this can find. */
+        el.hidden = true;
+        document.body.appendChild(el);
+      }
+      if (!el.src.endsWith(src)) {
+        el.src = src;
+        el.load();
+      }
+      el.volume = 0;
+      // a refused play is the browser saying "not until they touch something"
+      el.play().then(() => fade(LEVEL, 2000)).catch(() => {});
+    }
+
+    function hush(quick) {
+      if (!el) return;
+      fade(0, quick ? 300 : 1400, () => el?.pause());
+    }
+
+    function apply() {
+      if (now === 'box') {
+        hush(true);
+        music.set(true);
+        return;
+      }
+      music.set(false);
+      if (now) play(now);
+      else hush();
+    }
+
+    document.addEventListener('visibilitychange', () => {
+      if (!now || now === 'box') return; // the box minds itself
+      if (document.hidden) hush(true);
+      else play(now);
+    });
+
+    return {
+      current: () => now,
+      list: () => TUNES,
+      pick(key) {
+        now = TUNES.some((x) => x.key === key) ? key : '';
+        localStorage.setItem(KEY, now || '0');
+        apply();
+        return now;
+      },
+      /* Waits by the door, like the box: nothing may make a sound until the
+         page has been touched, and a remembered choice is not a touch. */
+      arm() {
+        if (!now || now === 'box') return music.arm();
+        const wake = () => {
+          removeEventListener('pointerdown', wake);
+          removeEventListener('keydown', wake);
+          if (now && now !== 'box' && !document.hidden) play(now);
+        };
+        addEventListener('pointerdown', wake, { once: true, passive: true });
+        addEventListener('keydown', wake, { once: true });
       },
     };
   })();
@@ -6923,19 +7045,50 @@
 
     const musicBtn = $('#music-btn');
     const paintMusicBtn = () => {
-      const playing = music.enabled();
+      const playing = !!tunes.current();
       musicBtn.textContent = playing ? '🎶' : '🎵';
       musicBtn.classList.toggle('off', !playing);
       musicBtn.title = t(playing ? 'musicOn' : 'musicOff');
       musicBtn.setAttribute('aria-label', musicBtn.title);
     };
+
+    /* There is more than one answer now, so the button asks instead of
+       flipping. Picking plays it straight away — the tap that chose it is
+       also the gesture a browser wants before it will make a sound. */
     musicBtn.onclick = () => {
-      music.toggle();
-      paintMusicBtn();
-      toast(t(music.enabled() ? 'musicOn' : 'musicOff'));
+      const box = openModal(`
+        <h2>${esc(t('musicTitle'))}</h2>
+        <p class="sub-label" style="text-align:left;margin:0 0 14px">${esc(t('musicHint'))}</p>
+        <div class="tune-list">
+          <button type="button" class="tune-row ${tunes.current() ? '' : 'on'}" data-k="">
+            <span class="tune-name">${esc(t('tuneOff'))}</span>
+            <span class="tune-tick">✓</span>
+          </button>
+          ${tunes
+            .list()
+            .map(
+              (x) => `<button type="button" class="tune-row ${x.key === tunes.current() ? 'on' : ''}" data-k="${esc(x.key)}">
+                <span class="tune-name">${esc(t(x.nameKey))}</span>
+                <span class="tune-tick">✓</span>
+              </button>`
+            )
+            .join('')}
+        </div>
+        <div class="modal-actions">
+          <button type="button" class="btn btn-ghost js-cancel">${esc(t('close'))}</button>
+        </div>`);
+
+      $$('.tune-row', box).forEach((row) => {
+        row.onclick = () => {
+          tunes.pick(row.dataset.k);
+          $$('.tune-row', box).forEach((r) => r.classList.toggle('on', r === row));
+          paintMusicBtn();
+        };
+      });
+      $('.js-cancel', box).onclick = closeModal;
     };
     paintMusicBtn();
-    music.arm();
+    tunes.arm();
 
     /* Signing in used to mean going back to the landing page, which is a odd
        thing to have to do from inside the room whose history you are trying to
