@@ -1405,6 +1405,23 @@ function guessBank(title) {
   return 'other';
 }
 
+/* Whose payment this was. Money leaves one person's account even when the
+   other one is the one holding the phone, so a debt card that always said
+   "whoever typed it" would slowly become a record of who does the admin
+   rather than of who paid.
+
+   Only somebody who actually belongs to this room can be named — otherwise
+   the ledger would be a free text field with a person's name on it. */
+function payerOf(code, who, ws) {
+  const key = safeKey(who);
+  if (key) {
+    for (const m of store.roomMembers(code)) {
+      if (m.person === key) return { key: m.person, name: m.name };
+    }
+  }
+  return { key: personKey(ws), name: ws.meta.name };
+}
+
 /** The debts as a list, and what is still owed on each. */
 function debtRows(cfg, state) {
   const paid = state?.paid && typeof state.paid === 'object' ? state.paid : {};
@@ -2581,6 +2598,10 @@ function handleMessage(ws, msg) {
       // so a lira figure can carry a second number beside it from the
       // first paint, without a round trip of its own
       rates: ratesPayload(),
+      /* Everyone who belongs here, not just whoever is looking right now.
+         A payment written down on Tuesday may have been made by the person
+         who is asleep, and the card has to be able to say so. */
+      people: store.roomMembers(code),
       members: membersOf(code),
       you: ws.meta.id,
       unclaimed,
@@ -3121,6 +3142,7 @@ function handleMessage(ws, msg) {
         const { give } = spreadDebts(rows, want, paidSince(state, since));
         const at = toInt(msg.at, 0, now, now);
         const note = clampStr(msg.note, 60);
+        const payer = payerOf(code, msg.who, ws);
         state.paid = state.paid && typeof state.paid === 'object' ? state.paid : {};
         const lines = [];
         let moved = 0;
@@ -3129,7 +3151,7 @@ function handleMessage(ws, msg) {
           if (n <= 0) continue;
           state.paid[d.id] = d.done + n;
           moved += n;
-          lines.push({ row: d.id, a: n, by: ws.meta.name, key: personKey(ws), at, note });
+          lines.push({ row: d.id, a: n, by: payer.name, key: payer.key, at, note });
         }
         if (!moved) return;
         state.log = [...lines, ...(Array.isArray(state.log) ? state.log : [])]
@@ -3138,7 +3160,7 @@ function handleMessage(ws, msg) {
         store.updateCardState(JSON.stringify(state), row.id);
         broadcastCard(code, row.id, by, 'debt');
         const cur0 = clampStr(cfg.cur, 4) || '₺';
-        pushToRoom(code, 'debtSpread', [ws.meta.name, moved, cur0, lines.length], ws.meta.cid, {
+        pushToRoom(code, 'debtSpread', [payer.name, moved, cur0, lines.length], ws.meta.cid, {
           key: `debt:${row.id}`,
           windowMs: 60000,
         });
@@ -3172,8 +3194,9 @@ function handleMessage(ws, msg) {
 
       const at = toInt(msg.at, 0, now, now);
       const note = clampStr(msg.note, 60);
+      const payer = payerOf(code, msg.who, ws);
       state.log = [
-        { row: hit.id, a: amount, by: ws.meta.name, key: personKey(ws), at, note },
+        { row: hit.id, a: amount, by: payer.name, key: payer.key, at, note },
         ...(Array.isArray(state.log) ? state.log : []),
       ]
         .sort((x, y) => (y.at || 0) - (x.at || 0))
@@ -3190,9 +3213,9 @@ function handleMessage(ws, msg) {
       const cur = clampStr(cfg.cur, 4) || '₺';
       const what = hit.title || hit.bank || row.title;
       if (amount > 0 && left === 0) {
-        pushToRoom(code, 'debtCleared', [ws.meta.name, what], ws.meta.cid);
+        pushToRoom(code, 'debtCleared', [payer.name, what], ws.meta.cid);
       } else if (amount > 0) {
-        pushToRoom(code, 'debtPaid', [ws.meta.name, amount, cur, what, left], ws.meta.cid, {
+        pushToRoom(code, 'debtPaid', [payer.name, amount, cur, what, left], ws.meta.cid, {
           key: `debt:${row.id}`,
           windowMs: 60000,
         });

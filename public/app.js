@@ -1533,6 +1533,38 @@
      the one you can most afford to lose. */
   const SNAP_KEY = 'ct:snap';
   let lastMembers = [];
+  let roomPeople = [];
+
+  /* "Who paid this?" — as a row of faces, or nothing at all when there is
+     only one of you and the question does not arise. Money leaves one
+     person's account even when the other one is holding the phone. */
+  function whoRow(chosen) {
+    if (roomPeople.length < 2) return '';
+    return `
+      <div class="field">
+        <label>${esc(t('debtWho'))}</label>
+        <div class="emoji-row">
+          ${roomPeople
+            .map(
+              (p) => `<button type="button" class="emoji-opt who-opt ${p.person === chosen ? 'selected' : ''}"
+                data-w="${esc(p.person)}">${esc(p.avatar || '🐻')} ${esc(p.name)}</button>`
+            )
+            .join('')}
+        </div>
+      </div>`;
+  }
+
+  /** Wire that row up, and hand back a reader for whoever is selected. */
+  function whoPicked(box, start) {
+    let who = start;
+    $$('.who-opt', box).forEach((btn) => {
+      btn.onclick = () => {
+        who = btn.dataset.w;
+        $$('.who-opt', box).forEach((b) => b.classList.toggle('selected', b === btn));
+      };
+    });
+    return () => who;
+  }
   let snapTimer = 0;
 
   /* Debounced, and taken from the live board rather than from the payload that
@@ -1872,6 +1904,8 @@
         clockOffset = msg.now - Date.now();
         // the second number on a money or debt card comes from here
         setRates(msg.rates);
+        // everyone who belongs here, awake or not — a payment can be theirs
+        roomPeople = msg.people || [];
         room = msg.room;
         cards = new Map(msg.cards.map((c) => [c.id, c]));
         chatMsgs = msg.chat || [];
@@ -4538,7 +4572,8 @@
       </div>
       <div class="goal-bar"><div class="goal-fill" style="width:${Math.min(100, pct)}%"></div></div>
       ${due
-        ? `<div class="sub-label debt-due">${esc(t('debtMinSum', { n: money(due) }))}</div>`
+        ? `<button type="button" class="sub-label debt-due js-paymin"
+             >${esc(t('debtMinSum', { n: money(due) }))} ›</button>`
         : allCovered
           ? `<div class="sub-label debt-covered">${esc(t('debtMonthDone'))}</div>`
           : ''}
@@ -4594,6 +4629,10 @@
     $$('.debt-row', body).forEach((el) => {
       el.onclick = () => openDebtPay(card, el.dataset.id);
     });
+
+    // the whole month's minimums, in one go
+    const minBtn = $('.js-paymin', body);
+    if (minBtn) minBtn.onclick = () => openSpread(card, due);
 
     const spreadBtn = $('.js-spread', body);
     if (spreadBtn) {
@@ -4696,6 +4735,7 @@
       ${plan.left
         ? `<p class="sub-label debt-due" style="text-align:left">${esc(t('debtSpreadOver', { n: money(plan.left) }))}</p>`
         : ''}
+      ${whoRow(myKey())}
       <div class="field" style="margin:14px 0 0">
         <input type="text" maxlength="60" class="js-note" placeholder="${esc(t('debtNote'))}" autocomplete="off">
       </div>
@@ -4704,6 +4744,7 @@
         <button type="button" class="btn btn-primary js-go">${esc(t('debtSpreadDo'))}</button>
       </div>`;
 
+    const who = whoPicked(box, myKey());
     $('.js-cancel', box).onclick = closeModal;
     $('.js-go', box).onclick = () => {
       send({
@@ -4712,6 +4753,7 @@
         op: 'spread',
         amount,
         since: monthStart(),
+        who: who(),
         note: $('.js-note', box).value.trim().slice(0, 60),
       });
       closeModal();
@@ -4749,6 +4791,7 @@
              <button type="button" class="btn btn-secondary js-all">${esc(t('debtPayAll'))}<small>${esc(money(d.left))}</small></button>
            </div>`
         : ''}
+      ${whoRow(myKey())}
       <div class="field">
         <label>${esc(t('debtCustom'))}</label>
         <input type="number" inputmode="numeric" min="1" class="js-amt" placeholder="0">
@@ -4760,8 +4803,9 @@
       </div>
       <button type="button" class="btn btn-ghost js-cancel" style="width:100%;margin-top:10px">${esc(t('cancel'))}</button>`);
 
+    const who = whoPicked(box, myKey());
     const pay = (body) => {
-      send({ t: 'debt', id: card.id, row: d.id, ...body });
+      send({ t: 'debt', id: card.id, row: d.id, who: who(), ...body });
       closeModal();
     };
     const typed = () => {

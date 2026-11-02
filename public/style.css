@@ -2140,6 +2140,21 @@ body.reordering {
   color: var(--mint);
 }
 
+/* the month's minimums, in one tap */
+button.debt-due {
+  display: block;
+  width: 100%;
+  border: 0;
+  background: none;
+  font: inherit;
+  cursor: pointer;
+  border-radius: var(--r-xs);
+  padding: 4px 6px;
+  transition: background 0.18s var(--ease);
+}
+
+button.debt-due:active { background: rgba(255, 255, 255, 0.07); }
+
 /* when a debt is due, and how much that matters today */
 .debt-when { color: var(--ink-dim); }
 .debt-when.soon { color: var(--peach); }
