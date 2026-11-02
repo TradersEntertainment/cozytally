@@ -1580,8 +1580,17 @@ body.reordering {
   display: flex;
   flex-direction: column;
   gap: 2px;
-  max-height: 246px;
+  /* The list grows with what is on it. A fixed window here meant a card with
+     eight things to do showed five of them and hid the rest behind a scrollbar
+     of its own, inside a card that was mostly empty space — the one shape a
+     checklist must never take is "there is more and you cannot see it".
+
+     The cap is only for a list that has got out of hand; sixty items is the
+     most the server will keep, and by then an inner scroll is the kinder
+     answer. Everything short of that just stands up to its full height. */
+  max-height: min(72vh, 860px);
   overflow-y: auto;
+  overscroll-behavior: contain;
   scrollbar-width: thin;
   scrollbar-color: rgba(255, 255, 255, 0.18) transparent;
   -webkit-overflow-scrolling: touch;
