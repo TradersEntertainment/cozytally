@@ -2048,7 +2048,6 @@ body.reordering {
    downloaded — see BANKS in app.js for why. */
 .bank-chip {
   position: relative;
-  overflow: hidden;
   flex: 0 0 auto;
   display: inline-flex;
   align-items: center;
@@ -2074,6 +2073,7 @@ body.reordering {
   width: 100%;
   height: 100%;
   object-fit: cover;
+  /* the mark is clipped, the owner's face in the corner is not */
   border-radius: inherit;
 }
 
@@ -2318,13 +2318,60 @@ button.debt-due:active { background: rgba(255, 255, 255, 0.07); }
   gap: 4px;
 }
 
+/* every line can be taken back, so every line is a button */
 .debt-log-row {
   display: flex;
   justify-content: space-between;
+  align-items: baseline;
   gap: 10px;
+  width: 100%;
+  padding: 4px 6px;
+  border: 0;
+  border-radius: var(--r-xs);
+  background: none;
+  font: inherit;
   font-size: var(--t-caption);
   color: var(--ink-dim);
   font-variant-numeric: tabular-nums;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.18s var(--ease);
+}
+
+.debt-log-row:active { background: rgba(255, 255, 255, 0.07); }
+
+/* whose card it is, tucked into the corner of its bank's mark */
+.owner-dot {
+  position: absolute;
+  right: -2px;
+  bottom: -2px;
+  font-size: 0.6rem;
+  font-style: normal;
+  line-height: 1;
+  padding: 2px;
+  border-radius: var(--r-pill);
+  background: var(--night-2);
+  box-shadow: 0 0 0 1.5px var(--night-2);
+}
+
+.de-bank .js-dewho { flex: 0 0 auto; max-width: 42%; }
+
+.spread-scope { margin-bottom: 12px; }
+
+/* An emoji option is a 44px square because an emoji is one character wide.
+   These carry a name as well — whose debt, who paid — so they are pills that
+   grow to fit instead of squares that the text spills out of. */
+/* two classes, so it does not matter that .emoji-opt is written further down */
+.emoji-opt.who-opt,
+.emoji-opt.scope-opt {
+  width: auto;
+  height: auto;
+  min-height: 42px;
+  padding: 8px 14px;
+  gap: 6px;
+  border-radius: var(--r-pill);
+  font-size: var(--t-callout);
+  font-weight: 600;
 }
 
 .debt-log-row > span:first-child {

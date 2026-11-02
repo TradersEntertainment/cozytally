@@ -302,14 +302,17 @@
      letters rather than swapped in for them, so a logo that has not loaded —
      or never arrives at all — leaves something that still says which bank
      this is, instead of an empty coloured square. */
-  const bankChip = (key, extra = '') => {
+  const bankChip = (key, extra = '', who = '') => {
     const b = bankOf(key);
     const cls = 'bank-chip' + (b.nameKey ? '' : ' logo') + (extra ? ' ' + extra : '');
     const mark = b.nameKey
       ? ''
       : `<img src="/banks/${esc(key)}.png" alt="" loading="lazy" decoding="async">`;
+    // whose card it is, in the corner — the row's name does not always say
+    const p = who ? personOf(who) : null;
+    const face = p ? `<i class="owner-dot" title="${esc(p.name)}">${esc(p.avatar || '🐻')}</i>` : '';
     return `<span class="${cls}" style="--bank:${b.c}" title="${esc(bankName(key))}"
-      >${esc(b.s)}${mark}</span>`;
+      >${esc(b.s)}${mark}${face}</span>`;
   };
 
   /* Which bank a line like "Garanti ÖMER" is about. The goals on a piggy bank
@@ -356,6 +359,26 @@
       .replace(/[\u0300-\u036f]/g, '')
       .replace(/[^a-z0-9]+/g, ' ')
       .trim();
+
+  /* Whose debt a line like "Garanti ÖMER" is, when the people in the room are
+     called things like "ömersusuz". Nobody writes their account name out in
+     full on a row they are typing at midnight, so a word of the title matching
+     the beginning of somebody's name — or the other way round — is as much as
+     there is to go on. It is only ever a suggestion the editor shows; nothing
+     is saved without somebody looking at it. */
+  function guessWho(title) {
+    const name = foldName(title);
+    if (!name) return '';
+    const words = name.split(' ').filter((w) => w.length >= 3);
+    for (const p of roomPeople) {
+      const pn = foldName(p.name);
+      if (!pn) continue;
+      if (words.some((w) => pn.startsWith(w) || w.startsWith(pn))) return p.person;
+    }
+    return '';
+  }
+
+  const personOf = (key) => roomPeople.find((p) => p.person === key) || null;
 
   function guessBank(title) {
     const name = foldName(title);
@@ -1893,7 +1916,7 @@
 
       case 'debt:plan': {
         const w = planWait;
-        if (w && w.id === msg.id && w.amount === msg.amount) {
+        if (w && w.id === msg.id && w.amount === msg.amount && (w.only || '') === (msg.only || '')) {
           planWait = null;
           w.resolve(msg);
         }
@@ -4562,6 +4585,20 @@
       return;
     }
 
+    /* The ledger, folded. One handing-out wrote six payments; it is one thing
+       that happened and it should read as one line — and come back as one. */
+    const ledger = [];
+    for (const e of card.state.log || []) {
+      const key = e.g || e.eid || '';
+      const last = key && ledger.find((x) => x.key === key && x.n);
+      if (last && e.g) {
+        last.a += e.a || 0;
+        last.n += 1;
+        continue;
+      }
+      ledger.push({ key, a: e.a || 0, n: 1, by: e.by, at: e.at, note: e.note, row: e.row });
+    }
+
     body.innerHTML = `
       <div class="debt-head">
         <div class="debt-headline">
@@ -4583,7 +4620,7 @@
             const p = d.total ? (d.done / d.total) * 100 : 0;
             return `
           <button type="button" class="debt-row ${d.left ? '' : 'done'}" data-id="${esc(d.id)}">
-            ${bankChip(d.bank)}
+            ${bankChip(d.bank, '', d.who)}
             <span class="debt-info">
               <span class="debt-name">${esc(d.title || bankName(d.bank))}</span>
               <span class="debt-nums">${d.left
@@ -4608,26 +4645,48 @@
            </div>
            <p class="sub-label debt-form-hint">${esc(t('debtSpreadHint'))}</p>`
         : ''}
-      ${(card.state.log || []).length
-        ? `<div class="debt-log">${(card.state.log || [])
-            .slice(0, 4)
-            .map((e) => {
-              const row = rows.find((d) => d.id === e.row);
-              const who = esc(e.by || '');
-              const what = esc(row ? row.title || bankName(row.bank) : '—');
-              const sign = e.a < 0 ? '−' : '';
-              return `<div class="debt-log-row">
-                <span>${who} · ${what}${e.note ? ' · ' + esc(e.note) : ''}</span>
-                <span class="debt-log-amt ${e.a < 0 ? 'back' : ''}"
-                  >${sign}${esc(money(Math.abs(e.a)))}${
-                  e.at ? `<i class="m-when">${esc(shortDate(e.at))}</i>` : ''}</span>
-              </div>`;
+      ${ledger.length
+        ? `<div class="debt-log">${ledger
+            .slice(0, 5)
+            .map((g) => {
+              const row = rows.find((d) => d.id === g.row);
+              const what = g.n > 1
+                ? t('debtSpreadLine', { n: g.n })
+                : row ? row.title || bankName(row.bank) : '—';
+              const sign = g.a < 0 ? '−' : '';
+              return `<button type="button" class="debt-log-row" data-undo="${esc(g.key)}">
+                <span>${esc(g.by || '')} · ${esc(what)}${g.note ? ' · ' + esc(g.note) : ''}</span>
+                <span class="debt-log-amt ${g.a < 0 ? 'back' : ''}"
+                  >${sign}${esc(money(Math.abs(g.a)))}${
+                  g.at ? `<i class="m-when">${esc(shortDate(g.at))}</i>` : ''}</span>
+              </button>`;
             })
             .join('')}</div>`
         : ''}`;
 
     $$('.debt-row', body).forEach((el) => {
       el.onclick = () => openDebtPay(card, el.dataset.id);
+    });
+
+    /* Any line can be taken back, and a handing-out comes back whole. Putting
+       six payments back one at a time — reading each amount off the screen
+       and typing it in again — is not a thing anybody should have to do to
+       undo a tap. */
+    $$('.debt-log-row[data-undo]', body).forEach((el) => {
+      el.onclick = async () => {
+        const g = ledger.find((x) => x.key === el.dataset.undo);
+        if (!g) return;
+        const what = g.n > 1
+          ? t('debtSpreadLine', { n: g.n })
+          : rows.find((d) => d.id === g.row)?.title || '';
+        const yes = await confirmModal({
+          title: t('debtUndoTitle'),
+          body: t('debtUndoBody', { what, n: money(Math.abs(g.a)) }),
+          yesLabel: t('debtUndoYes'),
+          danger: false,
+        });
+        if (yes) send({ t: 'debt', id: card.id, op: 'undo', entry: g.key });
+      };
     });
 
     // the whole month's minimums, in one go
@@ -4658,11 +4717,11 @@
      whole flow. The server works the split out; this only draws it. */
   let planWait = null;
 
-  function askPlan(card, amount) {
+  function askPlan(card, amount, only) {
     return new Promise((resolve) => {
-      const w = { id: card.id, amount, resolve };
+      const w = { id: card.id, amount, only, resolve };
       planWait = w;
-      send({ t: 'debt:plan', id: card.id, amount, since: monthStart() });
+      send({ t: 'debt:plan', id: card.id, amount, only, since: monthStart() });
       // a socket that never answers must not leave the sheet hanging open
       setTimeout(() => {
         if (planWait === w) {
@@ -4673,16 +4732,34 @@
     });
   }
 
-  async function openSpread(card, amount) {
+  async function openSpread(card, amount, only = '') {
     const cur = card.config.cur || '₺';
     const shade = card.config.shadow || '';
     const money = (n) => fmtNum(n) + cur;
+
+    /* Whose debts this is going into. Only offered when somebody has actually
+       said whose is whose — a chooser with one real answer in it is furniture,
+       not a choice. */
+    const owners = [...new Set(debtRows(card).filter((d) => d.left > 0 && d.who).map((d) => d.who))];
+    const scopeRow = owners.length
+      ? `<div class="emoji-row spread-scope">
+           <button type="button" class="emoji-opt scope-opt ${only ? '' : 'selected'}" data-o=""
+             >${esc(t('debtScopeAll'))}</button>
+           ${owners
+             .map((k) => {
+               const p = personOf(k);
+               return `<button type="button" class="emoji-opt scope-opt ${k === only ? 'selected' : ''}"
+                 data-o="${esc(k)}">${esc(p?.avatar || '🐻')} ${esc(p?.name || '')}</button>`;
+             })
+             .join('')}
+         </div>`
+      : '';
 
     const box = openModal(`
       <h2>${esc(t('debtSpread'))}</h2>
       <p class="sub-label" style="text-align:left;margin:0 0 14px">${esc(t('debtSpreadWait'))}</p>`);
 
-    const plan = await askPlan(card, amount);
+    const plan = await askPlan(card, amount, only);
     // the sheet may have been closed, or another one opened, while we waited
     if (!plan || overlay.hidden || $('h2', modalBox)?.textContent !== t('debtSpread')) {
       if (!plan && !overlay.hidden) {
@@ -4692,6 +4769,16 @@
       return;
     }
 
+    // changing the scope asks the question again rather than filtering here
+    function wireScope() {
+      $$('.scope-opt', box).forEach((btn) => {
+        btn.onclick = () => {
+          if ((btn.dataset.o || '') === only) return;
+          openSpread(card, amount, btn.dataset.o || '');
+        };
+      });
+    }
+
     const rows = debtRows(card).filter((d) => (plan.give[d.id] || 0) > 0);
     const moved = rows.reduce((n, d) => n + plan.give[d.id], 0);
     const second = shade ? shadowAmount(moved, cur, shade) : '';
@@ -4699,16 +4786,19 @@
     if (!moved) {
       box.innerHTML = `
         <h2>${esc(t('debtSpread'))}</h2>
+        ${scopeRow}
         <p class="sub-label" style="text-align:left">${esc(t('debtSpreadNowhere'))}</p>
         <div class="modal-actions">
           <button type="button" class="btn btn-ghost js-cancel">${esc(t('cancel'))}</button>
         </div>`;
       $('.js-cancel', box).onclick = closeModal;
+      wireScope();
       return;
     }
 
     box.innerHTML = `
       <h2>${esc(t('debtSpread'))}</h2>
+      ${scopeRow}
       <div class="spread-sum">
         <span class="spread-big">${esc(money(moved))}</span>
         ${second ? `<span class="debt-shadow">${esc(second)}</span>` : ''}
@@ -4745,6 +4835,7 @@
       </div>`;
 
     const who = whoPicked(box, myKey());
+    wireScope();
     $('.js-cancel', box).onclick = closeModal;
     $('.js-go', box).onclick = () => {
       send({
@@ -4752,6 +4843,7 @@
         id: card.id,
         op: 'spread',
         amount,
+        only,
         since: monthStart(),
         who: who(),
         note: $('.js-note', box).value.trim().slice(0, 60),
@@ -5932,6 +6024,9 @@
         total: d.total || '',
         min: d.min || '',
         due: d.due || '',
+        who: d.who || guessWho(d.title || ''),
+        // an existing row that already said is never second-guessed
+        whoSet: !!d.who,
       }));
       if (!debtDraft.length) debtDraft.push({ bank: 'other', title: '', total: '', min: '', due: '' });
 
@@ -5946,12 +6041,21 @@
                 : ''}
               <div class="de-fields">
                 <div class="de-bank">
-                  ${bankChip(d.bank)}
+                  ${bankChip(d.bank, '', d.who)}
                   <select class="js-debank" aria-label="${esc(t('fieldBank'))}">
                     ${Object.keys(BANKS)
                       .map((k) => `<option value="${k}" ${k === d.bank ? 'selected' : ''}>${esc(bankName(k))}</option>`)
                       .join('')}
                   </select>
+                  ${roomPeople.length > 1
+                    ? `<select class="js-dewho" aria-label="${esc(t('debtWhose'))}">
+                         <option value="" ${d.who ? '' : 'selected'}>${esc(t('debtShared'))}</option>
+                         ${roomPeople
+                           .map((p) => `<option value="${esc(p.person)}" ${p.person === d.who ? 'selected' : ''}
+                             >${esc(p.avatar || '🐻')} ${esc(p.name)}</option>`)
+                           .join('')}
+                       </select>`
+                    : ''}
                 </div>
                 <input type="text" class="js-detitle" maxlength="40"
                   placeholder="${esc(t('debtNamePh'))}" value="${esc(d.title)}" autocomplete="off">
@@ -5974,16 +6078,38 @@
         $$('.debt-edit-row', debtRowsEl).forEach((row) => {
           const i = Number(row.dataset.i);
           const bank = $('.js-debank', row);
+          const repaintChip = () => {
+            // only the chip changes, and redrawing would take the caret with it
+            const cell = $('.bank-chip', row);
+            cell.outerHTML = bankChip(debtDraft[i].bank, '', debtDraft[i].who);
+          };
           bank.onchange = () => {
             debtDraft[i].bank = bank.value;
-            // only the chip changes, and redrawing would take the caret with it
-            const chip = $('.bank-chip', row);
-            const b = bankOf(bank.value);
-            chip.style.setProperty('--bank', b.c);
-            chip.textContent = b.s;
-            chip.title = bankName(bank.value);
+            repaintChip();
           };
-          $('.js-detitle', row).oninput = (e) => (debtDraft[i].title = e.target.value);
+          const whoSel = $('.js-dewho', row);
+          if (whoSel) {
+            whoSel.onchange = () => {
+              debtDraft[i].who = whoSel.value;
+              // once somebody has said, stop guessing at it
+              debtDraft[i].whoSet = true;
+              repaintChip();
+            };
+          }
+          $('.js-detitle', row).oninput = (e) => {
+            debtDraft[i].title = e.target.value;
+            /* While nobody has chosen, the name is allowed to suggest whose it
+               is — "Garanti ÖMER" is a sentence about ownership whether or not
+               anybody thought of it that way. */
+            if (!debtDraft[i].whoSet && whoSel) {
+              const g = guessWho(e.target.value);
+              if (g !== debtDraft[i].who) {
+                debtDraft[i].who = g;
+                whoSel.value = g;
+                repaintChip();
+              }
+            }
+          };
           $('.js-detotal', row).oninput = (e) => (debtDraft[i].total = e.target.value);
           $('.js-demin', row).oninput = (e) => (debtDraft[i].min = e.target.value);
           $('.js-dedue', row).oninput = (e) => (debtDraft[i].due = e.target.value);
@@ -6255,6 +6381,7 @@
             total: Math.round(Number(d.total)),
             min: Math.max(0, Math.round(Number(d.min) || 0)),
             due: Math.min(31, Math.max(0, Math.round(Number(d.due) || 0))),
+            who: d.who || '',
           }));
       }
       if (type === 'money') {

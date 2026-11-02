@@ -1306,6 +1306,11 @@ function sanitizeConfig(type, raw) {
           bank: clampStr(d?.bank, 24),
           title: clampStr(d?.title, 40),
           total,
+          /* Whose debt it is. Two people's cards sitting in one list is the
+             normal case, and "pay down Rabia's" is a thing somebody wants to
+             do with one tap — but only if the list knows. Empty means it
+             belongs to the pair rather than to either of them. */
+          who: safeKey(d?.who),
           // the smallest payment that keeps the bank quiet this month
           min: toInt(d?.min, 0, total, 0),
           /* The day of the month it is due. Nothing enforces it and nothing
@@ -1319,6 +1324,9 @@ function sanitizeConfig(type, raw) {
   }
   return out;
 }
+
+/** A mark for one line of the ledger, or for a whole handing-out. */
+const newEntryId = () => crypto.randomBytes(4).toString('hex');
 
 /** An id no other debt on this card is already using. */
 function newDebtId(taken) {
@@ -3110,8 +3118,10 @@ function handleMessage(ws, msg) {
       const rows = debtRows(JSON.parse(row.config), state);
       // the browser's own month, kept inside two sane months of now
       const since = toInt(msg.since, now - 62 * 86400000, now, now);
-      const { give, left } = spreadDebts(rows, amount, paidSince(state, since));
-      sendTo(ws, { t: 'debt:plan', id: row.id, amount, give, left });
+      const only = safeKey(msg.only);
+      const scope = only ? rows.filter((d) => d.who === only) : rows;
+      const { give, left } = spreadDebts(scope, amount, paidSince(state, since));
+      sendTo(ws, { t: 'debt:plan', id: row.id, amount, only, give, left });
       return;
     }
 
@@ -3131,6 +3141,35 @@ function handleMessage(ws, msg) {
       const state = JSON.parse(row.state);
       const rows = debtRows(cfg, state);
 
+      /* Undoing. A handing-out writes six payments at once, and putting
+         those back one by one — reading each amount off the ledger and
+         typing it in again — is not something anybody should have to do to
+         correct a tap. So a line can be taken back whole, and the lines of
+         one spread come back together, because that is how they went.
+
+         What comes back is removed rather than struck through: this is an
+         undo, not a correction, and the ledger should read as though it had
+         not happened. */
+      if (msg.op === 'undo') {
+        const mark = clampStr(msg.entry, 16);
+        const log = Array.isArray(state.log) ? state.log : [];
+        const gone = log.filter((e) => e.eid === mark || e.g === mark);
+        if (!mark || !gone.length) return;
+        const totals = new Map(rows.map((d) => [d.id, d.total]));
+        state.paid = state.paid && typeof state.paid === 'object' ? state.paid : {};
+        for (const e of gone) {
+          const cap = totals.get(e.row);
+          if (cap === undefined) continue;
+          const n = Math.max(0, Math.min(cap, (state.paid[e.row] || 0) - (e.a || 0)));
+          if (n > 0) state.paid[e.row] = n;
+          else delete state.paid[e.row];
+        }
+        state.log = log.filter((e) => e.eid !== mark && e.g !== mark);
+        store.updateCardState(JSON.stringify(state), row.id);
+        broadcastCard(code, row.id, by, 'debt');
+        return;
+      }
+
       /* One sum, handed out across the lot: every bank's minimum first, then
          the rest in proportion to what is still owed. Worked out here and not
          sent in, so what lands is a split of the money somebody actually has
@@ -3139,19 +3178,26 @@ function handleMessage(ws, msg) {
         const want = toInt(msg.amount, 1, 1000000000, 0);
         if (!want) return;
         const since = toInt(msg.since, now - 62 * 86400000, now, now);
-        const { give } = spreadDebts(rows, want, paidSince(state, since));
+        // "just Rabia's" — a scope, not a filter the browser applied for us
+        const only = safeKey(msg.only);
+        const scope = only ? rows.filter((d) => d.who === only) : rows;
+        if (!scope.length) return;
+        const { give } = spreadDebts(scope, want, paidSince(state, since));
+        /* Every line of one handing-out carries the same mark, so taking it
+           back is one decision rather than six. */
+        const g = newEntryId();
         const at = toInt(msg.at, 0, now, now);
         const note = clampStr(msg.note, 60);
         const payer = payerOf(code, msg.who, ws);
         state.paid = state.paid && typeof state.paid === 'object' ? state.paid : {};
         const lines = [];
         let moved = 0;
-        for (const d of rows) {
+        for (const d of scope) {
           const n = give[d.id] || 0;
           if (n <= 0) continue;
           state.paid[d.id] = d.done + n;
           moved += n;
-          lines.push({ row: d.id, a: n, by: payer.name, key: payer.key, at, note });
+          lines.push({ eid: newEntryId(), g, row: d.id, a: n, by: payer.name, key: payer.key, at, note });
         }
         if (!moved) return;
         state.log = [...lines, ...(Array.isArray(state.log) ? state.log : [])]
@@ -3196,7 +3242,7 @@ function handleMessage(ws, msg) {
       const note = clampStr(msg.note, 60);
       const payer = payerOf(code, msg.who, ws);
       state.log = [
-        { row: hit.id, a: amount, by: payer.name, key: payer.key, at, note },
+        { eid: newEntryId(), row: hit.id, a: amount, by: payer.name, key: payer.key, at, note },
         ...(Array.isArray(state.log) ? state.log : []),
       ]
         .sort((x, y) => (y.at || 0) - (x.at || 0))
