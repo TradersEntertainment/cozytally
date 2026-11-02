@@ -2047,6 +2047,8 @@ body.reordering {
 /* The bank, in its own colour and its own initials. Drawn rather than
    downloaded — see BANKS in app.js for why. */
 .bank-chip {
+  position: relative;
+  overflow: hidden;
   flex: 0 0 auto;
   display: inline-flex;
   align-items: center;
@@ -2061,6 +2063,34 @@ body.reordering {
   letter-spacing: 0.01em;
   text-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
   box-shadow: var(--specular-soft), var(--shadow-1);
+}
+
+/* The real mark, laid over the initials. An app icon brings its own square
+   and its own background, so the brand-coloured tile underneath is only ever
+   the thing you see while it loads — or instead of it, if it never comes. */
+.bank-chip.logo img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: inherit;
+}
+
+/* the same mark standing in for a photo, filling whatever square it is in */
+.bank-chip.as-thumb {
+  width: 100%;
+  height: 100%;
+  border-radius: inherit;
+  box-shadow: none;
+  font-size: 0.8rem;
+}
+
+/* the dashed outline means "there could be a picture here"; once a mark has
+   filled the square, it is no longer asking */
+.gr-photo:has(.bank-chip),
+.gs-photo:has(.bank-chip) {
+  border-color: transparent;
 }
 
 .debt-head {
@@ -4829,6 +4859,12 @@ body.rain-open .hint-bubble { opacity: 0; pointer-events: none; }
     padding: 12px 0 2px;
     background: linear-gradient(180deg, transparent, rgba(26, 21, 54, 0.92) 34%);
   }
+
+  /* The sticky bar above floats over whatever is beneath it, which is fine
+     while you are scrolling past the middle of a form and wrong at the end of
+     one: the last thing in the sheet would sit under the buttons for good.
+     This is the room it needs to climb clear. */
+  .modal-box { padding-bottom: 86px; }
 
   .modal-actions .btn { flex: 1; }
 

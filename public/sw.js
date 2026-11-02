@@ -100,6 +100,25 @@ self.addEventListener('fetch', (e) => {
     return;
   }
 
+  /* Bank marks. They ship with the build and change about as often as a bank
+     rebrands, so they belong with the shell — and a debt card that loses its
+     logos on a train stops being readable at a glance, which is the only
+     thing the logos were for. */
+  if (url.origin === location.origin && url.pathname.startsWith('/banks/')) {
+    e.respondWith(
+      caches.match(req).then(
+        (hit) =>
+          hit ||
+          fetch(req).then((res) => {
+            const copy = res.clone();
+            if (res.ok) caches.open(SHELL).then((c) => c.put(req, copy));
+            return res;
+          })
+      )
+    );
+    return;
+  }
+
   // Photos people uploaded. They never change under the same name, and they
   // are the part of a board most worth having on a train.
   if (url.origin === location.origin && url.pathname.startsWith('/u/')) {

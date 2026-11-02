@@ -298,10 +298,76 @@
     const b = bankOf(key);
     return b.nameKey ? t(b.nameKey) : b.name;
   };
-  const bankChip = (key) => {
+  /* The mark, with the initials underneath it. The picture is laid over the
+     letters rather than swapped in for them, so a logo that has not loaded —
+     or never arrives at all — leaves something that still says which bank
+     this is, instead of an empty coloured square. */
+  const bankChip = (key, extra = '') => {
     const b = bankOf(key);
-    return `<span class="bank-chip" style="--bank:${b.c}" title="${esc(bankName(key))}">${esc(b.s)}</span>`;
+    const cls = 'bank-chip' + (b.nameKey ? '' : ' logo') + (extra ? ' ' + extra : '');
+    const mark = b.nameKey
+      ? ''
+      : `<img src="/banks/${esc(key)}.png" alt="" loading="lazy" decoding="async">`;
+    return `<span class="${cls}" style="--bank:${b.c}" title="${esc(bankName(key))}"
+      >${esc(b.s)}${mark}</span>`;
   };
+
+  /* Which bank a line like "Garanti ÖMER" is about. The goals on a piggy bank
+     were named by hand long before there was a bank to pick from, so the name
+     is all there is to go on — and a row that knows its bank can wear the
+     mark without anybody choosing a photo for it.
+
+     Short keys have to match a whole word: "ing" lives inside a great many
+     Turkish words that are not a Dutch bank. */
+  const BANK_HINTS = [
+    ['ziraat', ['ziraat']],
+    ['isbank', ['is bankasi', 'isbank', 'iscep', 'maximum']],
+    ['garanti', ['garanti', 'bonus']],
+    ['akbank', ['akbank', 'axess', 'wings']],
+    ['yapikredi', ['yapi kredi', 'yapikredi', 'world card', 'worldcard']],
+    ['vakifbank', ['vakifbank', 'vakif bank']],
+    ['halkbank', ['halkbank', 'halk bankasi', 'paraf']],
+    ['qnb', ['qnb', 'finansbank', 'cardfinans']],
+    ['enpara', ['enpara', 'en para']],
+    ['denizbank', ['denizbank', 'deniz bank', 'mobildeniz']],
+    ['teb', ['cepteteb', 'teb']],
+    ['ing', ['ing']],
+    ['kuveytturk', ['kuveyt']],
+    ['albaraka', ['albaraka']],
+    ['turkiyefinans', ['turkiye finans', 'happy card']],
+    ['sekerbank', ['sekerbank', 'seker bank']],
+    ['fibabanka', ['fibabanka', 'fiba']],
+    ['odeabank', ['odeabank', 'odea']],
+    ['anadolubank', ['anadolubank', 'anadolu bank']],
+    ['burgan', ['burgan']],
+    ['hsbc', ['hsbc', 'advantage']],
+    ['papara', ['papara']],
+    ['getirfinans', ['getir finans', 'getirfinans']],
+    ['tosla', ['tosla']],
+    ['nkolay', ['n kolay', 'nkolay']],
+    ['card', ['kredi karti', 'credit card', 'kart']],
+  ];
+
+  const foldName = (v) =>
+    String(v || '')
+      .toLocaleLowerCase('tr')
+      .replace(/ı/g, 'i')
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/[^a-z0-9]+/g, ' ')
+      .trim();
+
+  function guessBank(title) {
+    const name = foldName(title);
+    if (!name) return '';
+    const words = new Set(name.split(' '));
+    for (const [key, hints] of BANK_HINTS) {
+      for (const h of hints) {
+        if (h.includes(' ') || h.length > 4 ? name.includes(h) : words.has(h)) return key;
+      }
+    }
+    return '';
+  }
 
   /* ------------------------------------------------------------- currency
 
@@ -4636,7 +4702,11 @@
                return `<div class="goal-step ${r.done ? 'done' : ''} ${r.paid ? 'paid' : ''}
                  ${isActive ? 'active' : ''}" data-i="${i}">
                  <div class="gs-photo">
-                   ${r.photo ? `<img src="${esc(mediaUrl(r.photo))}" alt="" loading="lazy">` : '<span class="gs-blank">💰</span>'}
+                   ${r.photo
+                     ? `<img src="${esc(mediaUrl(r.photo))}" alt="" loading="lazy">`
+                     : guessBank(r.title)
+                       ? bankChip(guessBank(r.title), 'as-thumb')
+                       : '<span class="gs-blank">💰</span>'}
                    ${r.paid
                      ? `<span class="gs-stamp">${esc(t('goalPaid'))}</span>`
                      : `<span class="gs-star">${r.done ? '⭐' : '☆'}</span>`}
@@ -5787,10 +5857,15 @@
       }));
       if (!goalDraft.length) goalDraft.push({ amount: '', title: '', photo: '', file: null });
 
-      const thumbOf = (g) =>
-        g.preview || g.photo
-          ? `<img src="${esc(mediaUrl(g.preview || g.photo))}" alt="">`
-          : '<span>📷</span>';
+      /* A goal that names a bank wears that bank's mark until somebody picks
+         a photo for it. Most of these rows are debts, and a debt's picture is
+         its bank — asking for a camera roll shot of a credit card is asking
+         for the one photo nobody has. */
+      const thumbOf = (g) => {
+        if (g.preview || g.photo) return `<img src="${esc(mediaUrl(g.preview || g.photo))}" alt="">`;
+        const bank = guessBank(g.title);
+        return bank ? bankChip(bank, 'as-thumb') : '<span>📷</span>';
+      };
 
       /* Repaint one thumbnail instead of the whole list. A shrink or an
          upload finishing must not tear down the row someone is typing in. */
@@ -5870,7 +5945,11 @@
             const picked = file.files[0];
             if (picked) startUpload(i, picked);
           };
-          $('.js-grtitle', row).oninput = (e) => (goalDraft[i].title = e.target.value);
+          $('.js-grtitle', row).oninput = (e) => {
+            goalDraft[i].title = e.target.value;
+            // the mark follows what you are typing, while the square is still free
+            if (!goalDraft[i].preview && !goalDraft[i].photo) paintPhoto(i);
+          };
           $('.js-gramount', row).oninput = (e) => (goalDraft[i].amount = e.target.value);
           const del = $('.js-grdel', row);
           if (del) {
