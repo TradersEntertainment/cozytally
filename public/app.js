@@ -250,6 +250,7 @@
     checkin: { emoji: '🤝', nameKey: 'typeCheckin', descKey: 'typeCheckinDesc' },
     pet: { emoji: '🐾', nameKey: 'typePet', descKey: 'typePetDesc' },
     debt: { emoji: '🏦', nameKey: 'typeDebt', descKey: 'typeDebtDesc' },
+    course: { emoji: '📘', nameKey: 'typeCourse', descKey: 'typeCourseDesc' },
     game: { emoji: '🎲', nameKey: 'typeGame', descKey: 'typeGameDesc' },
   };
 
@@ -2089,6 +2090,7 @@
   const EDGE_SPEED = 900; // px per second at the very edge, tapering to 0
   const MAX_GOALS = 6;    // matches the server's cap
   const MAX_DEBTS = 12;   // and so does this one
+  const MAX_PARTS = 10;   // the pieces a course is marked out of
 
   function currentOrder() {
     return $$('#board .card').map((el) => el.dataset.id);
@@ -2540,6 +2542,7 @@
     if (card.type === 'note') renderNoteBody(body, card);
     if (card.type === 'money') renderMoneyBody(body, card, opts);
     if (card.type === 'debt') renderDebtBody(body, card, opts);
+    if (card.type === 'course') renderCourseBody(body, card, opts);
     if (card.type === 'list') renderListBody(body, card);
     if (card.type === 'checkin') renderCheckinBody(body, card);
     if (card.type === 'game') renderGameBody(body, card, opts);
@@ -4388,6 +4391,176 @@
     });
   }
 
+  /* ------------------------------------------------------------- a course
+
+     The question this card exists to answer is one question: what do I need
+     in the final. Everything else on it is there to make that number
+     trustworthy.
+
+     So the arithmetic is deliberately plain. Every piece is worth so much of
+     a hundred; a piece that has been marked is banked at its weight; the
+     pieces that have not are one pool, and the pass minus what is banked is
+     what that pool has to carry between them. No letters, no four point
+     something — those are what a university prints at the end, and this is
+     for the weeks before that. */
+  const PART_KINDS = {
+    vize: { e: '📝', nameKey: 'partVize' },
+    final: { e: '🎓', nameKey: 'partFinal' },
+    but: { e: '🔁', nameKey: 'partBut' },
+    quiz: { e: '⚡', nameKey: 'partQuiz' },
+    odev: { e: '📄', nameKey: 'partOdev' },
+    proje: { e: '🛠️', nameKey: 'partProje' },
+    lab: { e: '🔬', nameKey: 'partLab' },
+    katilim: { e: '🙋', nameKey: 'partKatilim' },
+    diger: { e: '📌', nameKey: 'partDiger' },
+  };
+  const partKind = (k) => PART_KINDS[k] || PART_KINDS.diger;
+  const partName = (p) => p.label || t(partKind(p.kind).nameKey);
+
+  function courseStanding(card) {
+    const parts = card.config?.parts || [];
+    const got = card.state?.got || {};
+    const mark = (p) => (Number.isFinite(got[p.id]) ? got[p.id] : null);
+
+    let earned = 0;
+    let openWeight = 0;
+    let totalWeight = 0;
+    const rows = parts.map((p) => {
+      const n = mark(p);
+      totalWeight += p.weight;
+      if (n === null) openWeight += p.weight;
+      else earned += (p.weight * n) / 100;
+      return { ...p, mark: n };
+    });
+
+    const pass = card.config?.pass ?? 60;
+    const minFinal = card.config?.minFinal || 0;
+    const fin = rows.find((p) => p.kind === 'final');
+    const finFailed = !!(fin && minFinal > 0 && fin.mark !== null && fin.mark < minFinal);
+
+    /* What the unmarked pieces have to average. Rounded up, because a mark
+       is a whole number and "you need 49.2" means you need 50. */
+    let need = openWeight > 0 ? Math.ceil(((pass - earned) / openWeight) * 100) : null;
+    const openRows = rows.filter((p) => p.mark === null);
+    const onlyFinal = openRows.length === 1 && openRows[0].kind === 'final';
+    /* If the final is the last thing left and it has a floor of its own, the
+       floor can be the harder of the two conditions — and the number on the
+       card has to be the one that actually passes the course. */
+    if (need !== null && onlyFinal && minFinal > need) need = minFinal;
+
+    return {
+      rows, openRows, onlyFinal, pass, minFinal, finFailed,
+      earned: Math.round(earned * 10) / 10,
+      openWeight, totalWeight, need,
+      done: openWeight === 0,
+      passed: openWeight === 0 && earned >= pass && !finFailed,
+    };
+  }
+
+  function renderCourseBody(body, card, opts = {}) {
+    const st = courseStanding(card);
+    if (!st.rows.length) {
+      body.innerHTML = `<p class="sub-label">${esc(t('courseEmpty'))}</p>`;
+      return;
+    }
+
+    /* The headline. Five things it can be, and only one of them is a number
+       somebody has to act on. */
+    let head;
+    let tone = '';
+    if (st.finFailed) {
+      head = t('courseFinalMissed', { n: st.minFinal });
+      tone = 'bad';
+    } else if (st.done) {
+      head = st.passed ? t('coursePassed', { n: st.earned }) : t('courseNotPassed', { n: st.earned });
+      tone = st.passed ? 'good' : 'bad';
+    } else if (st.need <= 0) {
+      head = t('courseSafe');
+      tone = 'good';
+    } else if (st.need > 100) {
+      head = t('courseImpossible');
+      tone = 'bad';
+    } else {
+      head = st.onlyFinal
+        ? t('courseNeedFinal', { n: st.need })
+        : t('courseNeedRest', { n: st.need });
+    }
+
+    const pct = Math.max(0, Math.min(100, (st.earned / Math.max(1, st.pass)) * 100));
+
+    body.innerHTML = `
+      <div class="course-head ${tone}">${esc(head)}</div>
+      <div class="course-sub">${esc(t('courseBanked', { got: st.earned, pass: st.pass }))}</div>
+      <div class="goal-bar"><div class="goal-fill" style="width:${pct}%"></div></div>
+      <div class="part-list">
+        ${st.rows
+          .map(
+            (p) => `
+          <button type="button" class="part-row ${p.mark === null ? 'open' : ''}" data-id="${esc(p.id)}">
+            <span class="part-emoji">${esc(partKind(p.kind).e)}</span>
+            <span class="part-info">
+              <span class="part-name">${esc(partName(p))}</span>
+              <span class="part-weight">${esc(t('partWeight', { n: p.weight }))}</span>
+            </span>
+            <span class="part-mark ${p.mark === null ? 'none' : ''}"
+              >${p.mark === null ? '—' : esc(String(p.mark))}</span>
+          </button>`
+          )
+          .join('')}
+      </div>
+      <div class="course-foot">
+        ${esc(t('coursePassAt', { n: st.pass }))}${
+          st.minFinal ? ' · ' + esc(t('courseFinalFloor', { n: st.minFinal })) : ''}${
+          st.totalWeight !== 100 ? `<span class="course-warn"> · ${esc(t('courseWeightOff', { n: st.totalWeight }))}</span>` : ''}
+      </div>`;
+
+    $$('.part-row', body).forEach((el) => {
+      el.onclick = () => openCourseMark(card, el.dataset.id);
+    });
+
+    if (opts.verb === 'course' && st.passed) confetti();
+  }
+
+  /* One piece, one number. The keypad opens straight onto it because there is
+     nothing else to decide here — and "sil" is next to it, because a mark
+     typed into the wrong row is the most likely thing to go wrong. */
+  function openCourseMark(card, id) {
+    const st = courseStanding(card);
+    const p = st.rows.find((x) => x.id === id);
+    if (!p) return;
+
+    const box = openModal(`
+      <h2>${esc(partName(p))}</h2>
+      <p class="sub-label" style="text-align:left;margin:0 0 14px">${esc(
+        t('partWeight', { n: p.weight })
+      )}${p.kind === 'final' && st.minFinal ? ' · ' + esc(t('courseFinalFloor', { n: st.minFinal })) : ''}</p>
+      <div class="field">
+        <label>${esc(t('courseMarkLabel'))}</label>
+        <input type="number" inputmode="numeric" min="0" max="100" class="js-mark"
+          placeholder="0–100" value="${p.mark === null ? '' : p.mark}">
+      </div>
+      <div class="modal-actions">
+        ${p.mark === null ? '' : `<button type="button" class="btn btn-ghost js-clear">${esc(t('courseClear'))}</button>`}
+        <button type="button" class="btn btn-ghost js-cancel">${esc(t('cancel'))}</button>
+        <button type="button" class="btn btn-primary js-ok">${esc(t('save'))}</button>
+      </div>`);
+
+    const put = (score) => {
+      send({ t: 'course', id: card.id, part: p.id, score });
+      closeModal();
+    };
+    $('.js-ok', box).onclick = () => {
+      const v = $('.js-mark', box).value.trim();
+      if (v === '') return $('.js-mark', box).focus();
+      put(Math.max(0, Math.min(100, Math.round(Number(v)))));
+    };
+    const clear = $('.js-clear', box);
+    if (clear) clear.onclick = () => put(null);
+    $('.js-cancel', box).onclick = closeModal;
+    $('.js-mark', box).addEventListener('keydown', (e) => e.key === 'Enter' && $('.js-ok', box).click());
+    setTimeout(() => $('.js-mark', box)?.select(), 60);
+  }
+
   /* ------------------------------------------------------------- the debts
 
      A piggy bank fills; a debt empties. Same money, opposite direction, and
@@ -5827,6 +6000,27 @@
           : ''}`;
     }
 
+    if (type === 'course') {
+      extraFields = `
+        <div class="field">
+          <label>${esc(t('fieldPass'))}</label>
+          <div class="de-pair">
+            <input type="number" inputmode="numeric" min="0" max="100" id="cf-pass"
+              placeholder="${esc(t('fieldPassPh'))}" value="${existing?.config?.pass ?? 60}">
+            <input type="number" inputmode="numeric" min="0" max="100" id="cf-minfinal"
+              placeholder="${esc(t('fieldMinFinalPh'))}" value="${existing?.config?.minFinal || ''}">
+          </div>
+          <p class="sub-label" style="text-align:left; margin:8px 0 0">${esc(t('fieldPassHint'))}</p>
+        </div>
+        <div class="field">
+          <label>${esc(t('fieldParts'))}</label>
+          <p class="sub-label" style="text-align:left; margin:-2px 0 10px">${esc(t('partsHint'))}</p>
+          <div class="goal-rows js-partrows"></div>
+          <div class="parts-sum js-partsum"></div>
+          <button type="button" class="small-btn js-addpart">➕ ${esc(t('addPart'))}</button>
+        </div>`;
+    }
+
     if (type === 'debt') {
       const curs = ['₺', '$', '€', '£'];
       const curNow = existing?.config?.cur || '₺';
@@ -5902,6 +6096,117 @@
         $$('.cur-opt', box).forEach((b) => b.classList.toggle('selected', b === btn));
       };
     });
+    /* ---- the pieces a course is marked out of.
+
+       The weights are the whole contract: they say what each thing is worth
+       out of a hundred, and the card's one answer is worked out from them.
+       So the running total sits under the list and says out loud when it is
+       not a hundred — a plan that adds up to ninety is not a plan, it is a
+       typo that will quietly cost somebody a grade. */
+    const partRowsEl = $('.js-partrows', box);
+    let partDraft = [];
+    if (partRowsEl) {
+      partDraft = (existing?.config?.parts || []).map((p) => ({
+        id: p.id, kind: p.kind || 'diger', label: p.label || '', weight: p.weight || '',
+      }));
+      if (!partDraft.length) {
+        partDraft = [
+          { kind: 'vize', label: '', weight: 40 },
+          { kind: 'final', label: '', weight: 60 },
+        ];
+      }
+
+      const paintSum = () => {
+        const total = partDraft.reduce((n, p) => n + (Math.round(Number(p.weight)) || 0), 0);
+        const el = $('.js-partsum', box);
+        el.textContent = t('partsTotal', { n: total });
+        el.classList.toggle('off', total !== 100);
+      };
+
+      const drawParts = () => {
+        partRowsEl.innerHTML = partDraft
+          .map(
+            (p, i) => `
+            <div class="part-edit-row" data-i="${i}">
+              ${partDraft.length > 1
+                ? `<button type="button" class="gr-grip" title="${esc(t('movePart'))}"
+                    aria-label="${esc(t('movePart'))}"><span class="gr-rank">${i + 1}</span>≡</button>`
+                : ''}
+              <div class="de-fields">
+                <div class="de-bank">
+                  <span class="part-emoji js-pemoji">${esc(partKind(p.kind).e)}</span>
+                  <select class="js-pkind" aria-label="${esc(t('fieldPartKind'))}">
+                    ${Object.keys(PART_KINDS)
+                      .map((k) => `<option value="${k}" ${k === p.kind ? 'selected' : ''}>${esc(t(PART_KINDS[k].nameKey))}</option>`)
+                      .join('')}
+                  </select>
+                  <input type="number" inputmode="numeric" min="1" max="100" class="js-pweight"
+                    placeholder="%" value="${p.weight || ''}">
+                </div>
+                <input type="text" class="js-plabel" maxlength="24"
+                  placeholder="${esc(t('partLabelPh', { n: t(partKind(p.kind).nameKey) }))}"
+                  value="${esc(p.label)}" autocomplete="off">
+              </div>
+              ${partDraft.length > 1
+                ? `<button type="button" class="icon-btn js-pdel" title="${esc(t('removePart'))}">✕</button>`
+                : ''}
+            </div>`
+          )
+          .join('');
+
+        $$('.part-edit-row', partRowsEl).forEach((row) => {
+          const i = Number(row.dataset.i);
+          const kind = $('.js-pkind', row);
+          kind.onchange = () => {
+            partDraft[i].kind = kind.value;
+            $('.js-pemoji', row).textContent = partKind(kind.value).e;
+            $('.js-plabel', row).placeholder = t('partLabelPh', { n: t(partKind(kind.value).nameKey) });
+          };
+          $('.js-plabel', row).oninput = (e) => (partDraft[i].label = e.target.value);
+          $('.js-pweight', row).oninput = (e) => {
+            partDraft[i].weight = e.target.value;
+            paintSum();
+          };
+          const del = $('.js-pdel', row);
+          if (del) {
+            del.onclick = () => {
+              partDraft.splice(i, 1);
+              drawParts();
+              paintSum();
+            };
+          }
+        });
+        paintSum();
+      };
+
+      drawParts();
+
+      dragRows(partRowsEl, {
+        row: '.part-edit-row',
+        grip: '.gr-grip',
+        onDrop: (order, focusAt) => {
+          const sane =
+            order.length === partDraft.length &&
+            new Set(order).size === order.length &&
+            order.every((n) => partDraft[n]);
+          if (!sane) return drawParts();
+          if (order.some((n, k) => n !== k)) {
+            partDraft = order.map((n) => partDraft[n]);
+            feel('move');
+          }
+          drawParts();
+          if (focusAt != null) $(`.part-edit-row[data-i="${focusAt}"] .gr-grip`, partRowsEl)?.focus();
+        },
+      });
+
+      $('.js-addpart', box).onclick = (e) => {
+        if (partDraft.length >= MAX_PARTS) return;
+        partDraft.push({ kind: 'quiz', label: '', weight: '' });
+        drawParts();
+        if (partDraft.length >= MAX_PARTS) e.currentTarget.disabled = true;
+      };
+    }
+
     /* ---- the debt list editor (debt cards)
 
        Each row keeps the id the server gave it, so renaming a debt, repricing
@@ -6269,6 +6574,19 @@
       if (type === 'checkin') config.mode = mode;
       if (type === 'note' && !isEdit) {
         config.text = $('#cf-note', box)?.value.trim() || '';
+      }
+      if (type === 'course') {
+        config.pass = Math.max(0, Math.min(100, Math.round(Number($('#cf-pass', box)?.value) || 0)));
+        config.minFinal = Math.max(0, Math.min(100, Math.round(Number($('#cf-minfinal', box)?.value) || 0)));
+        // a piece worth nothing is not a piece of the mark
+        config.parts = partDraft
+          .filter((p) => Math.round(Number(p.weight)) > 0)
+          .map((p) => ({
+            ...(p.id ? { id: p.id } : {}),
+            kind: p.kind || 'diger',
+            label: p.label.trim(),
+            weight: Math.min(100, Math.round(Number(p.weight))),
+          }));
       }
       if (type === 'debt') {
         config.cur = cur;

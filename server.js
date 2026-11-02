@@ -320,6 +320,9 @@ const PUSH_STR = {
     debtPaid: (n, amt, cur, what, left) =>
       `${n} ${what} borcuna ${nf('tr', amt)}${cur} ödedi · kalan ${nf('tr', left)}${cur}`,
     debtCleared: (n, what) => `${what} borcu kapandı! 🎉 ${n} son ödemeyi yaptı`,
+    courseMark: (n, part, score, ders) => `${n} ${ders} ${part} notunu yazdı: ${score}`,
+    coursePassed: (n, ders, avg) => `${ders} geçti! 🎉 ortalama ${avg} · ${n}`,
+    courseFailed: (n, ders, avg) => `${ders} bu sefer olmadı · ortalama ${avg}`,
     debtSpread: (n, amt, cur, k) =>
       `${n} ${nf('tr', amt)}${cur} dağıttı · ${k} borca bölüştürüldü`,
     moneyGoalNamed: (g, c, amt, cur) =>
@@ -356,6 +359,9 @@ const PUSH_STR = {
     debtPaid: (n, amt, cur, what, left) =>
       `${n} put ${nf('en', amt)}${cur} toward ${what} · ${nf('en', left)}${cur} to go`,
     debtCleared: (n, what) => `${what} is paid off! 🎉 ${n} made the last payment`,
+    courseMark: (n, part, score, ders) => `${n} put ${score} down for ${ders} ${part}`,
+    coursePassed: (n, ders, avg) => `${ders} is passed! 🎉 ${avg} overall · ${n}`,
+    courseFailed: (n, ders, avg) => `${ders} did not go through · ${avg} overall`,
     debtSpread: (n, amt, cur, k) =>
       `${n} spread ${nf('en', amt)}${cur} across ${k} debts`,
     moneyGoalNamed: (g, c, amt, cur) =>
@@ -1222,9 +1228,14 @@ function newRoomCode() {
 
 const CARD_TYPES = new Set([
   'tally', 'streak', 'timer', 'countdown', 'note', 'money', 'list', 'checkin', 'game', 'pet',
-  'debt',
+  'debt', 'course',
 ]);
 const MAX_DEBTS = 12;
+const MAX_PARTS = 10;
+/* What a grade can be made of. The kind is not decoration: `final` is the one
+   a minimum can be attached to, because that is the rule universities
+   actually have — pass the course on average and still fail it on the final. */
+const PART_KINDS = new Set(['vize', 'final', 'but', 'proje', 'quiz', 'odev', 'lab', 'katilim', 'diger']);
 /** cards that carry a little conversation of their own */
 const COMMENTABLE = new Set(['note', 'game', 'pet']);
 const MAX_LIST_ITEMS = 60;
@@ -1339,6 +1350,27 @@ function sanitizeConfig(type, raw) {
       const photo = photoOf(src.photo);
       if (photo) out.photo = photo;
     }
+  }
+  if (type === 'course') {
+    // the mark that passes, and the one the final has to clear on its own
+    out.pass = toInt(src.pass, 0, 100, 60);
+    out.minFinal = toInt(src.minFinal, 0, 100, 0);
+    const seen = new Set();
+    out.parts = (Array.isArray(src.parts) ? src.parts : [])
+      .slice(0, MAX_PARTS)
+      .map((d) => {
+        const given = clampStr(d?.id, 8);
+        const id = /^[a-f0-9]{8}$/.test(given) && !seen.has(given) ? given : newDebtId(seen);
+        seen.add(id);
+        return {
+          id,
+          kind: PART_KINDS.has(d?.kind) ? d.kind : 'diger',
+          label: clampStr(d?.label, 24),
+          // what it is worth out of the hundred the course is marked out of
+          weight: toInt(d?.weight, 0, 100, 0),
+        };
+      })
+      .filter((d) => d.weight > 0);
   }
   if (type === 'debt') {
     out.cur = clampStr(src.cur, 4) || '₺';
@@ -1484,6 +1516,54 @@ function payerOf(code, who, ws) {
     }
   }
   return { key: personKey(ws), name: ws.meta.name };
+}
+
+/* Where a course stands: what has been earned so far, what is still open,
+   and the mark the open pieces have to average to reach the pass.
+
+   The question this card exists to answer is "what do I need in the final",
+   and that is this arithmetic and nothing else: everything already marked is
+   banked, everything not yet marked is one pool of weight, and the pass minus
+   the banked is what that pool has to carry. */
+function courseStanding(cfg, state) {
+  const parts = Array.isArray(cfg?.parts) ? cfg.parts : [];
+  const got = state?.got && typeof state.got === 'object' ? state.got : {};
+  const scored = (d) => (Number.isFinite(got[d.id]) ? got[d.id] : null);
+
+  let earned = 0;
+  let openWeight = 0;
+  let totalWeight = 0;
+  for (const d of parts) {
+    totalWeight += d.weight;
+    const n = scored(d);
+    if (n === null) openWeight += d.weight;
+    else earned += (d.weight * n) / 100;
+  }
+  const pass = toInt(cfg?.pass, 0, 100, 60);
+  const needPoints = pass - earned;
+  // what the still-unmarked pieces have to average between them
+  const needAvg = openWeight > 0 ? (needPoints / openWeight) * 100 : null;
+
+  const fin = parts.find((d) => d.kind === 'final');
+  const minFinal = toInt(cfg?.minFinal, 0, 100, 0);
+  const finScore = fin ? scored(fin) : null;
+  const finFailed = !!(fin && minFinal > 0 && finScore !== null && finScore < minFinal);
+
+  return {
+    parts, got, pass, minFinal, earned: Math.round(earned * 100) / 100,
+    openWeight, totalWeight, needAvg, finFailed,
+    done: openWeight === 0,
+  };
+}
+
+/* A piece that is gone has no mark left to remember. */
+function trimCourse(cfg, state) {
+  const ids = new Set((Array.isArray(cfg?.parts) ? cfg.parts : []).map((d) => d.id));
+  const was = state?.got && typeof state.got === 'object' ? state.got : {};
+  const next = {};
+  for (const [k, v] of Object.entries(was)) if (ids.has(k) && Number.isFinite(v)) next[k] = v;
+  if (JSON.stringify(was) === JSON.stringify(next)) return null;
+  return { ...state, got: next };
 }
 
 /** The debts as a list, and what is still owed on each. */
@@ -1710,6 +1790,7 @@ function defaultState(type, now, config) {
   if (type === 'note') return { text: '', author: '', updatedAt: 0, comments: [] };
   if (type === 'money') return { total: 0, log: [], by: {}, paid: [], hit: [] };
   if (type === 'debt') return { paid: {}, log: [] };
+  if (type === 'course') return { got: {} };
   if (type === 'list') return { items: [] };
   if (type === 'checkin')
     return { people: {}, days: {}, best: 0, tokens: COVER_TOKENS_PER_MONTH, tokenMonth: '', covers: [] };
@@ -2818,6 +2899,10 @@ function handleMessage(ws, msg) {
       refreshCover(code);
       /* The goal ladder can be rearranged from the form, so the stamps that
          point at its rungs have to travel with it. */
+      if (row.type === 'course' && msg.config !== undefined) {
+        const trimmed = trimCourse(config, JSON.parse(row.state));
+        if (trimmed) store.updateCardState(JSON.stringify(trimmed), row.id);
+      }
       if (row.type === 'debt' && msg.config !== undefined) {
         const trimmed = trimDebts(config, JSON.parse(row.state));
         if (trimmed) store.updateCardState(JSON.stringify(trimmed), row.id);
@@ -3324,6 +3409,49 @@ function handleMessage(ws, msg) {
       }
       return;
     }
+    /* Writing a mark down.
+
+       A mark is 0 to 100 and nothing else — not a letter, not a four point
+       something. Those are what a university prints at the end; this card is
+       for the weeks before that, when the only question is how much of the
+       hundred is still out there and what it has to carry. */
+    case 'course': {
+      const row = store.getCard(clampStr(msg.id, 40), code);
+      if (!row || row.type !== 'course') return;
+      const cfg = JSON.parse(row.config);
+      const state = JSON.parse(row.state);
+      const part = (Array.isArray(cfg.parts) ? cfg.parts : []).find(
+        (d) => d.id === clampStr(msg.part, 8)
+      );
+      if (!part) return;
+
+      state.got = state.got && typeof state.got === 'object' ? state.got : {};
+      const before = courseStanding(cfg, state);
+      // null wipes it: a mark entered by mistake has to be removable, and a
+      // zero is a real mark that must not be confused with "not sat yet"
+      if (msg.score === null || msg.score === '') delete state.got[part.id];
+      else state.got[part.id] = toInt(msg.score, 0, 100, 0);
+
+      store.updateCardState(JSON.stringify(state), row.id);
+      broadcastCard(code, row.id, by, 'course');
+
+      const after = courseStanding(cfg, state);
+      const name = part.label || part.kind;
+      if (state.got[part.id] === undefined) return;
+      if (after.done && !before.done) {
+        const passed = after.earned >= after.pass && !after.finFailed;
+        pushToRoom(code, passed ? 'coursePassed' : 'courseFailed',
+          [ws.meta.name, row.title, Math.round(after.earned)], ws.meta.cid);
+      } else {
+        pushToRoom(code, 'courseMark',
+          [ws.meta.name, name, state.got[part.id], row.title], ws.meta.cid, {
+            key: `course:${row.id}`,
+            windowMs: 30000,
+          });
+      }
+      return;
+    }
+
     /* Turning a piggy bank into a list of debts.
 
        People wrote their debts down as goals, because a goal was the only

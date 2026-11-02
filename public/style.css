@@ -2050,6 +2050,135 @@ body.reordering {
 
 
 /* ============================================================
+   a course
+   ============================================================ */
+
+/* The headline is the card. Everything under it is the working. */
+.course-head {
+  font-size: var(--t-title);
+  font-weight: 700;
+  letter-spacing: -0.025em;
+  text-align: center;
+  color: var(--amber);
+  line-height: 1.2;
+}
+
+.course-head.good { color: var(--mint); }
+.course-head.bad { color: var(--pink); }
+
+.course-sub {
+  font-size: var(--t-caption);
+  color: var(--ink-dim);
+  font-variant-numeric: tabular-nums;
+  margin-bottom: 4px;
+}
+
+.part-list {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  width: 100%;
+  margin-top: 10px;
+}
+
+.part-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 9px 11px;
+  border: 0.5px solid var(--hairline);
+  border-radius: var(--r-sm);
+  background: rgba(255, 255, 255, 0.045);
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.18s var(--ease), transform 0.14s var(--ease);
+}
+
+.part-row:active { transform: scale(0.985); background: rgba(255, 255, 255, 0.08); }
+
+/* not sat yet: the row you are about to need */
+.part-row.open { border-style: dashed; border-color: var(--hairline-strong); }
+
+.part-emoji { flex: 0 0 auto; font-size: 1.15rem; line-height: 1; }
+
+.part-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.part-name {
+  font-size: var(--t-callout);
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.part-weight { font-size: var(--t-caption); color: var(--ink-dim); }
+
+.part-mark {
+  flex: 0 0 auto;
+  min-width: 34px;
+  text-align: right;
+  font-size: var(--t-headline);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink);
+}
+
+.part-mark.none { color: var(--ink-dim); font-weight: 500; }
+
+.course-foot {
+  margin-top: 11px;
+  font-size: var(--t-caption);
+  color: var(--ink-dim);
+  text-align: center;
+}
+
+.course-warn { color: var(--peach); }
+
+/* ---- the editor ---- */
+
+.part-edit-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  padding: 9px;
+  border-radius: var(--r-sm);
+  background: rgba(255, 255, 255, 0.045);
+  border: 0.5px solid var(--hairline);
+}
+
+.part-edit-row .gr-grip { align-self: stretch; }
+.part-edit-row .de-bank .js-pweight { flex: 0 0 auto; width: 64px; text-align: center; }
+.part-edit-row .de-bank .part-emoji { width: 22px; text-align: center; }
+
+.part-edit-row.dragging {
+  z-index: 20;
+  pointer-events: none;
+  background: var(--mat-thick);
+  border-color: var(--hairline-strong);
+  box-shadow: var(--shadow-2);
+  transform: scale(1.015);
+}
+
+/* the running total, which has one job: to say when it is not a hundred */
+.parts-sum {
+  margin: 10px 0;
+  font-size: var(--t-caption);
+  color: var(--mint);
+  font-variant-numeric: tabular-nums;
+}
+
+.parts-sum.off { color: var(--peach); }
+
+/* ============================================================
    debts
    ============================================================ */
 
