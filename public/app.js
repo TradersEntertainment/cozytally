@@ -4480,6 +4480,15 @@
   const PASS_WORDS = ['gecme', 'gecmek', 'gecer', 'gecmesi', 'basari', 'pass'];
   const FLOOR_WORDS = ['baraj', 'en az', 'enaz', 'at least', 'minimum', 'alt sinir', 'asgari'];
 
+  /* The writing on a card, whichever kind of card it is. People put a course
+     down wherever they happened to be: in a note, or as the lines of a
+     checklist. Both are a list of sentences, so both can be read. */
+  function courseTextOf(card) {
+    if (card?.type === 'note') return card.state?.text || '';
+    if (card?.type === 'list') return (card.state?.items || []).map((i) => i.text).join('\n');
+    return '';
+  }
+
   function readCourseFromText(text) {
     const parts = [];
     let pass = null;
@@ -4545,9 +4554,21 @@
     return { parts: list, pass, minFinal };
   }
 
-  /** Every 0–100 in a stretch of folded text, in the order written. */
+  /* Whether what came back is a marking scheme or a coincidence.
+
+     "Bitirme Projesi 1" is a line on a list of things left to graduate, and
+     it contains the word "proje" and the number 1 — so something has to tell
+     the difference between that and a course. Weights that add up to half a
+     course do; one stray word with a 1 after it does not. */
+  const courseReadable = (read) =>
+    read.parts.length > 0 && read.parts.reduce((n, p) => n + p.weight, 0) >= 50;
+
+  /* Every 0–100 in a stretch of folded text, in the order written — whole
+     numbers only. Reading three digits out of "MAT2045" would turn a course
+     code into a weight, which is how a list of course names ends up looking
+     like one course's marking scheme. */
   const numbersIn = (s) =>
-    (s.match(/\d{1,3}/g) || []).map(Number).filter((n) => n >= 0 && n <= 100);
+    (s.match(/\d+/g) || []).map(Number).filter((n) => n >= 0 && n <= 100);
 
   function renderCourseBody(body, card, opts = {}) {
     const st = courseStanding(card);
@@ -6062,9 +6083,9 @@
           <textarea id="cf-note" maxlength="500" placeholder="${esc(t('fieldNotePh'))}"></textarea>
         </div>`;
     }
-    /* A note somebody wrote a course down in, long before there was a card
-       for it. */
-    if (type === 'note' && isEdit && readCourseFromText(existing?.state?.text).parts.length) {
+    /* A card somebody wrote a course down in, long before there was a card
+       for it — a note, or a checklist with the breakdown on its lines. */
+    if (isEdit && courseReadable(readCourseFromText(courseTextOf(existing)))) {
       extraFields = `
         <div class="field">
           <label>${esc(t('noteToCourseTitle'))}</label>
@@ -6648,7 +6669,7 @@
     const toCourse = $('.js-tocourse', box);
     if (toCourse) {
       toCourse.onclick = () => {
-        const read = readCourseFromText(existing?.state?.text);
+        const read = readCourseFromText(courseTextOf(existing));
         openCardModal('course', {
           title: $('#cf-title', box)?.value.trim() || existing?.title || '',
           config: {
