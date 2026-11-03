@@ -4457,6 +4457,98 @@
     };
   }
 
+  /* Reading a course out of something somebody typed into a note.
+
+     People write this down long before there is a card for it, and they write
+     it the way they say it: "vize %30", "final 40 (en az 50)", "geçme notu
+     60". So this looks for a kind word and a number near each other, and
+     nothing else — no format to learn, nothing to get wrong.
+
+     What it finds is never saved on its own. It fills the editor in and stops
+     there, because a guess about somebody's grades is a guess until they have
+     looked at it. */
+  const COURSE_WORDS = [
+    ['vize', ['vize', 'ara sinav', 'arasinav', 'midterm']],
+    ['final', ['final', 'yariyil sonu', 'yilsonu']],
+    ['but', ['butunleme', 'but sinavi', 'resit', 'makeup']],
+    ['quiz', ['quiz', 'kisa sinav', 'kisasinav']],
+    ['odev', ['odev', 'homework']],
+    ['proje', ['proje', 'project']],
+    ['lab', ['laboratuvar', 'lab']],
+    ['katilim', ['katilim', 'devam', 'attendance']],
+  ];
+  const PASS_WORDS = ['gecme', 'gecmek', 'gecer', 'gecmesi', 'basari', 'pass'];
+  const FLOOR_WORDS = ['baraj', 'en az', 'enaz', 'at least', 'minimum', 'alt sinir', 'asgari'];
+
+  function readCourseFromText(text) {
+    const parts = [];
+    let pass = null;
+    let minFinal = null;
+
+    // one fragment per thought: people write these on their own lines, but
+    // also string them together with commas
+    for (const piece of String(text || '').split(/[\n;·•]+/)) {
+      const line = foldName(piece);
+      if (!line) continue;
+
+      /* Every kind word in the fragment, longest first so "laboratuvar" is
+         not also read as "lab", and in the order they were written. */
+      const hits = [];
+      for (const [kind, words] of COURSE_WORDS) {
+        for (const w of words) {
+          for (let i = line.indexOf(w); i >= 0; i = line.indexOf(w, i + 1)) {
+            hits.push({ kind, at: i, to: i + w.length });
+          }
+        }
+      }
+      hits.sort((a, b) => a.at - b.at || b.to - a.to);
+      const kept = [];
+      for (const h of hits) if (!kept.some((k) => h.at < k.to && k.at < h.to)) kept.push(h);
+
+      if (!kept.length) {
+        // no kind word: the only other thing a line like this says is the pass
+        const n = numbersIn(line).pop();
+        if (n !== undefined && PASS_WORDS.some((w) => line.includes(w))) pass = n;
+        continue;
+      }
+
+      /* Each kind owns the stretch of line from where it is written to the
+         next kind word — which is what makes "vize %30 final %50 ödev %20"
+         read as three things and not one. */
+      kept.forEach((h, i) => {
+        const from = i === 0 ? 0 : h.at;
+        const span = line.slice(from, i + 1 < kept.length ? kept[i + 1].at : line.length);
+        const nums = numbersIn(span);
+        if (!nums.length) return;
+        /* "finalden en az 50" is a rule about the final, not a weight for it.
+           Written with both — "final %60, en az 50" — the first number is the
+           weight and the second is the floor. */
+        if (h.kind === 'final' && FLOOR_WORDS.some((w) => span.includes(w))) {
+          minFinal = nums[nums.length - 1];
+          if (nums.length > 1) parts.push({ kind: 'final', weight: nums[0] });
+          return;
+        }
+        parts.push({ kind: h.kind, weight: nums[0] });
+      });
+
+      // a pass mark written on the same line as everything else
+      if (pass === null && PASS_WORDS.some((w) => line.includes(w))) {
+        const after = line.slice(Math.max(0, PASS_WORDS.map((w) => line.indexOf(w)).filter((i) => i >= 0)[0]));
+        const n = numbersIn(after)[0];
+        if (n !== undefined) pass = n;
+      }
+    }
+
+    // the same thing written twice keeps the first weight somebody gave it
+    const seen = new Set();
+    const list = parts.filter((p) => p.weight > 0 && !seen.has(p.kind) && seen.add(p.kind));
+    return { parts: list, pass, minFinal };
+  }
+
+  /** Every 0–100 in a stretch of folded text, in the order written. */
+  const numbersIn = (s) =>
+    (s.match(/\d{1,3}/g) || []).map(Number).filter((n) => n >= 0 && n <= 100);
+
   function renderCourseBody(body, card, opts = {}) {
     const st = courseStanding(card);
     if (!st.rows.length) {
@@ -5857,8 +5949,11 @@
     setTimeout(() => $('#pk-name', box)?.focus(), 60);
   }
 
+  /* `existing` is the card being edited — unless it has no id, in which case
+     it is a card somebody is about to make with some of the blanks already
+     filled in. Reading a note into a course card arrives that way. */
   function openCardModal(type, existing, gameKind) {
-    const isEdit = !!existing;
+    const isEdit = !!existing?.id;
     const meta = TYPE_META[type];
     // the four games share one card type, so which one it is comes either
     // from the picker or from the card being edited
@@ -5965,6 +6060,16 @@
         <div class="field">
           <label>${esc(t('fieldNote'))}</label>
           <textarea id="cf-note" maxlength="500" placeholder="${esc(t('fieldNotePh'))}"></textarea>
+        </div>`;
+    }
+    /* A note somebody wrote a course down in, long before there was a card
+       for it. */
+    if (type === 'note' && isEdit && readCourseFromText(existing?.state?.text).parts.length) {
+      extraFields = `
+        <div class="field">
+          <label>${esc(t('noteToCourseTitle'))}</label>
+          <p class="sub-label" style="text-align:left; margin:-2px 0 10px">${esc(t('noteToCourseHint'))}</p>
+          <button type="button" class="small-btn js-tocourse">📘 ${esc(t('noteToCourse'))}</button>
         </div>`;
     }
 
@@ -6534,6 +6639,24 @@
         goalDraft.push({ amount: '', title: '', photo: '', upload: null });
         drawGoals();
         if (goalDraft.length >= MAX_GOALS) e.currentTarget.disabled = true;
+      };
+    }
+
+    /* Nothing is created here: the reading fills the course editor in and
+       stops, because a guess about somebody's grades is a guess until they
+       have looked at it. The note stays where it is. */
+    const toCourse = $('.js-tocourse', box);
+    if (toCourse) {
+      toCourse.onclick = () => {
+        const read = readCourseFromText(existing?.state?.text);
+        openCardModal('course', {
+          title: $('#cf-title', box)?.value.trim() || existing?.title || '',
+          config: {
+            pass: read.pass ?? 60,
+            minFinal: read.minFinal ?? 0,
+            parts: read.parts.map((p) => ({ kind: p.kind, label: '', weight: p.weight })),
+          },
+        });
       };
     }
 
