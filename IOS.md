@@ -111,3 +111,6 @@ basar. O bağı inceleme notlarına koy, ve şunu yaz:
 - **Privacy nutrition labels** — App Store Connect'teki beyan formu. Ne
   saklandığı `public/privacy.html`'de yazıyor; form ondan doldurulur.
 - **Yaş derecesi** ve mağaza metinleri.
+- **Çıkıştan önce güvenlik turu.** Notları bu depoda tutmuyoruz, çünkü depo
+  herkese açık; sahibindeki `guvenlik-notlari.md` dosyasına bak ve oradaki sırayla
+  ilerle.
